@@ -13,16 +13,21 @@
 // whole tree of Scenes, not one descriptor. So this implements xeditor::resource_editor directly, the same
 // carve-out xeditor_resource_editor.h's own top comment documents for exactly this shape.
 //
-// STAGE (a) of the LevelEditor-ownership move (see the task's own staged plan): this file, and everything it
-// includes under game_module/ and xlevel_editor_tabs.h/xlevel_demo_content.h, compiles alongside the still-
-// working source/Editors/LevelEditor/ code - nothing here is registered/opened yet by the live app (the
-// auto_register_resource_editor below only populates a factory map; nothing calls Open() with xecs::level::
-// type_guid_v until stage (b) flips the shell). The command/undo split (stage (c) - a fresh, framework-owned
-// workspace xundo::system in the shell vs. this session's own, entity/scene-mutation-only one) is NOT done
-// here: m_Undo below is a fresh xundo::system with no commands registered against it yet. Wiring the ~40
-// Level-tagged commands from LevelEditor_CommandSet.h onto it is exactly the "Command/undo split" step; doing
-// it half-finished here would leave two partially-wired command sets to reconcile later instead of one clean
-// cut-over, so it is left as the explicit stage (c) TODO marked below.
+// STAGE (b) of the LevelEditor-ownership move (see the task's own staged plan): the shell now opens exactly one
+// of these at startup via xeditor::open_resource_editors::Open({.m_Type=xecs::level::type_guid_v}, {}) - see
+// LevelEditor_AppInit.h. It is a SINGLETON, unlike Texture: opened once, never destroyed for the life of the
+// process (resource_editor::m_bOpen is never set false - m_State.m_bLevelEditorOpen, unchanged from the old
+// app-owned model, is what actually shows/hides the peer tab). That's a deliberate, documented choice - Level
+// has no natural per-Guid "which one" the way double-clicking a Texture does; command_set (still in the shell
+// until stage (c)'s split) and WireAssetBrowser both hold a raw xlevel::session* obtained once at startup, which
+// would dangle if this object could be destroyed while the tab is closed.
+//
+// The command/undo split (stage (c) - a fresh, framework-owned workspace xundo::system in the shell vs. this
+// session's own, entity/scene-mutation-only one) is NOT done here: m_Undo below is a fresh xundo::system with no
+// commands registered against it yet - LevelEditor_CommandSet.h's command_set still lives in the shell,
+// constructed against this session's m_CmdContext/m_Undo exactly as it used to be constructed against
+// LevelHostSession's. Wiring the ~40 Level-tagged commands onto m_Undo directly (removing the shell's
+// dependency on command_set for them) is the explicit stage (c) TODO marked below.
 // xscene_editor.h first - xlevel_context.h's level_context derives from xscene::scene_context, exactly the
 // same order the shell's own LevelEditor_Kit.h already requires (xscene before xlevel).
 #include "plugins/xscene.plugin/source/Editor/xscene_editor.h"
@@ -33,6 +38,8 @@
 #include "plugins/xlevel.plugin/source/Editor/xlevel_scene_sanity_scan.h"
 #include "source/Tools/Editor/xeditor_resource_editor.h"
 #include "dependencies/xeditor/include/xeditor/host.h"
+#include "dependencies/toolbar.imgui/ximgui_toolbar.h"
+#include "dependencies/xresource_pipeline_v2/source/editor/E10_AssetBrowser.h"
 
 #include <memory>
 
@@ -59,8 +66,21 @@ namespace xlevel
         xproperty::inspector                       m_EntityInspector{ "Inspector" };
         xscene::entity_inspector_bridge            m_InspectorBridge;
 
+        // Scene tool state + the "Editor"/"Scene" toolbars (ported from LevelEditor_AppToolbars.h - these read
+        // State/CmdContext/pGameMgr/GamePlugin directly, so they had to move here with the rest of the world/
+        // document ownership rather than staying behind in the shell as originally sketched in stage (a)).
+        int                                          m_SceneTool = 0; // Q=select, W=move, E=rotate, R=scale, F=frame
+        bool                                         m_bPivotCenter = true;
+        bool                                         m_bLocalSpace  = false;
+        bool                                         m_bGridVisible = true;
+        ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost;
+        static constexpr float                       kEditorToolbarWidth      = 570.0f;
+        static constexpr float                       kSceneToolbarWidth       = 390.0f;
+        static constexpr float                       kEditorToolbarHeight     = 20.0f;
+        static constexpr float                       kEditorToolbarFontScale  = 1.0f;
+        static constexpr float                       kEditorToolbarItemSpacing = 2.0f;
+
         std::vector<std::unique_ptr<xecs::scene::instance>> m_ReloadCapture;   // scenes held across a Game.dll reload
-        bool                                        m_bLevelHostSessionRegistered = false;
 
         // Registers this session's own demo content - kept as a plain static function (not inlined at each of
         // the two call sites below) so PollGameReload can re-run the exact same registration after a reload,
@@ -139,6 +159,30 @@ namespace xlevel
 
             xlevel::g_pGamePlugin = &m_GamePlugin;
 
+            // Service registration: lets xlevel::FindLevelContext()/TryGateLevelMutation (the write-lock gate
+            // wired as EditorHost.m_OnBeforeEdit) and xscene:: code that takes a scene_context& reach this
+            // session, the same way LevelEditor_AppInit.h used to provide its own CmdContext.
+            if (auto* pHost = xeditor::host::current())
+            {
+                pHost->provide(m_CmdContext);
+                pHost->provide<xscene::scene_context>(m_CmdContext);
+#if defined(XECS_BUILD_SHARED)
+                pHost->provide(m_PlayGate);
+#endif
+                pHost->m_IdleWork.m_OnRun.Register<&xlevel::scene_sanity_scanner::Run>(m_SceneScanner);
+            }
+
+            if (m_pDevice)   // non-headless: same one-time toolbar-position persistence AppInit.h used to do
+            {
+                m_EditorToolbarHost.m_Items.push_back
+                ({ "Editor", ximgui::toolbar::toolbar_host_edge::Top, ximgui::toolbar::axis::Horizontal
+                 , ImVec2(kEditorToolbarWidth, kEditorToolbarHeight), ImVec2(32.0f, 250.0f), ImVec2(24.0f, 24.0f) });
+                m_EditorToolbarHost.m_Items.push_back
+                ({ "Scene", ximgui::toolbar::toolbar_host_edge::Top, ximgui::toolbar::axis::Horizontal
+                 , ImVec2(kSceneToolbarWidth, kEditorToolbarHeight), ImVec2(32.0f, 250.0f), ImVec2(24.0f, 72.0f) });
+                ximgui::toolbar::RegisterSettingsHandler(m_EditorToolbarHost, "LevelEditorToolbar");
+            }
+
             // TODO(stage c, command/undo split): register the Level-tagged half of
             // source/Editors/LevelEditor/commands/LevelEditor_CommandSet.h against m_Undo here (CmdSelect through
             // CmdDeleteFolder/CmdMakePrefabVariant - the entity/scene/play mutation commands; everything else -
@@ -149,6 +193,15 @@ namespace xlevel
 
         ~session() noexcept override
         {
+            if (auto* pHost = xeditor::host::current())
+            {
+                pHost->m_IdleWork.m_OnRun.RemoveDelegates(&m_SceneScanner);
+#if defined(XECS_BUILD_SHARED)
+                pHost->withdraw<play_gate>();
+#endif
+                pHost->withdraw<xscene::scene_context>();
+                pHost->withdraw<level_context>();
+            }
             m_pGameMgr.reset();
             xlevel::UnloadGamePlugin(m_GamePlugin);
         }
@@ -248,15 +301,131 @@ namespace xlevel
             if (auto* pHost = xeditor::host::current()) pHost->end_play(&m_State);
         }
 
-        // ---- The whole tool window: dockspace, panels, modals, the Play tick gate. ----
-        // A peer root like Texture's own document_editor::Render(), but hand-implemented (not
-        // xeditor::document_editor<T_DOC>) because a Level's own dockspace/panel shape (Level Tree + Inspector +
-        // System Registry inside a further-nested dockspace, not a flat panel list) and always-open,
-        // never-per-Guid-instanced lifecycle don't fit that template - see this file's own top comment.
-        void Render() noexcept override
+        // ---- Menu bar + the "Editor"/"Scene" toolbars (ported from LevelEditor_AppToolbars.h) ----
+        void RenderParentEditorToolbar() noexcept
         {
-            auto* pHost = xeditor::host::current();
+            if (!ImGui::BeginMenuBar()) return;
 
+            if (ImGui::BeginMenu("File"))
+            {
+                if (auto* pHost = xeditor::host::current())
+                    if (auto* pBrowser = pHost->find<e10::assert_browser>())
+                        if (ImGui::MenuItem("Asset Browser...")) pBrowser->Show(true);
+
+                ImGui::Separator();
+
+                const bool bCanSave = !m_State.isPlaying()
+                    && (!m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty())
+                    && xlevel::HasUnsavedDocumentChanges(m_State, m_Undo);
+                ImGui::BeginDisabled(!bCanSave);
+                if (ImGui::MenuItem("Save", "Ctrl+S")) { xlevel::SaveEverything(*m_pGameMgr, m_State); xlevel::MarkDocumentClean(m_State, m_Undo); }
+                ImGui::EndDisabled();
+
+                const bool bCanClose = !m_State.isPlaying() && (!m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty());
+                ImGui::BeginDisabled(!bCanClose);
+                if (ImGui::MenuItem("Close")) xlevel::RequestCloseLevel(*m_pGameMgr, m_State, m_Undo);
+                ImGui::EndDisabled();
+
+                ImGui::EndMenu();
+            }
+
+            if (m_GamePlugin.m_bBuilding)
+            {
+                ImGui::SameLine(ImGui::GetWindowWidth() - 250.0f);
+                ImGui::TextDisabled("Game.dll: building...");
+            }
+
+            xlevel::RenderPlayTransport(m_CmdContext, { ImVec2(30.0f, 0.0f), true, true });
+            ImGui::EndMenuBar();
+        }
+
+        void RenderEditorToolbar(const char* Name, ximgui::toolbar::axis Axis) noexcept
+        {
+            const bool bHorizontal = Axis == ximgui::toolbar::axis::Horizontal;
+            const float ButtonHeight = bHorizontal ? kEditorToolbarHeight - 4.0f : 28.0f;
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kEditorToolbarItemSpacing, ImGui::GetStyle().ItemSpacing.y));
+            ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * kEditorToolbarFontScale);
+            bool bFirstButton = true;
+
+            auto ToolbarButton = [&](const char* LongLabel, const char* ShortLabel, bool bActive, bool bDisabled, auto&& OnClick)
+            {
+                if (bHorizontal && !bFirstButton) ImGui::SameLine();
+                bFirstButton = false;
+                if (bActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Header]);
+                ImGui::BeginDisabled(bDisabled);
+                if (ImGui::Button(bHorizontal ? LongLabel : ShortLabel, bHorizontal ? ImVec2(52.0f, ButtonHeight) : ImVec2(32.0f, ButtonHeight))) OnClick();
+                ImGui::EndDisabled();
+                if (bActive) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::TextUnformatted(LongLabel); ImGui::EndTooltip(); }
+            };
+            auto ToolbarSeparator = [&]()
+            {
+                if (bHorizontal) { ImGui::SameLine(); ImGui::TextDisabled("|"); }
+                else ImGui::Separator();
+            };
+
+            if (std::strcmp(Name, "Editor") == 0)
+            {
+                const bool bCanSave = !m_State.isPlaying()
+                    && (!m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty())
+                    && xlevel::HasUnsavedDocumentChanges(m_State, m_Undo);
+                ToolbarButton("Save", "S", false, !bCanSave, [&]() { xlevel::SaveEverything(*m_pGameMgr, m_State); xlevel::MarkDocumentClean(m_State, m_Undo); });
+                ToolbarButton("Undo", "U", false, m_State.isPlaying(), [&]() { m_Undo.Undo(); });
+                ToolbarButton("Redo", "R", false, m_State.isPlaying(), [&]() { m_Undo.Redo(); });
+                ToolbarButton("Assets", "A", false, false, [&]() { if (auto* pHost = xeditor::host::current()) pHost->open_drawer_tab(ImGui::GetMainViewport(), 1); });
+                ToolbarSeparator();
+
+                xlevel::RenderPlayTransport(m_CmdContext, { ImVec2(52.0f, ButtonHeight), bHorizontal, false });
+                bFirstButton = false;
+
+                ToolbarSeparator();
+                ToolbarButton("Hierarchy", "H", false, false, [&]() { ImGui::SetWindowFocus(xlevel::editor_tabs::kLevelTreeWindow); });
+                ToolbarButton("Inspector", "I", false, false, [&]() { ImGui::SetWindowFocus(xlevel::editor_tabs::kInspectorWindow); });
+                ToolbarButton("Systems", "Y", false, false, [&]() { ImGui::SetWindowFocus(xlevel::editor_tabs::kSystemRegistryWindow); });
+            }
+            else
+            {
+                auto SceneButton = [&](const char* Label, int ToolIndex, const char* Tooltip)
+                {
+                    if (bHorizontal && !bFirstButton) ImGui::SameLine();
+                    bFirstButton = false;
+                    if (m_SceneTool == ToolIndex) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Header]);
+                    if (ImGui::Button(Label, ImVec2(32.0f, ButtonHeight))) m_SceneTool = ToolIndex;
+                    if (m_SceneTool == ToolIndex) ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::TextUnformatted(Tooltip); ImGui::EndTooltip(); }
+                };
+                SceneButton("Q", 0, "Select tool");
+                SceneButton("W", 1, "Move tool");
+                SceneButton("E", 2, "Rotate tool");
+                SceneButton("R", 3, "Scale tool");
+                SceneButton("F", 4, "Frame selected");
+                ToolbarSeparator();
+
+                auto SceneToggle = [&](const char* LongLabel, const char* ShortLabel, bool& bValue)
+                {
+                    if (bHorizontal) ImGui::SameLine();
+                    if (ImGui::Button(bHorizontal ? LongLabel : ShortLabel, bHorizontal ? ImVec2(58.0f, ButtonHeight) : ImVec2(32.0f, ButtonHeight))) bValue = !bValue;
+                    if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::TextUnformatted(LongLabel); ImGui::EndTooltip(); }
+                };
+                SceneToggle("Pivot", "P", m_bPivotCenter);
+                SceneToggle("Local", "L", m_bLocalSpace);
+                SceneToggle("Grid", "G", m_bGridVisible);
+            }
+
+            ImGui::PopFont();
+            ImGui::PopStyleVar();
+        }
+
+        // Recompile-check completion + the deferred "Stop" click. MUST run at a clean top-of-frame point, never
+        // nested inside an active ImGui frame (a Game.dll reload/Stop tears the whole world down and rebuilds
+        // it - confirmed empirically in the original port that doing this from inside an active ImGui frame,
+        // e.g. a menu-bar scope, corrupts ImGui's window-stack bookkeeping). Render() below always runs AFTER
+        // xgpu::tools::imgui::BeginRendering() has already started the frame (it is called from
+        // open_resource_editors::RenderAll(), itself called from mid-frame), so these two cannot live there -
+        // the shell calls this once, before BeginRendering, exactly where LevelEditor_AppFrame.h's own
+        // PollGameReload/deferred-Stop calls always ran.
+        void PumpBeforeFrame() noexcept
+        {
             xlevel::PollGameReload(m_CmdContext, m_GamePlugin, &session::RegisterHostComponents);
 
             if (m_State.m_bStopRequested)
@@ -265,6 +434,16 @@ namespace xlevel
                 StopPlay(m_State.m_PendingKeepTweaksCommands);
                 m_State.m_PendingKeepTweaksCommands.clear();
             }
+        }
+
+        // ---- The whole tool window: dockspace, panels, modals, the Play tick gate. ----
+        // A peer root like Texture's own document_editor::Render(), but hand-implemented (not
+        // xeditor::document_editor<T_DOC>) because a Level's own dockspace/panel shape (Level Tree + Inspector +
+        // System Registry inside a further-nested dockspace, not a flat panel list) and always-open,
+        // never-per-Guid-instanced lifecycle don't fit that template - see this file's own top comment.
+        void Render() noexcept override
+        {
+            auto* pHost = xeditor::host::current();
 
             std::string LevelTabName;
             if (!m_State.m_CurrentLevel.empty())
@@ -279,20 +458,31 @@ namespace xlevel
                 LevelDockGuid.m_Type     = xecs::level::type_guid_v;
             }
 
-            if (m_State.m_bAwaitingSaveBeforeClose) m_bOpen = true;
+            if (m_State.m_bAwaitingSaveBeforeClose) m_State.m_bLevelEditorOpen = true;
 
-            bool bTabOpen = m_bOpen;
-            const bool bParentEditorVisible = xlevel::editor_tabs::RenderLevelEditorDockspace(
-                [this]() { /* RenderParentEditorToolbar: TODO(stage c) - the Editor/Scene toolbars move with the command split */ },
-                LevelTabName.c_str(), m_pDevice, xecs::level::type_guid_v, LevelDockGuid, &bTabOpen);
-            if (!bTabOpen)
+            // Level is a permanent, singleton tool (opened once at process startup, never destroyed like a
+            // per-Guid Texture tab - see this file's own top comment) - resource_editor::m_bOpen therefore stays
+            // true for the object's whole life; m_State.m_bLevelEditorOpen (unchanged from the old app-owned
+            // model) is what actually drives whether the peer tab/dockspace is shown.
+            const bool bSkipLevelPeer = !m_State.m_bLevelEditorOpen && m_State.m_CurrentLevel.empty()
+                && m_State.m_OpenScenes.empty() && !m_State.m_bAwaitingSaveBeforeClose;
+
+            bool bParentEditorVisible = false;
+            if (!bSkipLevelPeer)
             {
-                xlevel::RequestCloseLevel(*m_pGameMgr, m_State, m_Undo);
-                m_bOpen = m_State.m_bAwaitingSaveBeforeClose || !m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty();
-            }
-            else
-            {
-                m_bOpen = true;
+                bool bTabOpen = m_State.m_bLevelEditorOpen;
+                bParentEditorVisible = xlevel::editor_tabs::RenderLevelEditorDockspace(
+                    [this]() { RenderParentEditorToolbar(); },
+                    LevelTabName.c_str(), m_pDevice, xecs::level::type_guid_v, LevelDockGuid, &bTabOpen);
+                if (!bTabOpen)
+                {
+                    xlevel::RequestCloseLevel(*m_pGameMgr, m_State, m_Undo);
+                    m_State.m_bLevelEditorOpen = m_State.m_bAwaitingSaveBeforeClose || !m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty();
+                }
+                else
+                {
+                    m_State.m_bLevelEditorOpen = true;
+                }
             }
 
             if (bParentEditorVisible)
@@ -345,10 +535,11 @@ namespace xlevel
                 m_pGameMgr->Run();
             }
 
-            // Asset-open routing (a Level or Scene double-clicked/dropped from the browser) is wired by the shell's
-            // WireAssetBrowser callback, not here - see the "What moves where" table's own note that this becomes
-            // "a callback the plugin registers, not shell-hardcoded". TODO(stage b): register that callback from
-            // here (or from the auto_register_resource_editor factory below) once the shell flips over.
+            // Asset-open routing (a Level or Scene double-clicked/dropped from the browser) stays wired by the
+            // shell's WireAssetBrowser (source/Editors/LevelEditor/extensions/asset_browser/), which reaches this
+            // singleton session's m_pGameMgr/m_State/m_Undo directly the same way it always reached app::'s own -
+            // see that file's own comment. A cleaner plugin-registered callback (per the "What moves where"
+            // table) is left for a later pass; not required for this stage's compile-and-behave-identically bar.
 
             if (bParentEditorVisible)
             {
@@ -388,13 +579,18 @@ namespace xlevel
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
                 xlevel::RenderSystemRegistryPanel(*m_pGameMgr, m_State);
 
+                ImGui::SetNextWindowPos(ImVec2(250.0f, 90.0f), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(1050.0f, 480.0f), ImGuiCond_FirstUseEver);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
                 if (ImGui::Begin(xlevel::editor_tabs::kEditorWindow))
                 {
-                    // TODO(stage c): the Editor/Scene toolbar host (source/Editors/LevelEditor/LevelEditor_AppToolbars.h)
-                    // moves alongside the command split it depends on.
+                    ximgui::toolbar::RenderToolbarHost(m_EditorToolbarHost, ImGui::GetContentRegionAvail(),
+                        [this](const char* Name, ximgui::toolbar::axis Axis) { RenderEditorToolbar(Name, Axis); },
+                        [&]() { ImGui::TextDisabled("Editor"); });
                 }
                 ImGui::End();
+                ImGui::PopStyleVar();
 
                 xlevel::RenderReloadCompatibilityModal(m_CmdContext);
             }
