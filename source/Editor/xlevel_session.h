@@ -537,11 +537,16 @@ namespace xlevel
                 }
             }
 
+            // Tell LIONRender which entity (if any) to draw with an outline this frame - matches the
+            // same primary selection the Inspector/Level Tree already show (multi-select beyond the
+            // primary isn't outlined yet, a possible follow-up).
+            xlionrender::SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
+
             // The host's own turn, every frame (Stopped/Paused/Playing alike): Draw has LIONRender's own
             // system collect its entities (after GameMgr.Run() finished, when Playing) and issues the GPU commands.
-            xgpu::tools::imgui::AddCustomRenderCallback([this](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
+            xgpu::tools::imgui::AddCustomRenderCallback([this, Avail](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
-                xlionrender::Draw(CmdBuffer, m_Camera.m_View.getW2C());
+                xlionrender::Draw(CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y);
             });
         }
 
