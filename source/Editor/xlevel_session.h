@@ -97,9 +97,9 @@ namespace xlevel
         // matching what construction does.
         static void RegisterHostComponents(xecs::game_mgr::instance& GameMgr) noexcept
         {
-            GameMgr.RegisterComponents<xscene::name, xlevel::transform, xecs::editor::prefab_instance, xecs::component::entity_reference>();
-            RegisterEngineDLLComponents(GameMgr, L"LIONCore.dll", 2);
-            RegisterEngineDLLComponents(GameMgr, L"LIONRender.dll", 3);
+            GameMgr.RegisterComponents<xscene::name, xecs::editor::prefab_instance, xecs::component::entity_reference>();
+            RegisterEngineDLLComponents(GameMgr, L"LIONCore.dll");
+            RegisterEngineDLLComponents(GameMgr, L"LIONRender.dll");
         }
 
         // Not static (unlike RegisterHostComponents, passed around as a bare function pointer by
@@ -740,3 +740,4 @@ namespace xlevel
 }
 
 #endif // XLEVEL_SESSION_H
+

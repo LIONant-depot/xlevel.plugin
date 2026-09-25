@@ -13,16 +13,19 @@
 
 namespace xlevel
 {
-    // Slot 0 is reserved for the host (xecs::plugin::host_v); Slot 1 is Game.dll (game_plugin_state's
-    // own token, minted per reload generation). These DLLs are permanent and never reload, so a fixed
-    // slot + generation 1 is enough.
-    inline void RegisterEngineDLLComponents(xecs::game_mgr::instance& GameMgr, const wchar_t* pModuleName, std::uint32_t Slot) noexcept
+    // Slot 0 (host_v) is the host program - never unloaded. Slot 1 is Game.dll (game_plugin_state's
+    // own token, minted per reload generation). These engine DLLs are permanent (import-linked,
+    // never FreeLibrary'd), so they MUST register as host_v: UnregisterPlugin(GameToken) full-resets
+    // the shared registry and asserts every owner is either that Game token or host_v. Giving them
+    // distinct slots (2, 3, ...) fails that assert on every Game unload / Level Editor exit, even
+    // though the wipe itself is fine (RegisterHostComponents re-registers them on the next load).
+    inline void RegisterEngineDLLComponents(xecs::game_mgr::instance& GameMgr, const wchar_t* pModuleName) noexcept
     {
         HMODULE hModule = GetModuleHandleW(pModuleName);
         if (!hModule) return; // not linked into this build (e.g. headless never links xLIONRender)
 
         if (auto* pRegisterComponents = reinterpret_cast<xecs_plugin_pfn_register_components*>(GetProcAddress(hModule, XECS_PLUGIN_REGISTER_COMPONENTS_NAME)))
-            pRegisterComponents(GameMgr, xecs::plugin::token{ .m_Slot = Slot, .m_Generation = 1 });
+            pRegisterComponents(GameMgr, xecs::plugin::host_v);
     }
 
     inline void RegisterEngineDLLSystems(xecs::game_mgr::instance& GameMgr, const wchar_t* pModuleName) noexcept
