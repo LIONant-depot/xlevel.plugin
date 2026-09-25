@@ -47,6 +47,8 @@
 #include "dependencies/xLIONRender/src/xlionrender_api.h"
 
 #include <memory>
+#include <limits>
+#include <cmath>
 
 namespace xlevel
 {
@@ -77,7 +79,6 @@ namespace xlevel
         int                                          m_SceneTool = 0; // Q=select, W=move, E=rotate, R=scale, F=frame
         bool                                         m_bPivotCenter = true;
         bool                                         m_bLocalSpace  = false;
-        bool                                         m_bGridVisible = true;
         ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost;
 
         // The "Editor" viewport's own camera + ground grid - every other 3D editor already shares these
@@ -430,7 +431,6 @@ namespace xlevel
                 };
                 SceneToggle("Pivot", "P", m_bPivotCenter);
                 SceneToggle("Local", "L", m_bLocalSpace);
-                SceneToggle("Grid", "G", m_bGridVisible);
             }
 
             ImGui::PopFont();
@@ -477,6 +477,8 @@ namespace xlevel
             m_Camera.HandleInput();
             m_Camera.UpdateView(Min, Avail.x, Avail.y);
 
+            // Color-only editor helper - never submitted to xlionrender's entity draw/pick list.
+            // Always drawn; grid does not participate in selection (CPU pick + ground MaxT only).
             xgpu::tools::imgui::AddCustomRenderCallback([this](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
                 m_Grid.Draw(CmdBuffer, m_Camera.m_View.getW2C(), m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
@@ -503,7 +505,18 @@ namespace xlevel
                     const ImVec2 Mouse  = ImGui::GetIO().MousePos;
                     const auto   Origin = m_Camera.m_View.getPosition();
                     const auto   Dir    = m_Camera.m_View.RayFromScreen(Mouse.x, Mouse.y);
-                    const auto   Hit    = xlionrender::Pick(Origin, Dir);
+
+                    // No GPU ID/pick buffer in this editor (CPU AABB pick only). The grid is
+                    // color-pass-only and is not in the entity pick set - but a ray through empty
+                    // floor would still hit entity AABBs behind the ground. Cap MaxT at the
+                    // y=0 plane so a closer grid hit clears selection instead of selecting through it.
+                    float MaxT = std::numeric_limits<float>::max();
+                    if (std::fabs(Dir.m_Y) > 1.0e-6f)
+                    {
+                        const float GroundT = -Origin.m_Y / Dir.m_Y;
+                        if (GroundT > 1.0e-6f) MaxT = GroundT;
+                    }
+                    const auto Hit = xlionrender::Pick(Origin, Dir, MaxT);
 
                     xecs::scene::guid          HitScene{};
                     xecs::scene::permanent_id  HitId = xecs::scene::invalid_permanent_id_v;
