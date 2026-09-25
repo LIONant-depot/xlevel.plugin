@@ -44,6 +44,7 @@
 #include "dependencies/xeditor_tools/src/xeditor_tools_grid.h"
 #include "source/tools/xgpu_imgui_breach.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_plugin_dlls.h"
+#include "dependencies/xLIONRender/src/xlionrender_api.h"
 
 #include <memory>
 
@@ -98,12 +99,20 @@ namespace xlevel
         {
             GameMgr.RegisterComponents<xscene::name, xlevel::transform, xecs::editor::prefab_instance, xecs::component::entity_reference>();
             RegisterEngineDLLComponents(GameMgr, L"LIONCore.dll", 2);
+            RegisterEngineDLLComponents(GameMgr, L"LIONRender.dll", 3);
         }
 
-        static void RegisterHostSystems(xecs::game_mgr::instance& GameMgr) noexcept
+        // Not static (unlike RegisterHostComponents, passed around as a bare function pointer by
+        // PollGameReload) - needs m_pDevice to know whether to register LIONRender's own system.
+        void RegisterHostSystems(xecs::game_mgr::instance& GameMgr) noexcept
         {
             GameMgr.RegisterSystems<xlevel::tick_logger_a, xlevel::tick_logger_b>();
             RegisterEngineDLLSystems(GameMgr, L"LIONCore.dll");
+
+            // LIONRender's component (Primitive) is registered unconditionally above
+            // (RegisterHostComponents) so headless scenes still carry the data - but headless has no
+            // device/window to draw with, so its render SYSTEM never runs there.
+            if (m_pDevice) RegisterEngineDLLSystems(GameMgr, L"LIONRender.dll");
         }
 
         session(xresource::full_guid /*Guid*/, e10::library::guid /*LibraryGuid*/, xgpu::device* pDevice) noexcept
@@ -456,6 +465,8 @@ namespace xlevel
                 m_Camera.m_Distance = 15.0f;
                 m_Camera.m_Angles   = xmath::radian3(-30_xdeg, 45_xdeg, 0_xdeg);
                 m_Camera.m_Target   = { 0, 0, 0 };
+
+                xlionrender::Init(*m_pDevice);
             }
 
             const ImVec2 Avail = ImGui::GetContentRegionAvail();
@@ -469,6 +480,68 @@ namespace xlevel
             xgpu::tools::imgui::AddCustomRenderCallback([this](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
                 m_Grid.Draw(CmdBuffer, m_Camera.m_View.getW2C(), m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
+            });
+
+            // Structural changes (new entities, AddComponent archetype migrations) stay in a pending
+            // list until flushed - normally only done once per frame inside GameMgr.Run(), which only
+            // runs while Playing. The editor needs entities visible to Search/Foreach (render, gizmos,
+            // ...) as soon as they're created, not just after the first Play - flush unconditionally,
+            // every frame, here. Cheap no-op when the pending list is empty (the common case).
+            m_pGameMgr->m_ArchetypeMgr.UpdateStructuralChanges();
+
+            // Click-to-select: CPU ray-pick against every rendered entity's rigid_body AABB
+            // (xlionrender::Pick - xeditor_tools_picking.h under the hood, the same shared primitives
+            // xskeleton.plugin's own PickWedge uses for bones). Gated on hover + not mid-orbit, same
+            // shape as xskeleton_editor.h's own RenderViewport click handling. Routed through the
+            // command/undo system (xscene_commands_selection.h), same as the Level Tree's own row
+            // clicks, so Ctrl+Z undoes a viewport pick exactly like it undoes a tree-row pick.
+            {
+                const bool bHovered  = ImGui::IsItemHovered();
+                const bool bOrbiting = ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+                if (bHovered && !bOrbiting && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                {
+                    const ImVec2 Mouse  = ImGui::GetIO().MousePos;
+                    const auto   Origin = m_Camera.m_View.getPosition();
+                    const auto   Dir    = m_Camera.m_View.RayFromScreen(Mouse.x, Mouse.y);
+                    const auto   Hit    = xlionrender::Pick(Origin, Dir);
+
+                    xecs::scene::guid          HitScene{};
+                    xecs::scene::permanent_id  HitId = xecs::scene::invalid_permanent_id_v;
+                    if (Hit != xecs::component::entity::invalid_entity_v)
+                    {
+                        for (auto& SceneGuid : m_State.m_OpenScenes)
+                        {
+                            auto* pScene = m_pGameMgr->m_SceneMgr.Find(SceneGuid);
+                            if (!pScene) continue;
+                            if (auto It = pScene->m_RuntimeToLocal.find(Hit); It != pScene->m_RuntimeToLocal.end())
+                            {
+                                HitScene = SceneGuid;
+                                HitId    = It->second;
+                                break;
+                            }
+                        }
+                    }
+
+                    const bool bCtrl  = ImGui::GetIO().KeyCtrl;
+                    const bool bShift = ImGui::GetIO().KeyShift;
+                    if (HitId != xecs::scene::invalid_permanent_id_v)
+                    {
+                        xeditor::Run(m_Undo, bCtrl
+                            ? std::format("ToggleMultiSelect -Scene {} -Id {}", xscene::commands::FormatSceneGuid(HitScene), xscene::commands::FormatEntityId(HitId))
+                            : std::format("Select -Scene {} -Id {}", xscene::commands::FormatSceneGuid(HitScene), xscene::commands::FormatEntityId(HitId)));
+                    }
+                    else if (!bCtrl && !bShift)
+                    {
+                        xeditor::Run(m_Undo, "ClearSelection");
+                    }
+                }
+            }
+
+            // The host's own turn, every frame (Stopped/Paused/Playing alike): Draw has LIONRender's own
+            // system collect its entities (after GameMgr.Run() finished, when Playing) and issues the GPU commands.
+            xgpu::tools::imgui::AddCustomRenderCallback([this](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
+            {
+                xlionrender::Draw(CmdBuffer, m_Camera.m_View.getW2C());
             });
         }
 
