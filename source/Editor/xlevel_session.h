@@ -43,7 +43,7 @@
 #include "dependencies/xeditor_tools/src/xeditor_tools_camera.h"
 #include "dependencies/xeditor_tools/src/xeditor_tools_grid.h"
 #include "source/tools/xgpu_imgui_breach.h"
-#include "dependencies/xLIONCore/src/physics/xlioncore_physics_system.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_plugin_dlls.h"
 
 #include <memory>
 
@@ -96,12 +96,14 @@ namespace xlevel
         // matching what construction does.
         static void RegisterHostComponents(xecs::game_mgr::instance& GameMgr) noexcept
         {
-            GameMgr.RegisterComponents<xscene::name, xlevel::transform, xecs::editor::prefab_instance, xecs::component::entity_reference, xlioncore::physics::rigid_body>();
+            GameMgr.RegisterComponents<xscene::name, xlevel::transform, xecs::editor::prefab_instance, xecs::component::entity_reference>();
+            RegisterEngineDLLComponents(GameMgr, L"LIONCore.dll", 2);
         }
 
         static void RegisterHostSystems(xecs::game_mgr::instance& GameMgr) noexcept
         {
-            GameMgr.RegisterSystems<xlevel::tick_logger_a, xlevel::tick_logger_b, xlioncore::physics::system>();
+            GameMgr.RegisterSystems<xlevel::tick_logger_a, xlevel::tick_logger_b>();
+            RegisterEngineDLLSystems(GameMgr, L"LIONCore.dll");
         }
 
         session(xresource::full_guid /*Guid*/, e10::library::guid /*LibraryGuid*/, xgpu::device* pDevice) noexcept
