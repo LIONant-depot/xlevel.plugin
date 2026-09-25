@@ -40,6 +40,9 @@
 #include "dependencies/xeditor/include/xeditor/host.h"
 #include "dependencies/toolbar.imgui/ximgui_toolbar.h"
 #include "dependencies/xresource_pipeline_v2/source/editor/E10_AssetBrowser.h"
+#include "dependencies/xeditor_tools/src/xeditor_tools_camera.h"
+#include "dependencies/xeditor_tools/src/xeditor_tools_grid.h"
+#include "source/tools/xgpu_imgui_breach.h"
 
 #include <memory>
 
@@ -74,6 +77,11 @@ namespace xlevel
         bool                                         m_bLocalSpace  = false;
         bool                                         m_bGridVisible = true;
         ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost;
+
+        // The "Editor" viewport's own camera + ground grid - every other 3D editor already shares these
+        // via xeditor_tools; the Level Editor never had a camera or a grid at all before this.
+        xeditor_tools::camera                       m_Camera;
+        xeditor_tools::grid                          m_Grid;
         static constexpr float                       kEditorToolbarWidth      = 570.0f;
         static constexpr float                       kSceneToolbarWidth       = 390.0f;
         static constexpr float                       kEditorToolbarHeight     = 20.0f;
@@ -204,6 +212,7 @@ namespace xlevel
             }
             m_pGameMgr.reset();
             xlevel::UnloadGamePlugin(m_GamePlugin);
+            m_Grid.Release();
         }
 
         xeditor::IDocument& getDocument() noexcept override { return m_Document; }
@@ -416,6 +425,50 @@ namespace xlevel
             ImGui::PopStyleVar();
         }
 
+        // The "Editor" window's 3D viewport body: camera + ground grid, shared with every other editor via
+        // xeditor_tools. Runs inside RenderToolbarHost's own child window (the toolbar host's own comment
+        // documents that its RenderBody callback already gets a dedicated child region), so
+        // GetContentRegionAvail/GetCursorScreenPos here are exactly the viewport rect. No shadow caster
+        // exists for Level geometry yet, so the grid is always lit (a zero shadow matrix - the same "no
+        // shadow" convention xeditor_tools::grid::Draw already documents).
+        void RenderViewport() noexcept
+        {
+            if (!m_pDevice) { ImGui::TextDisabled("Editor"); return; }
+            const bool bFirstInit = !m_Grid.m_bReady;
+            if (!m_Grid.Init(*m_pDevice, false)) { ImGui::TextDisabled("Editor"); return; }
+            if (bFirstInit)
+            {
+                // A zero near/far (xgpu::tools::view's own default) clips the 100-unit grid entirely -
+                // every other editor's own camera setup already sets this before first use.
+                m_Camera.m_View.setFov(60_xdeg);
+                m_Camera.m_View.setNearZ(0.01f);
+                m_Camera.m_View.setFarZ(10000.0f);
+
+                // Every other editor's camera auto-fits around real geometry (m_bReframe fits m_Radius/
+                // m_Center); Level starts with no geometry to fit to, so a zero-pitch default look would
+                // stare straight along the horizon - the flat ground plane edge-on, invisible. Start at a
+                // fixed 3/4-overhead framing instead, the same kind of default every other editor's own
+                // camera ends up at once it has fit around something.
+                m_Camera.m_bReframe = false;
+                m_Camera.m_Distance = 15.0f;
+                m_Camera.m_Angles   = xmath::radian3(-30_xdeg, 45_xdeg, 0_xdeg);
+                m_Camera.m_Target   = { 0, 0, 0 };
+            }
+
+            const ImVec2 Avail = ImGui::GetContentRegionAvail();
+            const ImVec2 Min   = ImGui::GetCursorScreenPos();
+            if (Avail.x <= 1.0f || Avail.y <= 1.0f) return;
+
+            ImGui::InvisibleButton("##LevelEditorViewport", Avail);
+            m_Camera.HandleInput();
+            m_Camera.UpdateView(Min, Avail.x, Avail.y);
+
+            xgpu::tools::imgui::AddCustomRenderCallback([this](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
+            {
+                m_Grid.Draw(CmdBuffer, m_Camera.m_View.getW2C(), m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
+            });
+        }
+
         // Recompile-check completion + the deferred "Stop" click. MUST run at a clean top-of-frame point, never
         // nested inside an active ImGui frame (a Game.dll reload/Stop tears the whole world down and rebuilds
         // it - confirmed empirically in the original port that doing this from inside an active ImGui frame,
@@ -587,7 +640,7 @@ namespace xlevel
                 {
                     ximgui::toolbar::RenderToolbarHost(m_EditorToolbarHost, ImGui::GetContentRegionAvail(),
                         [this](const char* Name, ximgui::toolbar::axis Axis) { RenderEditorToolbar(Name, Axis); },
-                        [&]() { ImGui::TextDisabled("Editor"); });
+                        [this]() { RenderViewport(); });
                 }
                 ImGui::End();
                 ImGui::PopStyleVar();
