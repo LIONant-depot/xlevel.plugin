@@ -18,19 +18,27 @@ namespace xlevel
     // be forgotten at some future new reload trigger. GetProcAddress returning null (an
     // older-generation DLL built before this export existed) just means an empty map - every
     // component then falls back to "uncategorized", exactly like it already does today.
-    inline void LoadGameComponentDisplayInfo( game_plugin_state& Plugin ) noexcept
+    // Merge one DLL's XScript_GetComponentDisplayInfo into g_ComponentDisplayInfo (overwrites by name).
+    inline void MergeComponentDisplayInfoFromModule( HMODULE hModule ) noexcept
     {
-        xscene::g_ComponentDisplayInfo.clear();
-        if (!Plugin.isLoaded()) return;
-
-        auto* pGetInfo = reinterpret_cast<xscript::pfn_get_component_display_info>(GetProcAddress(Plugin.m_hModule, xscript::kGetComponentDisplayInfoName));
+        if (!hModule) return;
+        auto* pGetInfo = reinterpret_cast<xscript::pfn_get_component_display_info>(GetProcAddress(hModule, xscript::kGetComponentDisplayInfoName));
         if (pGetInfo == nullptr) return;
-
         pGetInfo([](void* pUserData, std::uint64_t /*Guid*/, const char* pName, const char* pCategory, int Priority) noexcept
         {
             auto& Map = *reinterpret_cast<std::unordered_map<std::string, xscene::component_display_info>*>(pUserData);
             Map[pName] = { pCategory, Priority };
         }, &xscene::g_ComponentDisplayInfo);
+    }
+
+    inline void LoadGameComponentDisplayInfo( game_plugin_state& Plugin ) noexcept
+    {
+        xscene::g_ComponentDisplayInfo.clear();
+        // Engine DLLs first (Transform / Physics / Primitive categories), then Game.dll overlays.
+        MergeComponentDisplayInfoFromModule(GetModuleHandleW(L"LIONCore.dll"));
+        MergeComponentDisplayInfoFromModule(GetModuleHandleW(L"LIONRender.dll"));
+        if (Plugin.isLoaded())
+            MergeComponentDisplayInfoFromModule(Plugin.m_hModule);
     }
 
     //---------------------------------------------------------------------------
