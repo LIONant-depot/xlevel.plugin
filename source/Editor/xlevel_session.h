@@ -45,6 +45,7 @@
 #include "source/tools/xgpu_imgui_breach.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_plugin_dlls.h"
 #include "dependencies/xLIONRender/src/xlionrender_api.h"
+#include "dependencies/ImGuizmo/src/ImGuizmo.h"
 
 #include <memory>
 #include <limits>
@@ -80,6 +81,14 @@ namespace xlevel
         bool                                         m_bPivotCenter = true;
         bool                                         m_bLocalSpace  = false;
         ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost;
+
+        // Gizmo drag state (Move/Rotate/Scale tools) - persists across frames while ImGuizmo::IsUsing()
+        // is true, so the Translate/Rotate/Scale command is Execute()'d exactly once on mouse-release
+        // (Before = value captured when the drag started), not once per frame.
+        bool                                         m_bGizmoWasUsing     = false;
+        xmath::fvec3                                 m_GizmoBeforePosition{};
+        xmath::fquat                                 m_GizmoBeforeRotation{};
+        xmath::fvec3                                 m_GizmoBeforeScale{};
 
         // The "Editor" viewport's own camera + ground grid - every other 3D editor already shares these
         // via xeditor_tools; the Level Editor never had a camera or a grid at all before this.
@@ -411,9 +420,10 @@ namespace xlevel
                 {
                     if (bHorizontal && !bFirstButton) ImGui::SameLine();
                     bFirstButton = false;
-                    if (m_SceneTool == ToolIndex) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Header]);
+                    const bool bActive = m_SceneTool == ToolIndex;
+                    if (bActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Header]);
                     if (ImGui::Button(Label, ImVec2(32.0f, ButtonHeight))) m_SceneTool = ToolIndex;
-                    if (m_SceneTool == ToolIndex) ImGui::PopStyleColor();
+                    if (bActive) ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::TextUnformatted(Tooltip); ImGui::EndTooltip(); }
                 };
                 SceneButton("Q", 0, "Select tool");
@@ -473,11 +483,20 @@ namespace xlevel
             const ImVec2 Min   = ImGui::GetCursorScreenPos();
             if (Avail.x <= 1.0f || Avail.y <= 1.0f) return;
 
-            ImGui::InvisibleButton("##LevelEditorViewport", Avail);
-            m_Camera.HandleInput();
+            // View matrices must be current before the gizmo below, which in turn must run before the
+            // InvisibleButton (see the gizmo block's comment) - so this is one frame stale relative to
+            // this frame's HandleInput() orbit adjustment. Only visible while actively orbiting, and
+            // orbiting (right/middle) and dragging the gizmo (left) are mutually exclusive anyway.
             m_Camera.UpdateView(Min, Avail.x, Avail.y);
 
-            // Color-only editor helper - never submitted to xlionrender's entity draw/pick list.
+            // The 3D scene is queued FIRST, before the gizmo: AddCustomRenderCallback just inserts a
+            // callback into this window's draw list, and draw-list order IS paint order. The gizmo's
+            // own vertices (below) must come after these or the opaque scene paints over it (direct user
+            // report: "you are rendering the gizmo using the ZBuffer"). Queueing early changes nothing
+            // about WHAT these draw - the lambdas run at render time and read live state (Transform,
+            // camera, SetSelectedEntity - which is still set further down, after click-to-pick).
+            //
+            // Grid: color-only editor helper - never submitted to xlionrender's entity draw/pick list.
             // Always drawn; grid does not participate in selection (CPU pick + ground MaxT only).
             xgpu::tools::imgui::AddCustomRenderCallback([this](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
@@ -491,76 +510,209 @@ namespace xlevel
             // every frame, here. Cheap no-op when the pending list is empty (the common case).
             m_pGameMgr->m_ArchetypeMgr.UpdateStructuralChanges();
 
-            // Click-to-select: CPU ray-pick against every rendered entity's rigid_body AABB
-            // (xlionrender::Pick - xeditor_tools_picking.h under the hood, the same shared primitives
-            // xskeleton.plugin's own PickWedge uses for bones). Gated on hover + not mid-orbit, same
-            // shape as xskeleton_editor.h's own RenderViewport click handling. Routed through the
-            // command/undo system (xscene_commands_selection.h), same as the Level Tree's own row
-            // clicks, so Ctrl+Z undoes a viewport pick exactly like it undoes a tree-row pick.
-            {
-                const bool bHovered  = ImGui::IsItemHovered();
-                const bool bOrbiting = ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-                if (bHovered && !bOrbiting && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-                {
-                    const ImVec2 Mouse  = ImGui::GetIO().MousePos;
-                    const auto   Origin = m_Camera.m_View.getPosition();
-                    const auto   Dir    = m_Camera.m_View.RayFromScreen(Mouse.x, Mouse.y);
-
-                    // No GPU ID/pick buffer in this editor (CPU AABB pick only). The grid is
-                    // color-pass-only and is not in the entity pick set - but a ray through empty
-                    // floor would still hit entity AABBs behind the ground. Cap MaxT at the
-                    // y=0 plane so a closer grid hit clears selection instead of selecting through it.
-                    float MaxT = std::numeric_limits<float>::max();
-                    if (std::fabs(Dir.m_Y) > 1.0e-6f)
-                    {
-                        const float GroundT = -Origin.m_Y / Dir.m_Y;
-                        if (GroundT > 1.0e-6f) MaxT = GroundT;
-                    }
-                    const auto Hit = xlionrender::Pick(Origin, Dir, MaxT);
-
-                    xecs::scene::guid          HitScene{};
-                    xecs::scene::permanent_id  HitId = xecs::scene::invalid_permanent_id_v;
-                    if (Hit != xecs::component::entity::invalid_entity_v)
-                    {
-                        for (auto& SceneGuid : m_State.m_OpenScenes)
-                        {
-                            auto* pScene = m_pGameMgr->m_SceneMgr.Find(SceneGuid);
-                            if (!pScene) continue;
-                            if (auto It = pScene->m_RuntimeToLocal.find(Hit); It != pScene->m_RuntimeToLocal.end())
-                            {
-                                HitScene = SceneGuid;
-                                HitId    = It->second;
-                                break;
-                            }
-                        }
-                    }
-
-                    const bool bCtrl  = ImGui::GetIO().KeyCtrl;
-                    const bool bShift = ImGui::GetIO().KeyShift;
-                    if (HitId != xecs::scene::invalid_permanent_id_v)
-                    {
-                        xeditor::Run(m_Undo, bCtrl
-                            ? std::format("ToggleMultiSelect -Scene {} -Id {}", xscene::commands::FormatSceneGuid(HitScene), xscene::commands::FormatEntityId(HitId))
-                            : std::format("Select -Scene {} -Id {}", xscene::commands::FormatSceneGuid(HitScene), xscene::commands::FormatEntityId(HitId)));
-                    }
-                    else if (!bCtrl && !bShift)
-                    {
-                        xeditor::Run(m_Undo, "ClearSelection");
-                    }
-                }
-            }
-
-            // Tell LIONRender which entity (if any) to draw with an outline this frame - matches the
-            // same primary selection the Inspector/Level Tree already show (multi-select beyond the
-            // primary isn't outlined yet, a possible follow-up).
-            xlionrender::SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
-
             // The host's own turn, every frame (Stopped/Paused/Playing alike): Draw has LIONRender's own
             // system collect its entities (after GameMgr.Run() finished, when Playing) and issues the GPU commands.
             xgpu::tools::imgui::AddCustomRenderCallback([this, Avail](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
                 xlionrender::Draw(CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y);
             });
+
+            // Gizmo (Move/Rotate/Scale tools, m_SceneTool 1/2/3) - drives the primary selection's
+            // Transform through the command system (Translate/Rotate/Scale, xscene_commands_transform_gizmo.h).
+            // Execute() fires once, on mouse-release, not per-frame - m_bGizmoWasUsing/m_GizmoBefore*
+            // capture the value at drag-start so the undo entry's Before/After spans the whole drag.
+            //
+            // Three ImGuizmo requirements, all confirmed from its source (direct user report: "I can
+            // not click on them"):
+            //  - Draws into THIS window's draw list (SetDrawlist() with no argument): hover detection
+            //    (IsHoveringWindow, via ComputeContext's mbMouseOver) requires g.HoveredWindow to be the
+            //    draw list's OWNER window. The foreground draw list has no owner window, so hover never
+            //    registered there.
+            //  - ImGuizmo::BeginFrame() once per frame before Manipulate(): it resets mbOverGizmoHotspot,
+            //    which HandleTranslation/Rotation/Scale OR-accumulate and then use to force MT_NONE
+            //    ("another gizmo already claimed the hotspot this frame"). Never resetting it meant the
+            //    first hovered frame latched it true forever, and no handle could ever be grabbed.
+            //    BeginFrame's own full-viewport "gizmo" window is NoInputs (never becomes HoveredWindow)
+            //    and draws nothing here, since SetDrawlist() below redirects to this window's list.
+            //  - Hover is read with IsOver(Operation), which computes live from the mouse.
+            //  - Runs BEFORE the viewport InvisibleButton, which is skipped entirely while the gizmo is
+            //    hovered/in use (see below): CanActivate() requires !IsAnyItemHovered(), and that checks
+            //    g.HoveredIdPreviousFrame too - so the button must not claim hover on the frames BEFORE
+            //    the click either, not just the click frame.
+            bool bGizmoInteracting = false;
+            if (m_SceneTool >= 1 && m_SceneTool <= 3 && m_State.m_SelectedEntityId != xecs::scene::invalid_permanent_id_v)
+            {
+                if (auto* pXform = xscene::commands::ResolveTransform(m_CmdContext, m_State.m_SelectedEntityScene, m_State.m_SelectedEntityId))
+                {
+                    ImGuizmo::BeginFrame();
+                    ImGuizmo::SetOrthographic(false);
+                    ImGuizmo::SetDrawlist();
+                    ImGuizmo::SetRect(Min.x, Min.y, Avail.x, Avail.y);
+
+                    const auto Operation = m_SceneTool == 1 ? ImGuizmo::TRANSLATE : m_SceneTool == 2 ? ImGuizmo::ROTATE : ImGuizmo::SCALE;
+                    const auto Mode      = m_bLocalSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+
+                    // getV2CScales() deliberately flips Y for this engine's Vulkan NDC convention (see
+                    // its own comment, xgpu_view_inline.h) - correct for xgpu's actual GPU pipeline, but
+                    // ImGuizmo is a generic (OpenGL-convention) math library with no idea about that
+                    // flip, so feeding it getV2C() directly inverted its whole widget's Y axis (direct
+                    // user report: green arrow pointing down, gizmo visibly wrong). Undo just that one
+                    // flip for ImGuizmo's own copy by negating clip-space row 1 (every column's row-1
+                    // term, not just the diagonal - the off-axis frustum term at (1,2) needs it too).
+                    xmath::fmat4 GizmoProjection = m_Camera.m_View.getV2C();
+                    GizmoProjection.m_10 = -GizmoProjection.m_10;
+                    GizmoProjection.m_11 = -GizmoProjection.m_11;
+                    GizmoProjection.m_12 = -GizmoProjection.m_12;
+                    GizmoProjection.m_13 = -GizmoProjection.m_13;
+
+                    xmath::fmat4 World{};
+                    World.setupSRT(pXform->m_Scale, pXform->m_Rotation, pXform->m_Position);
+
+                    // Snapshot the pre-drag value every frame we are NOT already mid-drag. The grab itself
+                    // only happens inside Manipulate() below, and m_bGizmoWasUsing is already true by the
+                    // next frame - so an "IsUsing() && !m_bGizmoWasUsing" check up here could never fire
+                    // (direct user report: "the Undo is not working well"). Manipulate() doesn't modify
+                    // the matrix on the activation frame itself, so this is still the true pre-drag value.
+                    if (!m_bGizmoWasUsing)
+                    {
+                        m_GizmoBeforePosition = pXform->m_Position;
+                        m_GizmoBeforeRotation = pXform->m_Rotation;
+                        m_GizmoBeforeScale    = pXform->m_Scale;
+                    }
+
+                    if (ImGuizmo::Manipulate(reinterpret_cast<const float*>(&m_Camera.m_View.getW2V()), reinterpret_cast<const float*>(&GizmoProjection)
+                        , Operation, Mode, reinterpret_cast<float*>(&World)))
+                    {
+                        // ImGuizmo writes the result back in the same memory layout it was given, so
+                        // xmath's own Extract* (the exact inverse of the setupSRT above) reads it
+                        // directly - no round-trip through ImGuizmo's DecomposeMatrixToComponents Euler
+                        // angles, whose axis order doesn't match xmath::radian3's ZXY (direct user
+                        // report: "the rotation is very strange"). Only the channel this tool edits is
+                        // written, so the other two stay bit-exact instead of picking up float drift.
+                        switch (m_SceneTool)
+                        {
+                        case 1: pXform->m_Position = World.ExtractPosition(); break;
+                        case 2: pXform->m_Rotation       = World.ExtractRotation();
+                                pXform->m_EditorRotation = pXform->m_Rotation.ToEuler();
+                                break;
+                        case 3: pXform->m_Scale = World.ExtractScale(); break;
+                        }
+                        pXform->MarkDirtyToPhysics();
+                    }
+
+                    bGizmoInteracting = ImGuizmo::IsOver(Operation) || ImGuizmo::IsUsing();
+
+                    if (m_bGizmoWasUsing && !ImGuizmo::IsUsing())
+                    {
+                        // Mouse just released - commit exactly one undo entry for the whole drag, and none
+                        // at all for a click that didn't actually change anything.
+                        const char* pCmd = m_SceneTool == 1 ? "Translate" : m_SceneTool == 2 ? "Rotate" : "Scale";
+                        const auto Before = m_SceneTool == 1 ? xscene::commands::PackBlob(m_GizmoBeforePosition)
+                                          : m_SceneTool == 2 ? xscene::commands::PackBlob(m_GizmoBeforeRotation)
+                                          :                    xscene::commands::PackBlob(m_GizmoBeforeScale);
+                        const auto After  = m_SceneTool == 1 ? xscene::commands::PackBlob(pXform->m_Position)
+                                          : m_SceneTool == 2 ? xscene::commands::PackBlob(pXform->m_Rotation)
+                                          :                    xscene::commands::PackBlob(pXform->m_Scale);
+                        if (Before != After)
+                        {
+                            xeditor::Run(m_Undo, std::format("{} -Scene {} -Id {} -Before {} -After {}", pCmd
+                                , xscene::commands::FormatSceneGuid(m_State.m_SelectedEntityScene)
+                                , xscene::commands::FormatEntityId(m_State.m_SelectedEntityId), Before, After));
+                        }
+                    }
+                    m_bGizmoWasUsing = ImGuizmo::IsUsing();
+                }
+            }
+
+            // The viewport InvisibleButton (camera-orbit input, hotkeys, click-to-pick) - skipped
+            // entirely, with everything keyed off its item state, on any frame the gizmo is hovered or
+            // being dragged. ImGuizmo's CanActivate() needs !IsAnyItemHovered(), which also checks
+            // g.HoveredIdPreviousFrame (latched at frame start from the PRIOR frame) - so this button,
+            // which spans the whole viewport, must not claim hover on the frames leading up to the
+            // click either. Skipping it also keeps the picker's "missed everything -> ClearSelection"
+            // branch from firing on a click meant for the gizmo, and keeps the camera from orbiting
+            // mid-drag.
+            if (!bGizmoInteracting)
+            {
+                ImGui::InvisibleButton("##LevelEditorViewport", Avail);
+                m_Camera.HandleInput();
+
+                // Gizmo tool hotkeys (Unity convention: Q=select, W=move, E=rotate, R=scale), only while
+                // the viewport is hovered and no text field wants the keystroke.
+                if (ImGui::IsItemHovered() && !ImGui::GetIO().WantTextInput)
+                {
+                    if (ImGui::IsKeyPressed(ImGuiKey_Q)) m_SceneTool = 0;
+                    if (ImGui::IsKeyPressed(ImGuiKey_W)) m_SceneTool = 1;
+                    if (ImGui::IsKeyPressed(ImGuiKey_E)) m_SceneTool = 2;
+                    if (ImGui::IsKeyPressed(ImGuiKey_R)) m_SceneTool = 3;
+                }
+
+                // Click-to-select: CPU ray-pick against every rendered entity's rigid_body AABB
+                // (xlionrender::Pick - xeditor_tools_picking.h under the hood, the same shared primitives
+                // xskeleton.plugin's own PickWedge uses for bones). Gated on hover + not mid-orbit, same
+                // shape as xskeleton_editor.h's own RenderViewport click handling. Routed through the
+                // command/undo system (xscene_commands_selection.h), same as the Level Tree's own row
+                // clicks, so Ctrl+Z undoes a viewport pick exactly like it undoes a tree-row pick.
+                {
+                    const bool bHovered  = ImGui::IsItemHovered();
+                    const bool bOrbiting = ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+                    if (bHovered && !bOrbiting && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                    {
+                        const ImVec2 Mouse  = ImGui::GetIO().MousePos;
+                        const auto   Origin = m_Camera.m_View.getPosition();
+                        const auto   Dir    = m_Camera.m_View.RayFromScreen(Mouse.x, Mouse.y);
+
+                        // No GPU ID/pick buffer in this editor (CPU AABB pick only). The grid is
+                        // color-pass-only and is not in the entity pick set - but a ray through empty
+                        // floor would still hit entity AABBs behind the ground. Cap MaxT at the
+                        // y=0 plane so a closer grid hit clears selection instead of selecting through it.
+                        float MaxT = std::numeric_limits<float>::max();
+                        if (std::fabs(Dir.m_Y) > 1.0e-6f)
+                        {
+                            const float GroundT = -Origin.m_Y / Dir.m_Y;
+                            if (GroundT > 1.0e-6f) MaxT = GroundT;
+                        }
+                        const auto Hit = xlionrender::Pick(Origin, Dir, MaxT);
+
+                        xecs::scene::guid          HitScene{};
+                        xecs::scene::permanent_id  HitId = xecs::scene::invalid_permanent_id_v;
+                        if (Hit != xecs::component::entity::invalid_entity_v)
+                        {
+                            for (auto& SceneGuid : m_State.m_OpenScenes)
+                            {
+                                auto* pScene = m_pGameMgr->m_SceneMgr.Find(SceneGuid);
+                                if (!pScene) continue;
+                                if (auto It = pScene->m_RuntimeToLocal.find(Hit); It != pScene->m_RuntimeToLocal.end())
+                                {
+                                    HitScene = SceneGuid;
+                                    HitId    = It->second;
+                                    break;
+                                }
+                            }
+                        }
+
+                        const bool bCtrl  = ImGui::GetIO().KeyCtrl;
+                        const bool bShift = ImGui::GetIO().KeyShift;
+                        if (HitId != xecs::scene::invalid_permanent_id_v)
+                        {
+                            xeditor::Run(m_Undo, bCtrl
+                                ? std::format("ToggleMultiSelect -Scene {} -Id {}", xscene::commands::FormatSceneGuid(HitScene), xscene::commands::FormatEntityId(HitId))
+                                : std::format("Select -Scene {} -Id {}", xscene::commands::FormatSceneGuid(HitScene), xscene::commands::FormatEntityId(HitId)));
+                        }
+                        else if (!bCtrl && !bShift)
+                        {
+                            xeditor::Run(m_Undo, "ClearSelection");
+                        }
+                    }
+                }
+            }
+
+            // Tell LIONRender which entity (if any) to draw with an outline this frame - matches the
+            // same primary selection the Inspector/Level Tree already show (multi-select beyond the
+            // primary isn't outlined yet, a possible follow-up). Read by the Draw callback queued
+            // above when it actually executes at render time, so setting it here (after this frame's
+            // click-to-pick) is still in time.
+            xlionrender::SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
         }
 
         // Recompile-check completion + the deferred "Stop" click. MUST run at a clean top-of-frame point, never
