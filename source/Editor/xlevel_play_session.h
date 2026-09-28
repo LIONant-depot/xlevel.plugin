@@ -29,11 +29,21 @@ namespace xlevel
 
     // Stopped/Paused -> Playing. Writes V1 (the real disk save Stop restores from - it must be disk, not the
     // fast binary Vn bridge, because Stop needs the Level tree back) and marks the undo point Stop rewinds to.
+    //
+    // Fires xecs::scene::mgr::m_OnSceneReady for every currently-open scene, once, right here - this
+    // (not scene load itself) is "about to actually run" in the editor. Every open scene's data is
+    // already guaranteed final at this point (SaveEverything above only writes what's already live;
+    // nothing here loads/creates entities), so a handler reading component values (Physics creating
+    // static bodies, see xlioncore_physics_system.h::OnSceneReady) always sees real, final data.
     inline void EnterPlaying( level_context& Ed ) noexcept
     {
         SaveEverything(Ed.World(), Ed.State());
         Ed.State().m_PlayHistoryBoundary = Ed.m_Undo.GetUndoIndex();
         Ed.State().m_PlayState           = level_state::play_state::Playing;
+
+        for (auto& SceneGuid : Ed.State().m_OpenScenes)
+            if (auto* pScene = Ed.World().m_SceneMgr.Find(SceneGuid))
+                Ed.World().m_SceneMgr.m_OnSceneReady.NotifyAll(*pScene);
     }
 
     // A pending Play that will never start (its build failed): drop it and release the Play lock it took.

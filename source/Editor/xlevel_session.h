@@ -45,6 +45,8 @@
 #include "source/tools/xgpu_imgui_breach.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_plugin_dlls.h"
 #include "dependencies/xLIONRender/src/xlionrender_api.h"
+#include "dependencies/xLIONCore/src/tags/xlioncore_tags.h"
+#include "dependencies/xLIONCore/src/transform/xlioncore_transform.h"
 #include "dependencies/ImGuizmo/src/ImGuizmo.h"
 
 #include <memory>
@@ -123,6 +125,22 @@ namespace xlevel
             // (RegisterHostComponents) so headless scenes still carry the data - but headless has no
             // device/window to draw with, so its render SYSTEM never runs there.
             if (m_pDevice) RegisterEngineDLLSystems(GameMgr, L"LIONRender.dll");
+
+            // xscene.plugin/xlevel.plugin (compiled directly into THIS binary, xLION.exe) name
+            // xlioncore::static_tag/transform directly for the static-demotion-while-Playing feature -
+            // real types, actually registered by xLIONCore.dll's own XecsPlugin_RegisterSystems just
+            // above (which already syncs ITS OWN local info_v copies via the same SyncLocalBitIDs<>()).
+            // That sync only fixes xLIONCore.dll's copies, though - info_v<T> is a per-BINARY
+            // singleton (see info::m_BitID's own comment in xecs_component_type.h), so xLION.exe gets
+            // its own separate, otherwise-never-synced copies of these same two types. This is the
+            // exact scenario SyncLocalBitIDs<>() itself documents ("types some OTHER binary
+            // registered that this one queries/creates", e.g. LIONRender using LIONCore's rigid_body) -
+            // mirroring xLIONCore.dll's own call above, just for this binary's copies instead. Without
+            // this, any exe-side code reading xlioncore::static_tag/transform's raw .m_BitID directly
+            // gets a garbage/default value (confirmed live: asserted "Bit >= 0 && Bit < max" the one
+            // time this was missed) - must run after Lock (already done, inside LIONCore.dll's own
+            // RegisterSystems above) and before any host-compiled system/command touches these types.
+            xecs::component::mgr::SyncLocalBitIDs<xlioncore::static_tag, xlioncore::transform>();
         }
 
         session(xresource::full_guid /*Guid*/, e10::library::guid /*LibraryGuid*/, xgpu::device* pDevice) noexcept
