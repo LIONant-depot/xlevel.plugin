@@ -638,8 +638,11 @@ namespace xlevel
                 m_Camera.HandleInput();
 
                 // Gizmo tool hotkeys (Unity convention: Q=select, W=move, E=rotate, R=scale), only while
-                // the viewport is hovered and no text field wants the keystroke.
-                if (ImGui::IsItemHovered() && !ImGui::GetIO().WantTextInput)
+                // the viewport is hovered, no text field wants the keystroke, and the camera isn't
+                // flying (right mouse held - xeditor_tools::camera::HandleInput reads Q/W/E on the same
+                // keys for strafe/up-down while flying; without this, holding right-click and pressing W
+                // to fly forward would also switch to the Move tool on every keypress).
+                if (ImGui::IsItemHovered() && !ImGui::GetIO().WantTextInput && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
                 {
                     if (ImGui::IsKeyPressed(ImGuiKey_Q)) m_SceneTool = 0;
                     if (ImGui::IsKeyPressed(ImGuiKey_W)) m_SceneTool = 1;
