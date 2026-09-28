@@ -9,6 +9,7 @@
 // LevelEditor_Theme.h included directly (not just relying on LevelEditor_Main.cpp's own later include)
 // for UnityCheckbox - same self-sufficiency reasoning as level/LevelEditor_Panel_LevelTree.h's own top comment.
 #include "source/Editors/LevelEditor/LevelEditor_Theme.h"
+#include "plugins/xscene.plugin/source/Editor/xscene_system_usage.h"
 
 namespace xlevel
 {
@@ -118,6 +119,10 @@ namespace xlevel
                     const float AvailWidth = ImGui::GetContentRegionAvail().x;
                     ImGui::Selectable(Label.c_str(), false, ImGuiSelectableFlags_None, ImVec2(AvailWidth, 0.0f));
                     if (!bEnabled) ImGui::PopStyleColor();
+                    // Rows is index-aligned with m_UpdaterSystems (see GetUpdateSystemRows).
+                    if (ImGui::IsItemHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left) && i < GameMgr.m_SystemMgr.m_UpdaterSystems.size())
+                        ImGui::SetTooltip("%s  (runs #%d)\n%s", Row.m_pName ? Row.m_pName : "(unnamed system)", static_cast<int>(i),
+                                          xscene::system_usage::DescribeDeclaration(*GameMgr.m_SystemMgr.m_UpdaterSystems[i].first).c_str());
 
                     if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
                     {

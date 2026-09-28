@@ -16,6 +16,7 @@
 //   testing had to read a raw .entity file off disk by hand to get this information even once - the
 //   whole point of phase 5+ was to never need that.
 #include "plugins/xlevel.plugin/source/Editor/xlevel_command_context.h"
+#include "plugins/xscene.plugin/source/Editor/xscene_system_usage.h"
 
 namespace xlevel::commands
 {
@@ -142,7 +143,7 @@ namespace xlevel::commands
     struct describe_entity_query_cmd : level_query_command
     {
         describe_entity_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "DescribeEntity", pDataBase) { RegisterArguments(); }
-        const char* getCommandHelp() const noexcept override { return "Lists every component on an entity, with each property's path/value/TypeGuid - everything SetProperty needs. Usage: DescribeEntity -Scene hexguid -Id hexid"; }
+        const char* getCommandHelp() const noexcept override { return "Lists every component on an entity (data/share/tag) with each property's path/value/TypeGuid - everything SetProperty needs - then which systems run on it, what they read/write, which don't run and why, and what removing each component would change. Usage: DescribeEntity -Scene hexguid -Id hexid"; }
         void RegisterArguments() noexcept override
         {
             m_hScene = m_Parser.addOption("Scene", "Scene guid, 16 hex digits",      true, 1);
@@ -165,23 +166,23 @@ namespace xlevel::commands
 
             auto& Details = World().m_ComponentMgr.getEntityDetails(Entity);
             if (!Details.m_pPool) return "DescribeEntity: entity has no components";
-            auto DataSpan = Details.m_pPool->m_pArchetype->getDataComponentInfos();
+
+            // Internal bookkeeping components (entity self-identity, parent/children, prefab plumbing)
+            // are excluded - not addable/settable via AddComponent/SetProperty, same filter as
+            // ListComponentTypes.
+            const auto Components = xscene::UserComponents(*Details.m_pPool->m_pArchetype);
 
             std::string Out;
-            for (auto pInfo : DataSpan)
+            for (auto pInfo : Components)
             {
-                // Internal bookkeeping components (entity self-identity, parent/children, prefab
-                // plumbing, etc.) are not addable/settable via AddComponent/SetProperty - same
-                // filter ListComponentTypes uses. Skipping them here isn't just cosmetic: the
-                // entity's own self-identity component is exactly the kind of type
-                // FormatPropertyValue below has to special-case for everyone else - no need to walk
-                // it here at all since it's never addressable via SetProperty anyway.
-                if (xscene::IsInternalComponent(pInfo)) continue;
-                Out += std::format("[{:016X}] {}\n", pInfo->m_Guid.m_Value, pInfo->m_pName);
+                const char* pKind = pInfo->m_TypeID == xecs::component::type::id::SHARE ? "share"
+                                  : pInfo->m_TypeID == xecs::component::type::id::TAG   ? "tag"
+                                  :                                                        "data";
+                Out += std::format("[{:016X}] {}  ({})\n", pInfo->m_Guid.m_Value, pInfo->m_pName, pKind);
                 if (!pInfo->m_pPropertyTable) continue;
-                const auto iType = Details.m_pPool->findIndexComponentFromInfo(*pInfo);
-                if (iType < 0) continue;
-                auto* pData = &Details.m_pPool->m_pComponent[iType][Details.m_PoolIndex.m_Value * pInfo->m_Size];
+                // DATA lives in the entity's pool, SHARE on its family's share-entity, TAG nowhere.
+                auto* pData = static_cast<std::byte*>(xscene::ResolveComponentPointer(World(), Entity, *pInfo));
+                if (!pData) continue;
 
                 xproperty::settings::context Context;
                 xproperty::sprop::collector(pData, *pInfo->m_pPropertyTable, Context, [&](const char* pPropertyName, xproperty::any&& Data, const xproperty::type::members&, bool, const void*) noexcept
@@ -193,6 +194,7 @@ namespace xlevel::commands
                     Out += std::format("    {} = {}  (TypeGuid {:08X})\n", pPropertyName, ValueStr, TypeGuid);
                 });
             }
+            Out += "\n" + xscene::system_usage::DescribeEntitySystems(World(), Details.m_pPool->m_pArchetype->getComponentBits(), Components);
             return Out;
         }
 
@@ -208,20 +210,49 @@ namespace xlevel::commands
     struct list_component_types_query_cmd : level_query_command
     {
         list_component_types_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "ListComponentTypes", pDataBase) { RegisterArguments(); }
-        const char* getCommandHelp() const noexcept override { return "Lists every addable component type (guid + name). Usage: ListComponentTypes"; }
+        const char* getCommandHelp() const noexcept override { return "Lists every addable component type (guid, kind data/share/tag, name, and which systems use it). Usage: ListComponentTypes"; }
+        void RegisterArguments() noexcept override {}
+
+        std::string Query() noexcept override
+        {
+            const auto  Systems = xscene::system_usage::AllSystems(World());
+            std::string Out;
+            for (auto& Pair : xecs::component::mgr::s_Registry.m_ComponentInfoMap)
+            {
+                auto* pInfo = Pair.second;
+                // Same set the Add Component popup offers (DATA, SHARE and TAG).
+                const char* pKind = pInfo->m_TypeID == xecs::component::type::id::DATA  ? "data"
+                                  : pInfo->m_TypeID == xecs::component::type::id::SHARE ? "share"
+                                  : pInfo->m_TypeID == xecs::component::type::id::TAG   ? "tag"
+                                  :                                                        nullptr;
+                if (!pKind || xscene::IsInternalComponent(pInfo)) continue;
+                const auto Used = xscene::system_usage::UsedBy(Systems, pInfo->m_Guid.m_Value);
+                Out += std::format("{:016X}  {:<5}  {}{}\n", pInfo->m_Guid.m_Value, pKind, pInfo->m_pName, Used.empty() ? "" : "   used by: " + Used);
+            }
+            return Out;
+        }
+    };
+
+    //================================================================================================
+    // ListSystems - every registered system in execution order, with what each one declares it
+    // touches (must/one-of/none-of/if-present, reads/writes). Per-entity view: DescribeEntity.
+    //================================================================================================
+    struct list_systems_query_cmd : level_query_command
+    {
+        list_systems_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "ListSystems", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Lists every system (update systems in execution order, then notifiers) with the components each declares and whether it reads or writes them. Usage: ListSystems"; }
         void RegisterArguments() noexcept override {}
 
         std::string Query() noexcept override
         {
             std::string Out;
-            for (auto& Pair : xecs::component::mgr::s_Registry.m_ComponentInfoMap)
+            for (auto& S : xscene::system_usage::AllSystems(World(), false))
             {
-                auto* pInfo = Pair.second;
-                if (pInfo->m_TypeID != xecs::component::type::id::DATA) continue;
-                if (xscene::IsInternalComponent(pInfo)) continue;
-                Out += std::format("{:016X}  {}\n", pInfo->m_Guid.m_Value, pInfo->m_pName);
+                Out += std::format("{}  [{}{}]\n", xscene::system_usage::SystemName(S),
+                                   S.m_bUpdate ? std::format("update #{}", S.m_Order) : std::string("notifier"), S.m_bEnabled ? "" : ", DISABLED");
+                Out += xscene::system_usage::DescribeDeclaration(*S.m_pInfo, "    ");
             }
-            return Out;
+            return Out.empty() ? std::string("No systems registered.") : Out;
         }
     };
 }
