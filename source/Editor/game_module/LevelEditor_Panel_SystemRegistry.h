@@ -14,6 +14,51 @@
 namespace xlevel
 {
     //---------------------------------------------------------------------------
+    // Tooltip listing one system's declared components - how each one matches (must / one of /
+    // none of / if present) and how it's accessed - tagging builder components, which exist only
+    // while an entity is being created (doc/xecs_builder_components.md).
+    //---------------------------------------------------------------------------
+    inline void RenderSystemAccessTooltip(const xecs::system::type::info& Info, const char* pHeader) noexcept
+    {
+        if (!ImGui::BeginTooltip()) return;
+        ImGui::TextUnformatted(pHeader);
+        ImGui::Separator();
+
+        if (Info.m_Access.empty())
+        {
+            ImGui::TextDisabled("No declared components");
+        }
+        else if (ImGui::BeginTable("##Access", 3, ImGuiTableFlags_SizingFixedFit))
+        {
+            for (auto& Access : Info.m_Access)
+            {
+                using match  = xecs::system::type::match;
+                using access = xecs::system::type::access;
+                const char* pMatch  = Access.m_Match == match::MUST   ? "Must"
+                                    : Access.m_Match == match::ONE_OF ? "One of"
+                                    : Access.m_Match == match::NONE_OF? "None of"
+                                    :                                    "If present";
+                const char* pAccess = Access.m_Access == access::WRITE ? "write"
+                                    : Access.m_Access == access::READ  ? "read"
+                                    :                                     "";
+                const auto* pComponent = xecs::component::mgr::findComponentTypeInfo(Access.m_ComponentGuid);
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0); ImGui::TextDisabled("%s", pMatch);
+                ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(Access.m_pComponentName ? Access.m_pComponentName : "?");
+                if (pComponent && pComponent->m_bBuilder)
+                {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "(Builder Component)");
+                }
+                ImGui::TableSetColumnIndex(2); ImGui::TextDisabled("%s", pAccess);
+            }
+            ImGui::EndTable();
+        }
+        ImGui::EndTooltip();
+    }
+
+    //---------------------------------------------------------------------------
     // System Registry panel - lists every registered Update system (xecs::system::mgr::
     // GetUpdateSystemRows), letting the user drag-reorder (via each row's own name Selectable, grip
     // glyph included - see its own comment below) and enable/disable each one directly, making
@@ -44,6 +89,13 @@ namespace xlevel
             }
 
             bool bChanged = false;
+
+            // Update systems on top, builder systems below, split by a draggable divider.
+            const bool   bHasBuilders  = !GameMgr.m_SystemMgr.m_BuilderSystems.empty();
+            static float s_TopFraction = 0.65f;
+            const float  TotalHeight   = ImGui::GetContentRegionAvail().y;
+            ImGui::BeginChild("##UpdateSystems", ImVec2(0.0f, bHasBuilders ? std::max(40.0f, TotalHeight * s_TopFraction) : 0.0f));
+
             auto Rows      = GameMgr.m_SystemMgr.GetUpdateSystemRows();
             if (Rows.empty())
             {
@@ -56,7 +108,7 @@ namespace xlevel
             // the ambient value) - the gap between the checkbox and the name text is column0's own
             // trailing padding PLUS column1's own leading padding, so both matter here.
             ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(2.0f, ImGui::GetStyle().CellPadding.y));
-            if (ImGui::BeginTable("SystemRegistry", 2, ImGuiTableFlags_RowBg, ImVec2(0.0f, ImGui::GetContentRegionAvail().y)))
+            if (ImGui::BeginTable("SystemRegistry", 2, ImGuiTableFlags_RowBg))
             {
                 // Just wide enough for the checkbox itself + a hair of breathing room - not an
                 // arbitrary wide column. Direct user comparison against Unity's own tightly-grouped
@@ -121,8 +173,8 @@ namespace xlevel
                     if (!bEnabled) ImGui::PopStyleColor();
                     // Rows is index-aligned with m_UpdaterSystems (see GetUpdateSystemRows).
                     if (ImGui::IsItemHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left) && i < GameMgr.m_SystemMgr.m_UpdaterSystems.size())
-                        ImGui::SetTooltip("%s  (runs #%d)\n%s", Row.m_pName ? Row.m_pName : "(unnamed system)", static_cast<int>(i),
-                                          xscene::system_usage::DescribeDeclaration(*GameMgr.m_SystemMgr.m_UpdaterSystems[i].first).c_str());
+                        RenderSystemAccessTooltip(*GameMgr.m_SystemMgr.m_UpdaterSystems[i].first
+                            , std::format("{}  (runs #{})", Row.m_pName ? Row.m_pName : "(unnamed system)", i).c_str());
 
                     if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
                     {
@@ -158,6 +210,36 @@ namespace xlevel
                 ImGui::EndTable();
             }
             ImGui::PopStyleVar(); // matches the CellPadding push above BeginTable - unconditional, since BeginTable can return false
+
+            ImGui::EndChild();
+
+            // Builder systems (doc/xecs_builder_components.md) have no order/enable - they run once per
+            // entity while it's created, only when builders are on (Play / the game). Hover one for its
+            // declared components.
+            if (bHasBuilders)
+            {
+                ImGui::InvisibleButton("##SystemsSplitter", ImVec2(-FLT_MIN, 6.0f));
+                if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                if (ImGui::IsItemActive() && TotalHeight > 0.0f)
+                    s_TopFraction = std::clamp(s_TopFraction + ImGui::GetIO().MouseDelta.y / TotalHeight, 0.1f, 0.9f);
+                {
+                    const ImVec2 Min = ImGui::GetItemRectMin();
+                    const ImVec2 Max = ImGui::GetItemRectMax();
+                    const float  Y   = (Min.y + Max.y) * 0.5f;
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(Min.x, Y), ImVec2(Max.x, Y), ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_SeparatorActive : ImGuiCol_Separator), 2.0f);
+                }
+
+                ImGui::TextDisabled("Builders - run once per entity at creation (Play / game)");
+                if (ImGui::BeginListBox("##Builders", ImVec2(-FLT_MIN, -FLT_MIN)))
+                {
+                    for (auto& Builder : GameMgr.m_SystemMgr.m_BuilderSystems)
+                    {
+                        ImGui::Selectable(Builder.first->m_pName);
+                        if (ImGui::IsItemHovered()) RenderSystemAccessTooltip(*Builder.first, Builder.first->m_pName);
+                    }
+                    ImGui::EndListBox();
+                }
+            }
 
             // Persisted immediately, but only on an actual edit this frame (not every frame the
             // window happens to be open) - mirrors Unity's own Script Execution Order behavior.
