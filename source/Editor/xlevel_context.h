@@ -35,6 +35,10 @@ namespace xlevel
         // stopping destroys and recreates the world, and the click happens inside an active ImGui menu-bar scope.
         bool m_bStopRequested = false;
 
+        // Set by EnterPlaying once V1 is saved, consumed at that same top-of-frame point: Play rebuilds the world from V1
+        // with builder systems on (doc/xecs_builder_components.md), exactly as the game would load it, then starts Playing.
+        bool m_bPlayWorldRebuildRequested = false;
+
         // The undo index at the moment Play starts. Property edits made while Playing are carried back into the persistent
         // scene on Stop (see RequestStop): it replays every SetProperty pushed since this index against the restored scene
         // and discards the rest of the play session's history.

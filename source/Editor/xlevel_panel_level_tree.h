@@ -1084,35 +1084,95 @@ namespace xlevel
                             ImGui::PopID();
                         }
 
-                        // "Runtime" - a read-only row, sibling to this Level's own Scene rows, showing
-                        // how many live ECS entities exist right now that are NOT registered in ANY
-                        // currently-open Scene's own m_LocalToRuntime map - i.e. entities spawned
-                        // directly into the ECS (xecs::archetype::instance::CreateEntity) without ever
-                        // going through a Scene at all, which can only actually happen while the game
-                        // is Playing. Direct user request: "the only time that folder will be populated
-                        // is when the game is running and entities are spawned... those entities don't
-                        // belong in any scene," so this sits under the LEVEL, not inside any particular
-                        // Scene the way the old "Default" folder used to. No expand arrow (nothing to
-                        // list - this is a count only, not an entity browser), no drag-drop target, no
-                        // context menu, no delete button - inherently read-only by simply never wiring
-                        // up any of those affordances, same "synthesized every frame, not a real
-                        // persisted node" spirit as the "Dependencies" row already uses elsewhere in
-                        // this tree. The underlying "an entity can exist outside any Scene" capability
-                        // already exists at the ECS level (CreateEntity has never required a Scene) -
-                        // this row is purely a UI surface over it, no new engine plumbing.
+                        // "Runtime" - a read-only row, sibling to this Level's own Scene rows, listing every
+                        // live ECS entity that belongs to no open Scene. Entities spawned while the game runs
+                        // sit directly under it (direct user request: "those entities don't belong in any
+                        // scene"); the ECS's own system entities go in sub-folders - "Prefabs" (the prefab
+                        // templates instances are copied from) and "Share Components" (the entity holding
+                        // each distinct share-component value). Still no drag-drop, context menu or delete -
+                        // read-only, synthesized every frame. Counts are per-archetype sums; the entity
+                        // lists are only walked while their folder is expanded.
                         {
-                            int TotalLive = 0;
+                            enum runtime_kind : int { SPAWNED, PREFAB, SHARE, KIND_COUNT };
+
+                            const auto KindOf = [](const xecs::archetype::instance& Archetype) noexcept
+                            {
+                                runtime_kind Kind = SPAWNED;
+                                Archetype.getComponentBits().Foreach([&](int, const xecs::component::type::info& Info) noexcept
+                                {
+                                    if      (xecs::component::type::IsComponentType<xecs::prefab::tag>(&Info))                                Kind = PREFAB;
+                                    else if (xecs::component::type::IsComponentType<xecs::component::share_as_data_exclusive_tag>(&Info)) Kind = SHARE;
+                                });
+                                return Kind;
+                            };
+
+                            const auto IsInOpenScene = [&](xecs::component::entity E) noexcept
+                            {
+                                for (auto& OpenSceneGuid : State.m_OpenScenes)
+                                    if (auto* pOpenScene = GameMgr.m_SceneMgr.Find(OpenSceneGuid); pOpenScene && pOpenScene->m_RuntimeToLocal.contains(E.m_Value))
+                                        return true;
+                                return false;
+                            };
+
+                            std::array<int, KIND_COUNT> Count{};
                             for (auto& pArchetype : GameMgr.m_ArchetypeMgr.m_lArchetype)
+                            {
+                                auto& N = Count[KindOf(*pArchetype)];
                                 for (auto pF = pArchetype->getFamilyHead(); pF; pF = pF->m_Next.get())
                                     for (auto pP = &pF->m_DefaultPool; pP; pP = pP->m_Next.get())
-                                        TotalLive += pP->Size();
+                                        N += pP->Size();
+                            }
 
-                            int Claimed = 0;
+                            // Scene entities are never prefab templates or share-entities, so they only
+                            // ever need subtracting from the spawned count.
                             for (auto& OpenSceneGuid : State.m_OpenScenes)
                                 if (auto* pOpenScene = GameMgr.m_SceneMgr.Find(OpenSceneGuid))
-                                    Claimed += static_cast<int>(pOpenScene->m_LocalToRuntime.size());
+                                    Count[SPAWNED] -= static_cast<int>(pOpenScene->m_LocalToRuntime.size());
+                            Count[SPAWNED] = std::max(0, Count[SPAWNED]);
 
-                            const int RuntimeCount = std::max(0, TotalLive - Claimed);
+                            const int RuntimeCount = Count[SPAWNED] + Count[PREFAB] + Count[SHARE];
+
+                            const auto RenderEntities = [&](runtime_kind Kind) noexcept
+                            {
+                                for (auto& pArchetype : GameMgr.m_ArchetypeMgr.m_lArchetype)
+                                {
+                                    if (KindOf(*pArchetype) != Kind) continue;
+
+                                    std::string Components;
+                                    for (auto pInfo : pArchetype->getDataComponentInfos())
+                                    {
+                                        if (xecs::component::type::IsComponentType<xecs::component::entity>(pInfo)
+                                         || xecs::component::type::IsComponentType<xecs::component::ref_count>(pInfo)) continue;
+                                        Components += Components.empty() ? pInfo->m_pName : std::format(", {}", pInfo->m_pName);
+                                    }
+
+                                    for (auto pF = pArchetype->getFamilyHead(); pF; pF = pF->m_Next.get())
+                                        for (auto pP = &pF->m_DefaultPool; pP; pP = pP->m_Next.get())
+                                            for (int i = 0, n = pP->Size(); i < n; ++i)
+                                            {
+                                                const auto E = pP->getComponent<xecs::component::entity>(xecs::pool::index{ i });
+                                                if (E.isZombie() || (Kind == SPAWNED && IsInOpenScene(E))) continue;
+
+                                                ImGui::TableNextRow();
+                                                ImGui::TableSetColumnIndex(1);
+                                                ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(E.m_Value))
+                                                    , ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanFullWidth
+                                                    , "Entity 0x%llX  (%s)", static_cast<unsigned long long>(E.m_Value), Components.c_str());
+                                            }
+                                }
+                            };
+
+                            const auto RenderSubFolder = [&](const char* pName, runtime_kind Kind) noexcept
+                            {
+                                if (Count[Kind] == 0) return;
+                                ImGui::TableNextRow();
+                                ImGui::TableSetColumnIndex(1);
+                                if (ImGui::TreeNodeEx(pName, ImGuiTreeNodeFlags_SpanFullWidth, "%s %s (%d)", xlevel::FolderIcon(true), pName, Count[Kind]))
+                                {
+                                    RenderEntities(Kind);
+                                    ImGui::TreePop();
+                                }
+                            };
 
                             ImGui::TableNextRow();
                             ImGui::TableSetColumnIndex(1);
@@ -1125,8 +1185,16 @@ namespace xlevel
                             // different color" to visually set this read-only, synthesized row apart
                             // from real user folders at a glance.
                             ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 200, 90, 255));
-                            ImGui::TreeNodeEx(RuntimeLabel.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanFullWidth);
+                            const bool bRuntimeOpen = ImGui::TreeNodeEx("##RuntimeRow", (RuntimeCount == 0 ? ImGuiTreeNodeFlags_Leaf : 0) | ImGuiTreeNodeFlags_SpanFullWidth, "%s", RuntimeLabel.c_str());
                             ImGui::PopStyleColor();
+
+                            if (bRuntimeOpen)
+                            {
+                                RenderSubFolder("Prefabs",          PREFAB);
+                                RenderSubFolder("Share Components", SHARE);
+                                RenderEntities(SPAWNED);
+                                ImGui::TreePop();
+                            }
                         }
 
                         // Adding a Scene to this Level is now drag-and-drop onto the Level's own row

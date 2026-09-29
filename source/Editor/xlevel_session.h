@@ -326,6 +326,7 @@ namespace xlevel
         void AfterReload() noexcept
         {
             CreateWorld();
+            m_pGameMgr->EnableBuilders(m_State.isPlaying());
             RestoreWorld(xlevel::persist_mode::RawSnapshotBridge);
         }
 
@@ -747,6 +748,16 @@ namespace xlevel
         void PumpBeforeFrame() noexcept
         {
             xlevel::PollGameReload(m_CmdContext, m_GamePlugin, &session::RegisterHostComponents);
+
+            if (m_State.m_bPlayWorldRebuildRequested)
+            {
+                m_State.m_bPlayWorldRebuildRequested = false;
+                m_pGameMgr.reset();
+                CreateWorld();
+                m_pGameMgr->EnableBuilders(true);
+                RestoreWorld(xlevel::persist_mode::RestoreFromV1);
+                xlevel::FinishEnterPlaying(m_CmdContext);
+            }
 
             if (m_State.m_bStopRequested)
             {

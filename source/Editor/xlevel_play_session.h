@@ -27,19 +27,22 @@ namespace xlevel
     // CancelPlayRequest when the build a pending Play was waiting for fails.
     //---------------------------------------------------------------------------
 
-    // Stopped/Paused -> Playing. Writes V1 (the real disk save Stop restores from - it must be disk, not the
-    // fast binary Vn bridge, because Stop needs the Level tree back) and marks the undo point Stop rewinds to.
-    //
-    // Fires xecs::scene::mgr::m_OnSceneReady for every currently-open scene, once, right here - this
-    // (not scene load itself) is "about to actually run" in the editor. Every open scene's data is
-    // already guaranteed final at this point (SaveEverything above only writes what's already live;
-    // nothing here loads/creates entities), so a handler reading component values (Physics creating
-    // static bodies, see xlioncore_physics_system.h::OnSceneReady) always sees real, final data.
+    // Stopped -> Playing, first half. Writes V1 (the real disk save Stop restores from - it must be disk, not the
+    // fast binary Vn bridge, because Stop needs the Level tree back) and marks the undo point Stop rewinds to. The
+    // world is then rebuilt from V1 with builders on at the next top-of-frame point (session::PumpBeforeFrame ->
+    // FinishEnterPlaying), since tearing the world down mid-frame corrupts ImGui's window stack.
     inline void EnterPlaying( level_context& Ed ) noexcept
     {
         SaveEverything(Ed.World(), Ed.State());
-        Ed.State().m_PlayHistoryBoundary = Ed.m_Undo.GetUndoIndex();
-        Ed.State().m_PlayState           = level_state::play_state::Playing;
+        Ed.State().m_PlayHistoryBoundary        = Ed.m_Undo.GetUndoIndex();
+        Ed.State().m_bPlayWorldRebuildRequested = true;
+    }
+
+    // Second half, called by the session right after it rebuilt the world. Fires
+    // xecs::scene::mgr::m_OnSceneReady for every open scene, once - "about to actually run" in the editor.
+    inline void FinishEnterPlaying( level_context& Ed ) noexcept
+    {
+        Ed.State().m_PlayState = level_state::play_state::Playing;
 
         for (auto& SceneGuid : Ed.State().m_OpenScenes)
             if (auto* pScene = Ed.World().m_SceneMgr.Find(SceneGuid))
@@ -67,6 +70,7 @@ namespace xlevel
         auto& State = Ed.State();
         using play_state = level_state::play_state;
         if (State.m_PlayState == play_state::Playing) return "Play: already playing";
+        if (State.m_bPlayWorldRebuildRequested)       return "Play: starting";
         auto* pGate = xeditor::host::current()->find<play_gate>();
         if (pGate && pGate->m_IsBuilding())          return "Play: a build is already in flight";
         if (State.m_PlayState == play_state::Paused)  { RequestResume(State); return "Resumed"; }
@@ -104,7 +108,7 @@ namespace xlevel
         if (State.m_PlayState == play_state::Stopped)
         {
             const std::string Result = RequestPlay(Ed);
-            if (State.m_PlayState == play_state::Stopped && !State.m_bPlayRequested) return Result; // refused
+            if (State.m_PlayState == play_state::Stopped && !State.m_bPlayRequested && !State.m_bPlayWorldRebuildRequested) return Result; // refused
         }
         State.m_bStepOneFrame = true;
         return "Step";
