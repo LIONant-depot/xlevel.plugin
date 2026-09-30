@@ -221,14 +221,15 @@ namespace xlevel
 
     // The SECOND call of the two-call sequence - only meaningful once every RegisterComponents
     // call (host's own, done by the caller, and the plugin's, done by
-    // LoadGamePluginComponents above) has already happened. A no-op if no plugin is loaded.
+    // LoadGamePluginComponents above) has already happened. Without a plugin it only loads the engine DLLs' component display info.
     inline void RegisterGamePluginSystems( xecs::game_mgr::instance& GameMgr, game_plugin_state& Plugin ) noexcept
     {
-        if (!Plugin.isLoaded()) return;
+        if (Plugin.isLoaded())
+            if (auto* pRegisterSystems = reinterpret_cast<xecs_plugin_pfn_register_systems*>(GetProcAddress(Plugin.m_hModule, XECS_PLUGIN_REGISTER_SYSTEMS_NAME)))
+                pRegisterSystems(GameMgr);
 
-        if (auto* pRegisterSystems = reinterpret_cast<xecs_plugin_pfn_register_systems*>(GetProcAddress(Plugin.m_hModule, XECS_PLUGIN_REGISTER_SYSTEMS_NAME)))
-            pRegisterSystems(GameMgr);
-
+        // The engine DLLs' components (Transform, Physics, ...) have categories and priorities too, so this runs even when
+        // there is no Game.dll (a project without script modules).
         LoadGameComponentDisplayInfo(Plugin);
     }
 
