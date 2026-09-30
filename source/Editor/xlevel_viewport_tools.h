@@ -25,6 +25,8 @@
 #include "plugins/xscene.plugin/source/Editor/xscene_commands_property_edit.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_commands_transform_gizmo.h"
 #include <span>
+#include <functional>
+#include <cmath>
 #include <format>
 #include <vector>
 #include <string_view>
@@ -46,6 +48,8 @@ namespace xlevel::viewport_tools
         ImVec2          m_Size;
         bool            m_bLocalSpace = false;
         bool            m_bSnap       = false;  // Ctrl held
+        xmath::fvec3    m_Eye;                                      // camera position, world
+        std::function<xmath::fvec3(float, float)> m_RayDir;         // world ray direction through a screen pixel
 
         static constexpr float near_w_v = 1.0e-3f;
 
@@ -85,6 +89,26 @@ namespace xlevel::viewport_tools
             for (auto& E : Edges) Line(DL, P[E[0]], P[E[1]], Color, Thickness);
         }
 
+        // Circle (or part of one) of Radius around C in the plane spanned by the unit vectors U and V,
+        // from angle A0 to A1 radians.
+        void Arc(ImDrawList& DL, const xmath::fvec3& C, const xmath::fvec3& U, const xmath::fvec3& V, float Radius
+                , float A0, float A1, ImU32 Color, float Thickness, int Segments = 48) const noexcept
+        {
+            const int N = std::max(2, static_cast<int>(Segments * std::fabs(A1 - A0) / 6.2831853f));
+            xmath::fvec3 Prev = C + U * (Radius * std::cos(A0)) + V * (Radius * std::sin(A0));
+            for (int i = 1; i <= N; ++i)
+            {
+                const float A = A0 + (A1 - A0) * static_cast<float>(i) / static_cast<float>(N);
+                const xmath::fvec3 P = C + U * (Radius * std::cos(A)) + V * (Radius * std::sin(A));
+                Line(DL, Prev, P, Color, Thickness);
+                Prev = P;
+            }
+        }
+        void Circle(ImDrawList& DL, const xmath::fvec3& C, const xmath::fvec3& U, const xmath::fvec3& V, float Radius, ImU32 Color, float Thickness) const noexcept
+        {
+            Arc(DL, C, U, V, Radius, 0.0f, 6.2831853f, Color, Thickness);
+        }
+
         // Is the mouse within Radius pixels of the projected world point?
         bool IsMouseNear(const xmath::fvec3& P, float Radius) const noexcept
         {
@@ -94,6 +118,84 @@ namespace xlevel::viewport_tools
             return (S.x - M.x) * (S.x - M.x) + (S.y - M.y) * (S.y - M.y) <= Radius * Radius;
         }
     };
+
+    //--------------------------------------------------------------------------------------------
+    // Draggable handle constrained to a world-space line (radius / height handles, ...). ImGuizmo
+    // covers move / rotate / box resize; anything else a tool needs to drag goes through this. One
+    // handle can be active at a time (the session has one viewport), so the state is global.
+    //--------------------------------------------------------------------------------------------
+    namespace handle
+    {
+        inline ImGuiID& ActiveId  (void) noexcept { static ImGuiID s = 0;    return s; }
+        inline float&   GrabOffset(void) noexcept { static float   s = 0.0f; return s; }
+        inline bool     isActive  (void) noexcept { return ActiveId() != 0; }
+
+        struct result
+        {
+            bool    m_bHovered = false;
+            bool    m_bActive  = false;
+            bool    m_bChanged = false;     // dragged this frame: m_T is the new position along the axis
+            float   m_T        = 0.0f;
+            ImVec2  m_Screen   = {};
+        };
+
+        // Where along the line (Origin + t * Dir, Dir unit) the mouse ray passes closest. False when the
+        // ray runs parallel to the line - no meaningful answer then.
+        inline bool MouseParam(const view& V, const xmath::fvec3& Origin, const xmath::fvec3& Dir, float& OutT) noexcept
+        {
+            const ImVec2 M = ImGui::GetIO().MousePos;
+            const xmath::fvec3 D  = V.m_RayDir(M.x, M.y).NormalizeCopy();
+            const xmath::fvec3 W  = V.m_Eye - Origin;
+            const float b = D.Dot(Dir), d = D.Dot(W), e = Dir.Dot(W);
+            const float Denom = 1.0f - b * b;
+            if (Denom < 1.0e-5f) return false;
+            OutT = (e - b * d) / Denom;
+            return true;
+        }
+
+        // One handle: a dot at Origin + T * Dir. Left-drag it and the returned m_T follows the mouse along
+        // the line (without a jump at the grab point).
+        inline result Axis(const view& V, ImGuiID Id, const xmath::fvec3& Origin, const xmath::fvec3& Dir, float T) noexcept
+        {
+            result R;
+            ImDrawList& DL = *ImGui::GetWindowDrawList();
+            if (!V.Project(Origin + Dir * T, R.m_Screen)) return R;
+
+            const ImVec2 M = ImGui::GetIO().MousePos;
+            const bool bOtherBusy = (ActiveId() != 0 && ActiveId() != Id) || ImGuizmo::IsUsingAny();
+            R.m_bHovered = !bOtherBusy && ImGui::IsWindowHovered()
+                        && (R.m_Screen.x - M.x) * (R.m_Screen.x - M.x) + (R.m_Screen.y - M.y) * (R.m_Screen.y - M.y) <= 8.0f * 8.0f;
+
+            if (ActiveId() == 0 && R.m_bHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            {
+                float Grab;
+                if (MouseParam(V, Origin, Dir, Grab)) { ActiveId() = Id; GrabOffset() = Grab - T; }
+            }
+            if (ActiveId() == Id)
+            {
+                R.m_bActive = true;
+                if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { ActiveId() = 0; R.m_bActive = false; }
+                else if (float Now; MouseParam(V, Origin, Dir, Now)) { R.m_T = Now - GrabOffset(); R.m_bChanged = true; }
+            }
+            if (R.m_bHovered || R.m_bActive) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+            const ImVec4 A = ImGui::GetStyleColorVec4(ImGuiCol_CheckMark);
+            const ImU32 Fill = R.m_bActive ? ImGui::ColorConvertFloat4ToU32(A) : R.m_bHovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 200, 200, 255);
+            DL.AddCircleFilled(R.m_Screen, 6.5f, IM_COL32(0, 0, 0, 255));
+            DL.AddCircleFilled(R.m_Screen, 5.2f, Fill);
+            return R;
+        }
+
+        // A small readout next to a handle while it is being dragged ("Radius 0.75").
+        inline void Label(const result& R, const char* pText) noexcept
+        {
+            ImDrawList& DL = *ImGui::GetWindowDrawList();
+            const ImVec2 P(R.m_Screen.x + 12.0f, R.m_Screen.y - 22.0f);
+            const ImVec2 S = ImGui::CalcTextSize(pText);
+            DL.AddRectFilled(ImVec2(P.x - 5.0f, P.y - 2.0f), ImVec2(P.x + S.x + 5.0f, P.y + S.y + 2.0f), IM_COL32(20, 20, 20, 220), 3.0f);
+            DL.AddText(P, IM_COL32(240, 240, 240, 255), pText);
+        }
+    }
 
     //--------------------------------------------------------------------------------------------
     // The component instance a tool works on - live pool pointers, valid for the current call only.
@@ -119,6 +221,9 @@ namespace xlevel::viewport_tools
         virtual ~tool() = default;
 
         virtual int  getElementCount (const target& Target) const noexcept = 0;
+
+        // Which of Move / Rotate / Resize make sense for this shape (a sphere has no rotation to edit).
+        virtual bool SupportsMode    (mode) const noexcept { return true; }
 
         // Always-on visualization while the owning entity is selected (e.g. the green collider wire).
         // EditedElements tells which elements are in edit mode (they may want a stronger look).
@@ -170,6 +275,7 @@ namespace xlevel::viewport_tools
 
         void End(void) noexcept
         {
+            handle::ActiveId() = 0;
             m_pTool     = nullptr;
             m_Elements.clear();
             m_bWasUsing = false;
@@ -223,9 +329,9 @@ namespace xlevel::viewport_tools
         void HandleHotkeys(void) noexcept
         {
             if (!isActive()) return;
-            if (ImGui::IsKeyPressed(ImGuiKey_W, false)) m_Mode = mode::MOVE;
-            if (ImGui::IsKeyPressed(ImGuiKey_E, false)) m_Mode = mode::ROTATE;
-            if (ImGui::IsKeyPressed(ImGuiKey_R, false)) m_Mode = mode::RESIZE;
+            if (ImGui::IsKeyPressed(ImGuiKey_W, false) && m_pTool->SupportsMode(mode::MOVE))   m_Mode = mode::MOVE;
+            if (ImGui::IsKeyPressed(ImGuiKey_E, false) && m_pTool->SupportsMode(mode::ROTATE)) m_Mode = mode::ROTATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_R, false) && m_pTool->SupportsMode(mode::RESIZE)) m_Mode = mode::RESIZE;
             if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) End();
         }
 
@@ -263,6 +369,8 @@ namespace xlevel::viewport_tools
                 pTool->DrawSelected(View, DL, Target, m_pTool == pTool ? std::span<const int>(m_Elements) : std::span<const int>{});
                 if (m_pTool != pTool) continue;
 
+                if (!pTool->SupportsMode(m_Mode)) m_Mode = mode::RESIZE;
+
                 if (!m_bWasUsing) m_Before = xscene::commands::SnapshotProperties(Resolved.m_pInstance, *Resolved.m_pInfo->m_pPropertyTable);
 
                 for (const int E : m_Elements)
@@ -272,7 +380,7 @@ namespace xlevel::viewport_tools
                     ImGuizmo::PopID();
                 }
 
-                const bool bUsing = ImGuizmo::IsUsingAny();
+                const bool bUsing = ImGuizmo::IsUsingAny() || handle::isActive();
                 if (m_bWasUsing && !bUsing) Commit(Ed, Resolved);
                 m_bWasUsing = bUsing;
             }
@@ -311,10 +419,12 @@ namespace xlevel::viewport_tools
                 auto ModeButton = [&](const char* pLabel, mode M, const char* pTip)
                 {
                     const bool bOn = m_Mode == M;
+                    ImGui::BeginDisabled(!m_pTool->SupportsMode(M));
                     if (bOn) ImGui::PushStyleColor(ImGuiCol_Button, Style.Colors[ImGuiCol_Header]);
                     if (ImGui::Button(pLabel, ImVec2(ModeW, 0.0f))) m_Mode = M;
                     if (bOn) ImGui::PopStyleColor();
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", pTip);
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", pTip);
                     ImGui::SameLine(0.0f, 2.0f);
                 };
                 ModeButton("Move",   mode::MOVE,   "Move the center (W)");

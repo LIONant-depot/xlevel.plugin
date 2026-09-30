@@ -50,6 +50,7 @@
 #include "dependencies/ImGuizmo/src/ImGuizmo.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_viewport_tools.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_box.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_shapes.h"
 
 #include <memory>
 #include <limits>
@@ -617,6 +618,8 @@ namespace xlevel
             , .m_Size        = Avail
             , .m_bLocalSpace = m_bLocalSpace
             , .m_bSnap       = ImGui::GetIO().KeyCtrl
+            , .m_Eye         = m_Camera.m_View.getPosition()
+            , .m_RayDir      = [this](float X, float Y) { return m_Camera.m_View.RayFromScreen(X, Y); }
             };
 
             // Component viewport tools (collider wireframes for the selection, and the active "Edit
