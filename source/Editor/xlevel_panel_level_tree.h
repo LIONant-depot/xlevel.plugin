@@ -603,15 +603,11 @@ namespace xlevel
 
                                         RenderEntityRow = [&](xecs::scene::permanent_id Id, xecs::component::entity Entity) -> bool
                                         {
-                                            std::string EntityLabel = std::format("Entity #{}", Id);
+                                            const std::string EntityBaseName = xscene::EntityDisplayName(*pScene, Id);
+                                            std::string EntityLabel = EntityBaseName;
                                             bool bHasChildren = false;
                                             if (auto& Details = GameMgr.m_ComponentMgr.getEntityDetails(Entity); Details.m_pPool)
-                                            {
-                                                auto Bits = Details.m_pPool->m_pArchetype->getComponentBits();
-                                                if (Bits.getBit(xecs::component::type::info_v<xscene::name>.m_BitID))
-                                                    EntityLabel = Details.m_pPool->getComponent<xscene::name>(Details.m_PoolIndex).m_Value;
-                                                bHasChildren = Bits.getBit(xecs::component::type::info_v<xecs::component::children>.m_BitID);
-                                            }
+                                                bHasChildren = Details.m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::children>.m_BitID);
                                             auto* pPI = xscene::FindPrefabInstance(GameMgr, Entity);
                                             if (pPI)
                                             {
@@ -644,9 +640,53 @@ namespace xlevel
                                             const ImGuiTreeNodeFlags TreeFlags = bHasChildren
                                                 ? (ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth | SelFlag)
                                                 : (ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_Bullet | ImGuiTreeNodeFlags_SpanFullWidth | SelFlag);
-                                            if (bPartOfPrefabInstance) ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 170, 255, 255));
-                                            const bool bEntityOpen = ImGui::TreeNodeEx(EntityLabel.c_str(), TreeFlags);
-                                            if (bPartOfPrefabInstance) ImGui::PopStyleColor();
+                                            // Inline rename, Explorer style. Starts from F2 on the selected row, the context menu's
+                                            // Rename, or a slow second click on the selected row (armed below, fires once the
+                                            // double-click window has passed with no further click). Enter / click-away commits, Esc cancels.
+                                            auto BeginRename = [&]() noexcept
+                                            {
+                                                State.m_RenameScene      = SceneGuid;
+                                                State.m_RenameId         = Id;
+                                                State.m_bRenameFocus     = true;
+                                                State.m_RenameArmedId    = xecs::scene::invalid_permanent_id_v;
+                                                std::snprintf(State.m_RenameText.data(), State.m_RenameText.size(), "%s", EntityBaseName.c_str());
+                                            };
+                                            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) State.m_RenameArmedId = xecs::scene::invalid_permanent_id_v;
+                                            if (State.m_RenameArmedId == Id && State.m_RenameArmedScene == SceneGuid && !ImGui::IsMouseDown(ImGuiMouseButton_Left)
+                                                && ImGui::GetTime() - State.m_RenameArmedTime > ImGui::GetIO().MouseDoubleClickTime + 0.15)
+                                                BeginRename();
+                                            if (bEntitySelected && State.m_RenameId != Id && !State.isPlaying() && !ImGui::GetIO().WantTextInput
+                                                && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_F2, false))
+                                                BeginRename();
+                                            const bool bRenaming = State.m_RenameId == Id && State.m_RenameScene == SceneGuid;
+
+                                            bool bEntityOpen;
+                                            if (bRenaming)
+                                            {
+                                                bEntityOpen = ImGui::TreeNodeEx("##renaming", TreeFlags & ~ImGuiTreeNodeFlags_SpanFullWidth);
+                                                ImGui::SameLine(0.0f, 0.0f);
+                                                if (State.m_bRenameFocus) { ImGui::SetKeyboardFocusHere(); State.m_bRenameFocus = false; }
+                                                ImGui::SetNextItemWidth(-FLT_MIN);
+                                                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));     // keep the row the same height as a label
+                                                ImGui::InputText("##rename", State.m_RenameText.data(), State.m_RenameText.size(), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+                                                ImGui::PopStyleVar();
+                                                if (ImGui::IsItemDeactivated())
+                                                {
+                                                    const std::string NewText = State.m_RenameText.data();
+                                                    if (!ImGui::IsKeyPressed(ImGuiKey_Escape) && NewText != EntityBaseName)
+                                                    {
+                                                        if (NewText.empty()) xeditor::Run(Ed.m_Undo, std::format("RenameEntity -Scene {} -Id {} -Clear 1", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id)));
+                                                        else                 xeditor::Run(Ed.m_Undo, std::format("RenameEntity -Scene {} -Id {} -Name {}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id), xeditor::Base64Encode(NewText)));
+                                                    }
+                                                    State.m_RenameId = xecs::scene::invalid_permanent_id_v;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                if (bPartOfPrefabInstance) ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 170, 255, 255));
+                                                bEntityOpen = ImGui::TreeNodeEx(EntityLabel.c_str(), TreeFlags);
+                                                if (bPartOfPrefabInstance) ImGui::PopStyleColor();
+                                            }
 
                                             // Select on mouse-UP, not mouse-DOWN (ImGui::IsItemClicked
                                             // fires on press) - selecting on press reassigns
@@ -678,7 +718,16 @@ namespace xlevel
                                                     if (ImGui::GetIO().KeyCtrl)
                                                         xeditor::Run(Ed.m_Undo, std::format("ToggleMultiSelect -Scene {} -Id {}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id)));
                                                     else
+                                                    {
+                                                        const bool bAlreadyOnlySelected = bEntitySelected && State.m_MultiSelectedEntityIds.size() <= 1 && !bRenaming;
                                                         xeditor::Run(Ed.m_Undo, std::format("Select -Scene {} -Id {}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id)));
+                                                        if (bAlreadyOnlySelected)
+                                                        {
+                                                            State.m_RenameArmedScene = SceneGuid;
+                                                            State.m_RenameArmedId    = Id;
+                                                            State.m_RenameArmedTime  = ImGui::GetTime();
+                                                        }
+                                                    }
                                                 }
                                             }
 
@@ -745,6 +794,7 @@ namespace xlevel
                                                         , xscene::commands::FormatEntityId(Id)
                                                         ));
                                                 }
+                                                if (ImGui::MenuItem("Rename", "F2", false, !State.isPlaying())) BeginRename();
                                                 ImGui::Separator();
                                                 if (ImGui::MenuItem("Delete Entity")) DoDeleteEntity();
                                                 ImGui::Separator();

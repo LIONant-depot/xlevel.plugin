@@ -119,7 +119,7 @@ namespace xlevel
         // matching what construction does.
         static void RegisterHostComponents(xecs::game_mgr::instance& GameMgr) noexcept
         {
-            GameMgr.RegisterComponents<xscene::name, xecs::editor::prefab_instance, xecs::component::entity_reference>();
+            GameMgr.RegisterComponents<xecs::editor::prefab_instance, xecs::component::entity_reference>();
             RegisterEngineDLLComponents(GameMgr, L"LIONCore.dll");
             RegisterEngineDLLComponents(GameMgr, L"LIONRender.dll");
         }

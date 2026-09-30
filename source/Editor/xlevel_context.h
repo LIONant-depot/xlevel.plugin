@@ -10,6 +10,16 @@ namespace xlevel
 
         std::string m_TreeSearchString;
 
+        // Level Tree inline rename (Windows Explorer style): the entity being renamed and its edit text.
+        xecs::scene::guid           m_RenameScene    = {};
+        xecs::scene::permanent_id   m_RenameId       = xecs::scene::invalid_permanent_id_v;
+        std::array<char, 256>       m_RenameText     = {};
+        bool                        m_bRenameFocus   = false;      // focus the edit box on its first frame
+        // A click on the already-selected row arms a rename; it starts once the double-click window has passed.
+        xecs::scene::guid           m_RenameArmedScene = {};
+        xecs::scene::permanent_id   m_RenameArmedId    = xecs::scene::invalid_permanent_id_v;
+        double                      m_RenameArmedTime  = 0.0;
+
         // Stopped: editing normally, the world is never ticked. Playing: ticking every frame. Paused: a live play session
         // (the world stays exactly as it is and Stop still reverts it) that is not ticked this frame, which is also what lets
         // a code-edit reload happen "at rest" mid-session (PollGameReload treats Playing and Paused alike).

@@ -310,9 +310,7 @@ namespace xlevel::commands
             for (auto& [Id, Entity] : pScene->m_LocalToRuntime)
             {
                 std::string Label = std::format("Entity #{:08X}", Id);
-                if (auto& Details = World().m_ComponentMgr.getEntityDetails(Entity); Details.m_pPool)
-                    if (Details.m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xscene::name>.m_BitID))
-                        Label = Details.m_pPool->getComponent<xscene::name>(Details.m_PoolIndex).m_Value;
+                if (auto* pName = xscene::FindEntityName(*pScene, Id)) Label = *pName;
                 Out += std::format("{:08X}  {}\n", Id, Label);
             }
             return Out;
