@@ -100,6 +100,7 @@ namespace xlevel
         viewport_tools::editor                       m_ToolEditor;
         bool                                         m_bLevelWritable = true;     // last frame's, for the Inspector toggle
         std::function<void(xproperty::inspector&, const xproperty::type::object&, void*, std::string_view, int)> m_OnArrayElementRender;
+        std::function<void(xproperty::inspector&, const xproperty::type::object&, void*, std::string_view)> m_OnScaleRow;
 
         // The "Editor" viewport's own camera + ground grid - every other 3D editor already shares these
         // via xeditor_tools; the Level Editor never had a camera or a grid at all before this.
@@ -215,6 +216,33 @@ namespace xlevel
                 m_ToolEditor.RenderInspectorToggle(m_State, *It->second, ArrayPath, Index, !m_bLevelWritable || m_State.isPlaying());
             };
             m_EntityInspector.m_OnArrayElementRender.Register(m_OnArrayElementRender);
+
+            // Transform/Scale header row: after its label, a right-aligned sticky "Lock" toggle bound to
+            // transform::m_EditorLockScale (see transform::setScaleAxis). A plain field write - not undoable.
+            m_OnScaleRow = [this](xproperty::inspector&, const xproperty::type::object&, void* pInstance, std::string_view Path)
+            {
+                if (Path != "Transform/Scale") return;
+                auto It = m_InspectorBridge.m_ComponentMap.find(pInstance);
+                if (It == m_InspectorBridge.m_ComponentMap.end() || It->second->m_Guid.m_Value != xlioncore::transform::typedef_v.m_Guid.m_Value) return;
+
+                auto& T = *static_cast<xlioncore::transform*>(pInstance);
+                ImGui::SameLine();
+                const char* pIcon = xlevel::DependenciesIcon();      // the "Link" glyph, same as the Level Tree Dependencies row
+                const float W     = ImGui::CalcTextSize(pIcon).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - W));
+                const bool bOn = T.m_EditorLockScale;
+                // Frameless: transparent button, the glyph colour carries the state (accent when locked, dim when not).
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_Text, bOn ? ImVec4(0.35f, 0.65f, 1.0f, 1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::BeginDisabled(!m_bLevelWritable || m_State.isPlaying());
+                if (ImGui::SmallButton(pIcon)) T.m_EditorLockScale = !bOn;
+                ImGui::EndDisabled();
+                ImGui::PopStyleColor(4);
+                xproperty::inspector::Tooltip("Lock scale: editing one axis scales all three proportionally");
+            };
+            m_EntityInspector.m_OnLeftColumnAppend.Register(m_OnScaleRow);
 
 #if defined(XECS_BUILD_SHARED)
             m_PlayGate.m_IsBuilding = [this]() noexcept { return m_GamePlugin.m_bBuilding; };

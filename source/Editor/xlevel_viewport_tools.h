@@ -21,6 +21,7 @@
 // plugin includes: `inline const my_tool g_MyTool; inline const viewport_tools::registration g_MyToolReg{ g_MyTool };`
 #include "dependencies/ImGuizmo/src/ImGuizmo.h"
 #include "dependencies/xmath/source/xmath.h"
+#include "dependencies/xproperty/source/examples/imgui/xPropertyImGuiInspector.h"
 #include "dependencies/xLIONCore/src/transform/xlioncore_transform.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_commands_property_edit.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_commands_transform_gizmo.h"
@@ -320,8 +321,7 @@ namespace xlevel::viewport_tools
                 Toggle(*pTool, State.m_SelectedEntityScene, State.m_SelectedEntityId, Index);
             if (bOn) { ImGui::PopStyleVar(); ImGui::PopStyleColor(3); }
             ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip(bOn ? "%s in the Scene view\nW Move   E Rotate   R Resize   Esc Done\nCtrl snaps" : "%s in the Scene view", pTool->m_pLabel);
+            xproperty::inspector::Tooltip((bOn ? std::format("{} in the Scene view\nW Move   E Rotate   R Resize   Esc Done\nCtrl snaps", pTool->m_pLabel) : std::format("{} in the Scene view", pTool->m_pLabel)).c_str(), true);
             ImGui::PopID();
         }
 
@@ -424,7 +424,7 @@ namespace xlevel::viewport_tools
                     if (ImGui::Button(pLabel, ImVec2(ModeW, 0.0f))) m_Mode = M;
                     if (bOn) ImGui::PopStyleColor();
                     ImGui::EndDisabled();
-                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", pTip);
+                    xproperty::inspector::Tooltip(pTip, true);
                     ImGui::SameLine(0.0f, 2.0f);
                 };
                 ModeButton("Move",   mode::MOVE,   "Move the center (W)");
@@ -433,7 +433,7 @@ namespace xlevel::viewport_tools
 
                 ImGui::SameLine(0.0f, 10.0f);
                 if (ImGui::Button("Done")) End();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Finish editing (Esc)");
+                xproperty::inspector::Tooltip("Finish editing (Esc)");
             }
             ImGui::EndChild();
             ImGui::PopStyleColor();
