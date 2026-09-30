@@ -48,6 +48,8 @@
 #include "dependencies/xLIONCore/src/tags/xlioncore_tags.h"
 #include "dependencies/xLIONCore/src/transform/xlioncore_transform.h"
 #include "dependencies/ImGuizmo/src/ImGuizmo.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_viewport_tools.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_box.h"
 
 #include <memory>
 #include <limits>
@@ -91,6 +93,12 @@ namespace xlevel
         xmath::fvec3                                 m_GizmoBeforePosition{};
         xmath::fquat                                 m_GizmoBeforeRotation{};
         xmath::fvec3                                 m_GizmoBeforeScale{};
+
+        // Per-component viewport tools ("Edit Collider", ...) - see xlevel_viewport_tools.h. While one is
+        // active it owns the W/E/R keys and the gizmo; the Transform gizmo steps aside.
+        viewport_tools::editor                       m_ToolEditor;
+        bool                                         m_bLevelWritable = true;     // last frame's, for the Inspector toggle
+        std::function<void(xproperty::inspector&, const xproperty::type::object&, void*, std::string_view, int)> m_OnArrayElementRender;
 
         // The "Editor" viewport's own camera + ground grid - every other 3D editor already shares these
         // via xeditor_tools; the Level Editor never had a camera or a grid at all before this.
@@ -197,6 +205,16 @@ namespace xlevel
             e10::WireResourcePickerCallbacks(m_EntityInspector);
             m_InspectorBridge.RegisterCallbacks(m_EntityInspector, m_CmdContext);
 
+            // Per-element viewport-tool toggles ("Edit Collider" on each PhysicsColliderBox box row).
+            // m_ComponentMap maps the live instance back to its component type (the bridge keeps it current).
+            m_OnArrayElementRender = [this](xproperty::inspector&, const xproperty::type::object&, void* pInstance, std::string_view ArrayPath, int Index)
+            {
+                auto It = m_InspectorBridge.m_ComponentMap.find(pInstance);
+                if (It == m_InspectorBridge.m_ComponentMap.end()) return;
+                m_ToolEditor.RenderInspectorToggle(m_State, *It->second, ArrayPath, Index, !m_bLevelWritable || m_State.isPlaying());
+            };
+            m_EntityInspector.m_OnArrayElementRender.Register(m_OnArrayElementRender);
+
 #if defined(XECS_BUILD_SHARED)
             m_PlayGate.m_IsBuilding = [this]() noexcept { return m_GamePlugin.m_bBuilding; };
             m_PlayGate.m_StartBuild = [this]() noexcept { xlevel::StartGameReload(m_GamePlugin); };
@@ -214,6 +232,7 @@ namespace xlevel
             {
                 pHost->provide(m_CmdContext);
                 pHost->provide<xscene::scene_context>(m_CmdContext);
+                pHost->provide(m_ToolEditor);
 #if defined(XECS_BUILD_SHARED)
                 pHost->provide(m_PlayGate);
 #endif
@@ -248,6 +267,7 @@ namespace xlevel
                 pHost->withdraw<play_gate>();
 #endif
                 pHost->withdraw<xscene::scene_context>();
+                pHost->withdraw<viewport_tools::editor>();
                 pHost->withdraw<level_context>();
             }
             m_pGameMgr.reset();
@@ -439,9 +459,17 @@ namespace xlevel
                 {
                     if (bHorizontal && !bFirstButton) ImGui::SameLine();
                     bFirstButton = false;
-                    const bool bActive = m_SceneTool == ToolIndex;
+                    // While a viewport tool is editing, W/E/R drive ITS mode (Move/Rotate/Resize) and Q ends it.
+                    const bool bToolKey = m_ToolEditor.isActive() && ToolIndex <= 3;
+                    const bool bActive  = bToolKey ? ToolIndex >= 1 && static_cast<int>(m_ToolEditor.m_Mode) == ToolIndex - 1
+                                                   : m_SceneTool == ToolIndex;
                     if (bActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Header]);
-                    if (ImGui::Button(Label, ImVec2(32.0f, ButtonHeight))) m_SceneTool = ToolIndex;
+                    if (ImGui::Button(Label, ImVec2(32.0f, ButtonHeight)))
+                    {
+                        if (!bToolKey)          m_SceneTool = ToolIndex;
+                        else if (ToolIndex > 0) m_ToolEditor.m_Mode = static_cast<viewport_tools::mode>(ToolIndex - 1);
+                        else                    m_ToolEditor.End();
+                    }
                     if (bActive) ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::TextUnformatted(Tooltip); ImGui::EndTooltip(); }
                 };
@@ -559,30 +587,48 @@ namespace xlevel
             //    g.HoveredIdPreviousFrame too - so the button must not claim hover on the frames BEFORE
             //    the click either, not just the click frame.
             bool bGizmoInteracting = false;
-            if (m_SceneTool >= 1 && m_SceneTool <= 3 && m_State.m_SelectedEntityId != xecs::scene::invalid_permanent_id_v)
+            const bool bHasSelection = m_State.m_SelectedEntityId != xecs::scene::invalid_permanent_id_v;
+            if (bHasSelection)
+            {
+                ImGuizmo::BeginFrame();
+                ImGuizmo::SetOrthographic(false);
+                ImGuizmo::SetDrawlist();
+                ImGuizmo::SetRect(Min.x, Min.y, Avail.x, Avail.y);
+            }
+
+            // getV2CScales() deliberately flips Y for this engine's Vulkan NDC convention (see
+            // its own comment, xgpu_view_inline.h) - correct for xgpu's actual GPU pipeline, but
+            // ImGuizmo is a generic (OpenGL-convention) math library with no idea about that
+            // flip, so feeding it getV2C() directly inverted its whole widget's Y axis (direct
+            // user report: green arrow pointing down, gizmo visibly wrong). Undo just that one
+            // flip for ImGuizmo's own copy by negating clip-space row 1 (every column's row-1
+            // term, not just the diagonal - the off-axis frustum term at (1,2) needs it too).
+            xmath::fmat4 GizmoProjection = m_Camera.m_View.getV2C();
+            GizmoProjection.m_10 = -GizmoProjection.m_10;
+            GizmoProjection.m_11 = -GizmoProjection.m_11;
+            GizmoProjection.m_12 = -GizmoProjection.m_12;
+            GizmoProjection.m_13 = -GizmoProjection.m_13;
+
+            const viewport_tools::view ToolView
+            { .m_W2V         = m_Camera.m_View.getW2V()
+            , .m_Projection  = GizmoProjection
+            , .m_W2C         = m_Camera.m_View.getW2C()
+            , .m_Min         = Min
+            , .m_Size        = Avail
+            , .m_bLocalSpace = m_bLocalSpace
+            , .m_bSnap       = ImGui::GetIO().KeyCtrl
+            };
+
+            // Component viewport tools (collider wireframes for the selection, and the active "Edit
+            // Collider"-style edit) - drawn before the Transform gizmo so its handles stay on top.
+            bGizmoInteracting |= m_ToolEditor.Run(m_CmdContext, m_State.isPlaying(), ToolView);
+
+            if (!m_ToolEditor.isActive() && m_SceneTool >= 1 && m_SceneTool <= 3 && bHasSelection)
             {
                 if (auto* pXform = xscene::commands::ResolveTransform(m_CmdContext, m_State.m_SelectedEntityScene, m_State.m_SelectedEntityId))
                 {
-                    ImGuizmo::BeginFrame();
-                    ImGuizmo::SetOrthographic(false);
-                    ImGuizmo::SetDrawlist();
-                    ImGuizmo::SetRect(Min.x, Min.y, Avail.x, Avail.y);
-
                     const auto Operation = m_SceneTool == 1 ? ImGuizmo::TRANSLATE : m_SceneTool == 2 ? ImGuizmo::ROTATE : ImGuizmo::SCALE;
                     const auto Mode      = m_bLocalSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
-
-                    // getV2CScales() deliberately flips Y for this engine's Vulkan NDC convention (see
-                    // its own comment, xgpu_view_inline.h) - correct for xgpu's actual GPU pipeline, but
-                    // ImGuizmo is a generic (OpenGL-convention) math library with no idea about that
-                    // flip, so feeding it getV2C() directly inverted its whole widget's Y axis (direct
-                    // user report: green arrow pointing down, gizmo visibly wrong). Undo just that one
-                    // flip for ImGuizmo's own copy by negating clip-space row 1 (every column's row-1
-                    // term, not just the diagonal - the off-axis frustum term at (1,2) needs it too).
-                    xmath::fmat4 GizmoProjection = m_Camera.m_View.getV2C();
-                    GizmoProjection.m_10 = -GizmoProjection.m_10;
-                    GizmoProjection.m_11 = -GizmoProjection.m_11;
-                    GizmoProjection.m_12 = -GizmoProjection.m_12;
-                    GizmoProjection.m_13 = -GizmoProjection.m_13;
 
                     xmath::fmat4 World{};
                     World.setupSRT(pXform->m_Scale, pXform->m_Rotation, pXform->m_Position);
@@ -663,10 +709,14 @@ namespace xlevel
                 // to fly forward would also switch to the Move tool on every keypress).
                 if (ImGui::IsItemHovered() && !ImGui::GetIO().WantTextInput && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
                 {
-                    if (ImGui::IsKeyPressed(ImGuiKey_Q)) m_SceneTool = 0;
-                    if (ImGui::IsKeyPressed(ImGuiKey_W)) m_SceneTool = 1;
-                    if (ImGui::IsKeyPressed(ImGuiKey_E)) m_SceneTool = 2;
-                    if (ImGui::IsKeyPressed(ImGuiKey_R)) m_SceneTool = 3;
+                    if (m_ToolEditor.isActive()) m_ToolEditor.HandleHotkeys();   // W/E/R = tool mode, Q/Esc = done
+                    else
+                    {
+                        if (ImGui::IsKeyPressed(ImGuiKey_Q)) m_SceneTool = 0;
+                        if (ImGui::IsKeyPressed(ImGuiKey_W)) m_SceneTool = 1;
+                        if (ImGui::IsKeyPressed(ImGuiKey_E)) m_SceneTool = 2;
+                        if (ImGui::IsKeyPressed(ImGuiKey_R)) m_SceneTool = 3;
+                    }
                 }
 
                 // Click-to-select: CPU ray-pick against every rendered entity's rigid_body AABB
@@ -735,6 +785,10 @@ namespace xlevel
             // above when it actually executes at render time, so setting it here (after this frame's
             // click-to-pick) is still in time.
             xlionrender::SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
+
+            // Last, so it sits above the scene, the wireframes and the gizmo (a child window - while the
+            // mouse is over it the viewport button isn't hovered, so no pick/orbit through it).
+            m_ToolEditor.RenderOverlay(ToolView);
         }
 
         // Recompile-check completion + the deferred "Stop" click. MUST run at a clean top-of-frame point, never
@@ -890,6 +944,7 @@ namespace xlevel
                 xeditor::session* pMySession = nullptr;
                 if (pHost) for (auto& S : pHost->m_Sessions) if (S && &S->undo() == &m_Undo) { pMySession = S.get(); break; }
                 const bool bLevelWritable = xlevel::IsLevelWritable(pHost, pMySession, m_State);
+                m_bLevelWritable = bLevelWritable;
                 if (!bLevelWritable)
                 {
                     xlevel::editor_tabs::SetNextLevelEditorToolClass();
