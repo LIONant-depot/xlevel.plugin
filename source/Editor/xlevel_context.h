@@ -10,6 +10,10 @@ namespace xlevel
 
         std::string m_TreeSearchString;
 
+        // Scenes another Level editor just saved while this one has them open (read-only here, since the other one was
+        // editing them): reloaded from disk at the next clean point of the frame, so this editor never works on a stale copy.
+        std::vector<xecs::scene::guid> m_ScenesToReload;
+
         // Level Tree inline rename (Windows Explorer style): the entity being renamed and its edit text.
         xecs::scene::guid           m_RenameScene    = {};
         xecs::scene::permanent_id   m_RenameId       = xecs::scene::invalid_permanent_id_v;
@@ -85,11 +89,14 @@ namespace xlevel
             : xscene::scene_context{ State, pWorld, Undo } {}
 
         level_state& State() noexcept { return static_cast<level_state&>(m_State); }
+
+        void* m_pToolEditor = nullptr;   // this editor's viewport_tools::editor (the "Edit Collider" tools), set by its session
     };
 
-    inline level_context* FindLevelContext() noexcept
-    {
-        auto* pHost = xeditor::host::current();
-        return pHost ? pHost->find<level_context>() : nullptr;
-    }
+    // Every Level editor that is open right now (one per Level, plus the session that stands in when none is), and the one the
+    // user touched last. Commands that are not addressed to one Level by name act on the active one.
+    inline std::vector<level_context*> g_LevelContexts;
+    inline level_context*              g_pActiveLevelContext = nullptr;
+
+    inline level_context* FindLevelContext() noexcept { return g_pActiveLevelContext; }
 }

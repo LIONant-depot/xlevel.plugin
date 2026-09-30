@@ -103,38 +103,16 @@ namespace xlevel
         State.m_bAwaitingSaveBeforeClose = true;
     }
 
-    // Open a Level, running Close (with save prompt if dirty) first when another Level is loaded.
-    // Returns true if OpenLevel ran immediately (caller may StartGameReload). false = no-op or
-    // deferred to the modal (sets m_bPendingStartGameReloadAfterOpen when bStartGameReload).
-    inline bool RequestOpenLevel(xecs::game_mgr::instance& GameMgr, level_state& State, xundo::system& Undo, xresource::full_guid LevelGuid, bool bStartGameReload) noexcept
+    // A Level is a resource like any other: opening one (a double-click, a drop, the OpenLevel command) gets it its own
+    // editor, next to the ones already open. Whoever wants one open queues it here; the shell opens the editors at a clean
+    // point of the frame (a new editor builds a whole world, which must not happen in the middle of drawing another).
+    inline std::vector<xresource::full_guid> g_PendingOpenLevels;
+
+    inline void QueueOpenLevel(xresource::full_guid LevelGuid) noexcept
     {
-        if (LevelGuid.m_Type != xecs::level::type_guid_v) return false;
-        if (State.isPlaying()) return false;
-        if (State.m_bAwaitingSaveBeforeClose) return false;
-
-        const xecs::level::guid AsLevel{ .m_Instance = LevelGuid.m_Instance };
-        if (!State.m_CurrentLevel.empty() && State.m_CurrentLevel.m_Instance == AsLevel.m_Instance)
-            return false; // already the open Level
-
-        if (State.m_CurrentLevel.empty() && State.m_OpenScenes.empty())
-        {
-            OpenLevel(GameMgr, State, LevelGuid);
-            MarkDocumentClean(State, Undo);
-            return bStartGameReload;
-        }
-
-        if (!HasUnsavedDocumentChanges(State, Undo))
-        {
-            CloseLevel(GameMgr, State, Undo);
-            OpenLevel(GameMgr, State, LevelGuid);
-            MarkDocumentClean(State, Undo);
-            return bStartGameReload;
-        }
-
-        State.m_PendingOpenLevelAfterClose = LevelGuid;
-        State.m_bPendingOpenWantsGameReload = bStartGameReload;
-        State.m_bAwaitingSaveBeforeClose = true;
-        return false;
+        if (LevelGuid.m_Type != xecs::level::type_guid_v) return;
+        if (std::find(g_PendingOpenLevels.begin(), g_PendingOpenLevels.end(), LevelGuid) == g_PendingOpenLevels.end())
+            g_PendingOpenLevels.push_back(LevelGuid);
     }
 
     // Same OpenPopup-every-frame convention as RenderKeepTweaksModal / RenderErrorPopup.

@@ -29,10 +29,9 @@ namespace xlevel
     // not need that") - it stays the fast, ephemeral, scene-unaware xecs::game_mgr::instance::
     // SerializeGameState bridge below, purely to keep gameplay itself continuous across a mid-play
     // Game.dll reload, never touching the real saved assets and never read back by Stop.
-    inline std::wstring GetReloadBridgeSnapshotPath() noexcept
+    inline std::wstring GetReloadBridgeSnapshotPath( std::uint64_t EditorKey = 0 ) noexcept
     {
-        static const std::wstring s_Path = (std::filesystem::temp_directory_path() / L"xGPU_LevelEditor_ReloadBridge.bin").wstring();
-        return s_Path;
+        return (std::filesystem::temp_directory_path() / std::format(L"xGPU_LevelEditor_ReloadBridge_{:016X}.bin", EditorKey)).wstring();
     }
 
     inline bool SaveSnapshot( xecs::game_mgr::instance& GameMgr, const std::wstring& Path ) noexcept
@@ -292,7 +291,7 @@ namespace xlevel
 
                 if (ImGui::Button("Strip and Continue", ImVec2(160, 0)))
                 {
-                    StripMissingComponentsFromOpenScenes(Ed, g_PendingReloadCompatibility->m_Missing);
+                    for (auto* pCtx : g_LevelContexts) StripMissingComponentsFromOpenScenes(*pCtx, g_PendingReloadCompatibility->m_Missing);
                     g_PendingReloadCompatibility.reset();
                     ImGui::CloseCurrentPopup();
                     if (g_pGamePlugin) StartGameReload(*g_pGamePlugin);
@@ -334,41 +333,37 @@ namespace xlevel
     // longer does that as a side effect the way the old DiskSaveAndReload mode used to.
     //---------------------------------------------------------------------------
     template< typename T_REGISTER_HOST_COMPONENTS_FN >
-    bool PollGameReload( xlevel::level_context& Ed, game_plugin_state& Plugin, T_REGISTER_HOST_COMPONENTS_FN&& RegisterHostComponents ) noexcept
+    bool PollGameReload( xlevel::level_context& Ed, game_plugin_state& Plugin, T_REGISTER_HOST_COMPONENTS_FN&& RegisterHostComponents, std::uint32_t& SeenResultSeq ) noexcept
     {
         auto& State = Ed.State();
-        if (!Plugin.m_bBuilding) return false;
-        if (Plugin.m_BuildFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return false;
 
-        const build_result Result = Plugin.m_BuildFuture.get();
-        Plugin.m_bBuilding = false;
+        // Game.dll is shared by every open Level: whichever editor notices the build finished first takes the result and, if
+        // a new module was built, does the one reload (which has every editor snapshot and rebuild its own world).
+        if (Plugin.m_bBuilding && Plugin.m_BuildFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+        {
+            Plugin.m_LastResult = Plugin.m_BuildFuture.get();
+            Plugin.m_bBuilding  = false;
+            ++Plugin.m_ResultSeq;
+            if (Plugin.m_LastResult == build_result::Rebuilt)
+                ReloadGameModule(Plugin, RegisterHostComponents);
+        }
 
-        if (Result == build_result::Failed)
+        if (SeenResultSeq == Plugin.m_ResultSeq) return false;
+        SeenResultSeq = Plugin.m_ResultSeq;
+
+        // The part that belongs to this editor alone: a Play it was waiting on.
+        if (Plugin.m_LastResult == build_result::Failed)
         {
             xlevel::CancelPlayRequest(State);
             return false;
         }
 
-        if (Result == build_result::UpToDate)
-        {
-            if (State.m_bPlayRequested)
-            {
-                State.m_bPlayRequested = false;
-                xlevel::EnterPlaying(Ed);
-            }
-            return false;
-        }
-
-        // Result == build_result::Rebuilt
-        const bool bLoaded = ReloadGameModule(Plugin, RegisterHostComponents);
-
         if (State.m_bPlayRequested)
         {
             State.m_bPlayRequested = false;
-                xlevel::EnterPlaying(Ed);
+            xlevel::EnterPlaying(Ed);
         }
-
-        return bLoaded;
+        return Plugin.m_LastResult == build_result::Rebuilt;
     }
 }
 

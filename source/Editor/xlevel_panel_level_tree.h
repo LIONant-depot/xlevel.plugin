@@ -28,14 +28,9 @@ namespace xlevel
     //---------------------------------------------------------------------------
     // Dropping a Level from Resources mid-tree can mutate open scenes while rows are still drawing -
     // stash and open after ImGui::End (same OpenLevel + StartGameReload path as double-click).
-    inline xresource::full_guid g_PendingOpenLevelFromTree{};
-    inline bool                 g_bPendingOpenLevelFromTree = false;
-
     inline void RequestOpenLevelFromTreeDrop(const xresource::full_guid& LevelGuid) noexcept
     {
-        if (LevelGuid.m_Type != xecs::level::type_guid_v) return;
-        g_PendingOpenLevelFromTree  = LevelGuid;
-        g_bPendingOpenLevelFromTree = true;
+        QueueOpenLevel(LevelGuid);
     }
 
     // True when the current DESCRIPTOR_GUID drag is a Level asset (PeekOnly-safe).
@@ -60,20 +55,6 @@ namespace xlevel
                 RequestOpenLevelFromTreeDrop(Dropped.m_Source);
         }
         return true;
-    }
-
-    // Returns true when a Level open was applied (caller should StartGameReload, same as
-    // double-click OpenLevel in the editor's main loop). Kept out of this panel so we do
-    // not need g_pGamePlugin / StartGameReload visible through the kit include order.
-    // Returns true when RequestOpenLevel opened immediately (caller StartGameReload). false when
-    // nothing pending, already-open, or deferred to the Save-before-close modal.
-    inline bool FlushPendingOpenLevelFromTree(xecs::game_mgr::instance& GameMgr, level_state& State, xundo::system& Undo) noexcept
-    {
-        if (!g_bPendingOpenLevelFromTree) return false;
-        g_bPendingOpenLevelFromTree = false;
-        const auto LevelGuid = g_PendingOpenLevelFromTree;
-        g_PendingOpenLevelFromTree = {};
-        return RequestOpenLevel(GameMgr, State, Undo, LevelGuid, /*bStartGameReload*/ true);
     }
 
     // Renders the Level Tree's own source-control status/lock badge for a Scene or Level resource -
@@ -439,9 +420,16 @@ namespace xlevel
 
                             const bool bIsOpenScene = std::find(State.m_OpenScenes.begin(), State.m_OpenScenes.end(), SceneGuid) != State.m_OpenScenes.end();
 
+                            // Another Level editor is editing this Scene: it is read-only here (browse and inspect, no edits) until
+                            // that editor saves it.
+                            const bool        bSceneLocked = xlevel::IsSceneLockedByOther(Ed, SceneGuid);
+                            const std::string LockOwner    = bSceneLocked ? xlevel::SceneOwnerName(SceneGuid) : std::string{};
+
                             ImGui::TableNextRow();
                             ImGui::TableSetColumnIndex(1);
-                            const std::string SceneLabelWithIcon = std::format("{} {}", xlevel::SceneIcon(), SceneLabel);
+                            const std::string SceneLabelWithIcon = bSceneLocked
+                                ? std::format("{} {}  (read-only: edited in {})", xlevel::SceneIcon(), SceneLabel, LockOwner)
+                                : std::format("{} {}", xlevel::SceneIcon(), SceneLabel);
                             // Open/loaded is STATUS, not selection focus. Still use Selected so
                             // TreeNode paints a fill, but tint Header* grey locally so it does not
                             // collide with entity-selection blue (ImGuiCol_Header from the editor theme).
@@ -473,8 +461,10 @@ namespace xlevel
                             // offers (landing at this scene's root), plus removing the scene itself.
                             if (ImGui::BeginPopupContextItem())
                             {
+                                ImGui::BeginDisabled(bSceneLocked);
                                 if (auto* pMenuScene = GameMgr.m_SceneMgr.Find(SceneGuid))
                                     xscene::ShowCreateMenuItems(Ed, SceneGuid, *pMenuScene, xecs::scene::invalid_folder_id_v);
+                                ImGui::EndDisabled();
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("Remove Scene"))
                                 {
@@ -520,7 +510,7 @@ namespace xlevel
                             // entity dragged out of a folder back to loose/root (E29_ENTITY_DRAG,
                             // reusing the same payload struct the prefab-creation drag already uses -
                             // it already carries exactly {SceneGuid, Id}).
-                            if (bIsOpenScene && ImGui::BeginDragDropTarget())
+                            if (bIsOpenScene && !bSceneLocked && ImGui::BeginDragDropTarget())
                             {
                                 const ImGuiPayload* PeekLevel = ImGui::AcceptDragDropPayload("DESCRIPTOR_GUID", ImGuiDragDropFlags_AcceptPeekOnly);
                                 if (xlevel::PeekDescriptorPayloadIsLevel(PeekLevel))
@@ -645,6 +635,7 @@ namespace xlevel
                                             // double-click window has passed with no further click). Enter / click-away commits, Esc cancels.
                                             auto BeginRename = [&]() noexcept
                                             {
+                                                if (bSceneLocked) return;
                                                 State.m_RenameScene      = SceneGuid;
                                                 State.m_RenameId         = Id;
                                                 State.m_bRenameFocus     = true;
@@ -784,6 +775,7 @@ namespace xlevel
                                                 // Routed through the same CreateEntity command
                                                 // ShowCreateMenuItems uses (xlevel_editor.h),
                                                 // just with -Parent instead of -Folder.
+                                                ImGui::BeginDisabled(bSceneLocked);
                                                 if (ImGui::MenuItem("New Entity"))
                                                 {
                                                     const auto NewId = xscene::NextFreeEntityId(*pScene);
@@ -797,6 +789,7 @@ namespace xlevel
                                                 if (ImGui::MenuItem("Rename", "F2", false, !State.isPlaying())) BeginRename();
                                                 ImGui::Separator();
                                                 if (ImGui::MenuItem("Delete Entity")) DoDeleteEntity();
+                                                ImGui::EndDisabled();
                                                 ImGui::Separator();
                                                 // Single-file revert of exactly the resource this row's
                                                 // own badge represents (the Prefab, if this is a prefab-
@@ -894,6 +887,7 @@ namespace xlevel
                                                 bool bFolderDeleted = false;
                                                 if (ImGui::BeginPopupContextItem())
                                                 {
+                                                    ImGui::BeginDisabled(bSceneLocked);
                                                     xscene::ShowCreateMenuItems(Ed, SceneGuid, *pScene, FolderId);
                                                     ImGui::Separator();
                                                     if (ImGui::MenuItem("Delete Folder"))
@@ -904,6 +898,7 @@ namespace xlevel
                                                             ));
                                                         bFolderDeleted = true;
                                                     }
+                                                    ImGui::EndDisabled();
                                                     ImGui::EndPopup();
                                                 }
                                                 if (bFolderDeleted)

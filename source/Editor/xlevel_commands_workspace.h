@@ -40,6 +40,7 @@ namespace xlevel::commands
             // agent shouldn't be able to do what the UI itself refuses to do while Playing/Paused.
             auto& State = get<level_context>().State();
             if (State.isPlaying()) return "Undo: blocked while Play/Paused";
+            if (!xlevel::MayUndoRedo(m_System, false)) return "Undo: refused - it changes a Scene another Level is editing";
             const auto Before = m_System.GetUndoIndex();
             m_System.Undo();
             return m_System.GetUndoIndex() == Before ? "Nothing to undo" : "Undone";
@@ -55,6 +56,7 @@ namespace xlevel::commands
         {
             auto& State = get<level_context>().State();
             if (State.isPlaying()) return "Redo: blocked while Play/Paused";
+            if (!xlevel::MayUndoRedo(m_System, true)) return "Redo: refused - it changes a Scene another Level is editing";
             const auto Before = m_System.GetUndoIndex();
             m_System.Redo();
             return m_System.GetUndoIndex() == Before ? "Nothing to redo" : "Redone";

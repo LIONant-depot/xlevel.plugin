@@ -28,7 +28,7 @@ namespace xlevel::commands
 
         std::string Query() noexcept override
         {
-            auto* pEditor = xeditor::host::current() ? xeditor::host::current()->find<viewport_tools::editor>() : nullptr;
+            auto* pEditor = static_cast<viewport_tools::editor*>(LevelContext().m_pToolEditor);
             if (!pEditor) return "EditTool: no Level viewport";
             auto& S = State();
 

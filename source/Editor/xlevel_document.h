@@ -196,16 +196,51 @@ namespace xlevel
         }
     };
 
-    // Claims the Level and the selected scenes for the session before its first edit (DESIGN 4.2); the host runs it
-    // before every edit command.
-    inline bool TryGateLevelMutation(xundo::system& System) noexcept
+    // The host runs this before every edit, from the UI or the CLI (DESIGN 4.2). The first editor to edit a Scene takes its
+    // write lock; an edit of a Scene another editor holds is refused. The Scene is the command's -Scene argument; an edit
+    // with none (Level membership, ...) locks the Level itself. Selecting is not editing: it never locks anything.
+    inline bool TryGateLevelMutation(xundo::system& System, std::string_view Cmd) noexcept
     {
         auto* pHost = xeditor::host::current();
-        auto* pEd   = FindLevelContext();
-        if (pHost == nullptr || pEd == nullptr || &System != &pEd->m_Undo) return true;
-        for (auto& S : pHost->m_Sessions)
-            if (S && &S->undo() == &System) return EnsureLevelEditAccess(*pHost, *S, pEd->State());
-        return true;
+        level_context* pEd = nullptr;
+        for (auto* p : g_LevelContexts) if (&System == &p->m_Undo) { pEd = p; break; }
+        if (pHost == nullptr || pEd == nullptr) return true;
+        auto* pMe = FindHostSession(System);
+        if (pMe == nullptr) return true;
+
+        const auto Name = Cmd.substr(0, Cmd.find(' '));
+        if (Name == "Select" || Name == "ToggleMultiSelect" || Name == "ClearSelection") return true;
+
+        // Adding/removing a Scene names it but changes the Level's membership list, not the Scene.
+        const bool bLevelMembershipEdit = Name == "AddScene" || Name == "RemoveScene";
+        if (const auto Pos = Cmd.find("-Scene "); !bLevelMembershipEdit && Pos != std::string_view::npos)
+        {
+            const auto Hex   = Cmd.substr(Pos + 7, Cmd.find(' ', Pos + 7) == std::string_view::npos ? std::string_view::npos : Cmd.find(' ', Pos + 7) - (Pos + 7));
+            const auto Scene = xscene::commands::ParseSceneGuid(Hex);
+            if (!Scene.empty()) return pHost->try_acquire_write(SceneResourceGuid(Scene), pMe);
+        }
+
+        auto& State = pEd->State();
+        if (State.m_CurrentLevel.empty()) return true;
+        return pHost->try_acquire_write(xresource::full_guid{ State.m_CurrentLevel.m_Instance, xecs::level::type_guid_v }, pMe);
+    }
+
+    // Undo/Redo change a Scene too, so they pass the same gate: the step about to be undone (or redone) - every command of
+    // a grouped step - must not touch a Scene another Level editor owns. False (after telling the person) when it would.
+    inline bool MayUndoRedo(xundo::system& Undo, bool bRedo) noexcept
+    {
+        const int Index = bRedo ? Undo.GetUndoIndex() : Undo.GetUndoIndex() - 1;
+        if (Index < 0 || static_cast<std::size_t>(Index) >= Undo.GetHistoryCount()) return true;
+
+        auto Check = [&](const std::string& Cmd) noexcept { return TryGateLevelMutation(Undo, Cmd); };
+        bool bOk = true;
+        if (const auto nSub = Undo.GetHistorySubCommandCount(Index); nSub > 0)
+            for (std::size_t i = 0; i < nSub && bOk; ++i) bOk = Check(Undo.GetHistorySubCommandString(Index, i));
+        else
+            bOk = Check(Undo.GetHistoryCommandString(Index));
+
+        if (!bOk) xeditor::NotifyError(bRedo ? "Redo refused: it changes a Scene another Level is editing" : "Undo refused: it changes a Scene another Level is editing");
+        return bOk;
     }
 }
 

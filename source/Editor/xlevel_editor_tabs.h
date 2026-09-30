@@ -22,10 +22,27 @@ namespace xlevel::editor_tabs
     inline constexpr char kLevelEditorWindow[] = "Level Editor###LevelEditor"; // legacy alias (logs)
     inline constexpr char kLevelEditorDockspaceId[] = "LevelEditor.Dockspace.V2";
     inline constexpr char kResourceBrowserWindow[] = "Resource Browser###LevelEditor.ResourceBrowser";
-    inline constexpr char kEditorWindow[] = "Editor###LevelEditor.Editor";
-    inline constexpr char kLevelTreeWindow[] = "Level Tree###LevelEditor.LevelTree";
-     inline constexpr char kInspectorWindow[] = "Inspector###LevelEditor.Inspector";
-    inline constexpr char kSystemRegistryWindow[] = "System Registry###LevelEditor.SystemRegistry";
+
+    // Several Levels can be open at once, each in its own editor with its own panels, so every window id carries the
+    // Level it belongs to (the ### part is the stable id; the text before it is what the tab shows). The same Level
+    // always gets the same ids, so its layout is remembered between runs.
+    struct window_names
+    {
+        char m_RootId[48]          = {};
+        char m_Editor[64]          = {};
+        char m_LevelTree[64]       = {};
+        char m_Inspector[64]       = {};
+        char m_SystemRegistry[64]  = {};
+
+        void Init( std::uint64_t Key ) noexcept
+        {
+            std::snprintf(m_RootId,         sizeof(m_RootId),         "LevelEditor.%016llX",                    static_cast<unsigned long long>(Key));
+            std::snprintf(m_Editor,         sizeof(m_Editor),         "Editor###LevelEditor.Editor.%016llX",    static_cast<unsigned long long>(Key));
+            std::snprintf(m_LevelTree,      sizeof(m_LevelTree),      "Level Tree###LevelEditor.LevelTree.%016llX", static_cast<unsigned long long>(Key));
+            std::snprintf(m_Inspector,      sizeof(m_Inspector),      "Inspector###LevelEditor.Inspector.%016llX", static_cast<unsigned long long>(Key));
+            std::snprintf(m_SystemRegistry, sizeof(m_SystemRegistry), "System Registry###LevelEditor.SystemRegistry.%016llX", static_cast<unsigned long long>(Key));
+        }
+    };
     inline constexpr char kGamePluginLogWindow[] = "\xEE\x9F\x83 Log###LevelEditor.GamePluginLog";
     inline constexpr char kCommandConsoleWindow[] = "\xEE\xA3\xBD Commands###LevelEditor.CommandConsole";
     inline constexpr char kSourceControlWindow[] = "Source Control###LevelEditor.SourceControl";
@@ -69,7 +86,7 @@ namespace xlevel::editor_tabs
 
     // Host Drawer ??? do not dock Resources/SC/Idle/Log/Commands here.
 
-    inline void BuildParentEditorDefaultLayout(ImGuiID DockspaceId, ImVec2 Size) noexcept
+    inline void BuildParentEditorDefaultLayout(ImGuiID DockspaceId, ImVec2 Size, const window_names& Names) noexcept
     {
         if (ImGui::DockBuilderGetNode(DockspaceId) != nullptr)
             return;
@@ -80,10 +97,10 @@ namespace xlevel::editor_tabs
         ImGuiID Right = 0;
         ImGui::DockBuilderSplitNode(Remaining, ImGuiDir_Left,  0.22f, &Left,  &Remaining);
         ImGui::DockBuilderSplitNode(Remaining, ImGuiDir_Right, 0.28f, &Right, &Remaining);
-        ImGui::DockBuilderDockWindow(kEditorWindow,         Remaining);
-        ImGui::DockBuilderDockWindow(kLevelTreeWindow,      Left);
-        ImGui::DockBuilderDockWindow(kInspectorWindow,      Right);
-        ImGui::DockBuilderDockWindow(kSystemRegistryWindow, Right);
+        ImGui::DockBuilderDockWindow(Names.m_Editor,         Remaining);
+        ImGui::DockBuilderDockWindow(Names.m_LevelTree,      Left);
+        ImGui::DockBuilderDockWindow(Names.m_Inspector,      Right);
+        ImGui::DockBuilderDockWindow(Names.m_SystemRegistry, Right);
         ImGui::DockBuilderFinish(DockspaceId);
     }
 
@@ -95,6 +112,7 @@ namespace xlevel::editor_tabs
 
     inline bool RenderParentEditorDockspace(
         T_RENDER_PARENT_TOOLBAR&& RenderParentToolbar,
+        const window_names& Names,
         const char* DisplayName = "Level",
         xgpu::device* pDevice = nullptr,
         xresource::type_guid TypeGuid = {},
@@ -105,7 +123,7 @@ namespace xlevel::editor_tabs
         char Title[256];
         xeditor::FormatEditorRootTabTitle(Title, sizeof(Title),
             (DisplayName && *DisplayName) ? DisplayName : "Level",
-            kLevelEditorWindowId);
+            Names.m_RootId);
         ImGuiWindowClass ParentWindowClass;
         ParentWindowClass.DockingAlwaysTabBar = true;
         ImGui::SetNextWindowClass(&ParentWindowClass);
@@ -126,7 +144,7 @@ namespace xlevel::editor_tabs
         if (bParentVisible)
         {
             RenderParentToolbar();
-            BuildParentEditorDefaultLayout(ParentDockspaceId, ImGui::GetContentRegionAvail());
+            BuildParentEditorDefaultLayout(ParentDockspaceId, ImGui::GetContentRegionAvail(), Names);
             ImGui::DockSpace(ParentDockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None, &ParentDockClass);
         }
         else
@@ -142,6 +160,7 @@ namespace xlevel::editor_tabs
     template<typename T_RENDER_PARENT_TOOLBAR>
     inline bool RenderLevelEditorDockspace(
         T_RENDER_PARENT_TOOLBAR&& RenderParentToolbar,
+        const window_names& Names,
         const char* DisplayName = "Level",
         xgpu::device* pDevice = nullptr,
         xresource::type_guid TypeGuid = {},
@@ -150,7 +169,7 @@ namespace xlevel::editor_tabs
     {
         return RenderParentEditorDockspace(
             std::forward<T_RENDER_PARENT_TOOLBAR>(RenderParentToolbar),
-            DisplayName, pDevice, TypeGuid, DockGuid, pOpen);
+            Names, DisplayName, pDevice, TypeGuid, DockGuid, pOpen);
     }
 
 }

@@ -24,6 +24,9 @@ namespace xlevel
         auto& State = Ed.State();
         const auto* pGate = xeditor::host::current()->find<play_gate>();
         const bool bBuilding = pGate && pGate->m_IsBuilding();
+        // Another Level editor is playing: this one can neither Play nor Step until it stops.
+        auto* pHost = xeditor::host::current();
+        const bool bOtherPlaying = pHost && pHost->is_play_active() && pHost->m_pPlayOwner != &State;
         using play_state = level_state::play_state;
         constexpr const char* PlayIcon  = "\xEE\x9D\xA8";
         constexpr const char* PauseIcon = "\xEE\x9D\xA9";
@@ -59,12 +62,13 @@ namespace xlevel
         if (Layout.m_bHorizontal)
             ImGui::SameLine((ImGui::GetWindowWidth() - (Layout.m_ButtonSize.x * 2.0f + ImGui::GetStyle().ItemSpacing.x)) * 0.5f);
 
-        Slot(bStopped ? PlayIcon : StopIcon, bBuilding, false, [&]
+        Slot(bStopped ? PlayIcon : StopIcon, bBuilding || (bStopped && bOtherPlaying), false, [&]
         {
             if (bStopped) RequestPlay(Ed);
             else          RequestStop(Ed, std::nullopt);
         });
-        Tip(bStopped ? "Play" : "Stop", bStopped ? "Start playback" : "Stop playback");
+        if (bStopped && bOtherPlaying) { if (Layout.m_bTooltips && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Another Level is playing - stop it first"); }
+        else Tip(bStopped ? "Play" : "Stop", bStopped ? "Start playback" : "Stop playback");
 
         Next();
         if (bPlaying)
@@ -74,7 +78,7 @@ namespace xlevel
         }
         else
         {
-            Slot(StepIcon, bBuilding, false, [&] { RequestStep(Ed); });
+            Slot(StepIcon, bBuilding || (bStopped && bOtherPlaying), false, [&] { RequestStep(Ed); });
             Tip("Step", "Run one frame");
         }
 

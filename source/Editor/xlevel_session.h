@@ -13,14 +13,12 @@
 // whole tree of Scenes, not one descriptor. So this implements xeditor::resource_editor directly, the same
 // carve-out xeditor_resource_editor.h's own top comment documents for exactly this shape.
 //
-// STAGE (b) of the LevelEditor-ownership move (see the task's own staged plan): the shell now opens exactly one
-// of these at startup via xeditor::open_resource_editors::Open({.m_Type=xecs::level::type_guid_v}, {}) - see
-// LevelEditor_AppInit.h. It is a SINGLETON, unlike Texture: opened once, never destroyed for the life of the
-// process (resource_editor::m_bOpen is never set false - m_State.m_bLevelEditorOpen, unchanged from the old
-// app-owned model, is what actually shows/hides the peer tab). That's a deliberate, documented choice - Level
-// has no natural per-Guid "which one" the way double-clicking a Texture does; command_set (still in the shell
-// until stage (c)'s split) and WireAssetBrowser both hold a raw xlevel::session* obtained once at startup, which
-// would dangle if this object could be destroyed while the tab is closed.
+// One of these per open Level, exactly like Texture: open_resource_editors::Open(LevelGuid, LibraryGuid) creates it
+// (a double-click in the Assets panel, a drop, the OpenLevel command), it loads that Level, and closing the Level
+// closes it. Several can be open at once; each has its own world, undo stack, panels and window ids (m_Names). What
+// they share is the game module (Game.dll - the scripts belong to no Level), see level_services. One extra,
+// never-shown editor without a Level exists so the commands that name no Level have something to act on when none is
+// open.
 //
 // The command/undo split (stage (c) - a fresh, framework-owned workspace xundo::system in the shell vs. this
 // session's own, entity/scene-mutation-only one) is NOT done here: m_Undo below is a fresh xundo::system with no
@@ -58,6 +56,33 @@
 
 namespace xlevel
 {
+    // What every open Level shares: the game module (Game.dll - the scripts are a resource of their own, not part of any
+    // Level) and the gate Play waits on for its build. Created by the first editor, unloaded by the shell at shutdown.
+    struct level_services
+    {
+        game_plugin_state Plugin;
+        play_gate         Gate;
+        bool              bReady = false;
+    };
+
+    inline level_services& Services() noexcept { static level_services s_Services; return s_Services; }
+
+    // Called once by the shell, after every editor is gone and before the process ends.
+    inline void ShutdownLevelServices() noexcept
+    {
+        auto& Svc = Services();
+        if (!Svc.bReady) return;
+#if defined(XECS_BUILD_SHARED)
+        if (auto* pHost = xeditor::host::current()) pHost->withdraw<play_gate>();
+#endif
+        xlevel::UnloadGamePlugin(Svc.Plugin);
+        Svc.bReady = false;
+    }
+
+    struct session;
+    // The shell hooks this to give every new Level editor its commands (the ones that are addressed to it by name).
+    inline std::function<void(session&)> g_OnSessionCreated;
+
     // This editor's world: a fresh one with its systems, project paths, System Registry order and inspector
     // wiring. Ported from source/Editors/LevelEditor/LevelEditor_AppWorld.h's app::CreateWorld - component types
     // are registered once for the whole process (RegisterHostComponents, below), not per world.
@@ -70,8 +95,11 @@ namespace xlevel
         std::wstring                               m_ProjectPath;
         xgpu::device*                              m_pDevice = nullptr;   // null in headless builds - see resource_editor's own comment on m_pDevice
 
-        game_plugin_state                          m_GamePlugin;
-        play_gate                                  m_PlayGate;
+        game_plugin_state&                         m_GamePlugin = Services().Plugin;   // shared by every open Level
+        xresource::full_guid                       m_LevelGuid;                        // the Level this editor is for (empty: the stand-in editor that is used when no Level is open)
+        editor_tabs::window_names                  m_Names;                            // this editor's own window ids
+        std::uint32_t                              m_SeenBuildSeq = 0;                 // the last finished Game.dll build this editor reacted to
+        bool                                       m_bOpenRequested = false;           // a Level was asked for (closing it closes this editor)
 
         level_context                              m_CmdContext{ m_State, m_pGameMgr, m_Undo };
         scene_sanity_scanner                       m_SceneScanner{ m_CmdContext };
@@ -86,6 +114,8 @@ namespace xlevel
         bool                                         m_bPivotCenter = true;
         bool                                         m_bLocalSpace  = false;
         ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost;
+        char                                         m_ToolbarHandlerName[48] = {};
+        bool                                         m_bToolbarHandler = false;
 
         // Gizmo drag state (Move/Rotate/Scale tools) - persists across frames while ImGuizmo::IsUsing()
         // is true, so the Translate/Rotate/Scale command is Execute()'d exactly once on mouse-release
@@ -153,9 +183,12 @@ namespace xlevel
             xecs::component::mgr::SyncLocalBitIDs<xlioncore::static_tag, xlioncore::transform>();
         }
 
-        session(xresource::full_guid /*Guid*/, e10::library::guid /*LibraryGuid*/, xgpu::device* pDevice) noexcept
+        session(xresource::full_guid Guid, e10::library::guid /*LibraryGuid*/, xgpu::device* pDevice) noexcept
             : m_pDevice(pDevice)
         {
+            m_LevelGuid = Guid;
+            m_Names.Init(Guid.m_Instance.m_Value);
+
             if (auto Err = m_Undo.Init({}, false); !Err.empty())
                 xeditor::NotifyError(std::format("Level session xundo Init failed: {}", Err));
             m_Document.Bind(m_CmdContext);
@@ -180,13 +213,28 @@ namespace xlevel
             if (!RepoRoot.empty()) m_ProjectPath = e10::g_LibMgr.m_ProjectPath;   // the shell has already opened the project by the time Open() can run
 
 #if defined(XECS_BUILD_SHARED)
-            m_GamePlugin.m_Paths = xlevel::MakeScriptProjectPaths();
-            if (!std::filesystem::exists(m_GamePlugin.m_Paths.m_CMakeLists))
-                xlevel::RegenerateGameModuleSources(m_GamePlugin.m_Paths);
-            xlevel::BuildGamePluginIfStale(m_GamePlugin, xlevel::GetLatestModuleSourceWriteTime(m_GamePlugin.m_Paths));
-            xlevel::LoadGamePluginComponents(*m_pGameMgr, m_GamePlugin, /*Generation*/ 1);
+            // The first editor brings the game module up; every other one just uses it (its components are already in the
+            // process-wide registry, each editor only registers the systems into its own world).
+            if (auto& Svc = Services(); !Svc.bReady)
+            {
+                m_GamePlugin.m_Paths = xlevel::MakeScriptProjectPaths();
+                if (!std::filesystem::exists(m_GamePlugin.m_Paths.m_CMakeLists))
+                    xlevel::RegenerateGameModuleSources(m_GamePlugin.m_Paths);
+                xlevel::BuildGamePluginIfStale(m_GamePlugin, xlevel::GetLatestModuleSourceWriteTime(m_GamePlugin.m_Paths));
+                xlevel::LoadGamePluginComponents(*m_pGameMgr, m_GamePlugin, /*Generation*/ 1);
+
+                Svc.Gate.m_IsBuilding = []() noexcept { return Services().Plugin.m_bBuilding; };
+                Svc.Gate.m_StartBuild = []() noexcept { xlevel::StartGameReload(Services().Plugin); };
+                if (auto* pHost = xeditor::host::current()) pHost->provide(Svc.Gate);
+                Svc.bReady = true;
+            }
+            m_SeenBuildSeq = m_GamePlugin.m_ResultSeq;
 #else
-            xlevel::LogGamePlugin("Game.dll: this build was configured without XECS_BUILD_SHARED_LIBRARY - Game.dll support is disabled, Play just ticks the host's own systems.");
+            if (auto& Svc = Services(); !Svc.bReady)
+            {
+                xlevel::LogGamePlugin("Game.dll: this build was configured without XECS_BUILD_SHARED_LIBRARY - Game.dll support is disabled, Play just ticks the host's own systems.");
+                Svc.bReady = true;
+            }
 #endif
             RegisterHostSystems(*m_pGameMgr);
             xlevel::RegisterGamePluginSystems(*m_pGameMgr, m_GamePlugin);
@@ -244,29 +292,21 @@ namespace xlevel
             };
             m_EntityInspector.m_OnLeftColumnAppend.Register(m_OnScaleRow);
 
-#if defined(XECS_BUILD_SHARED)
-            m_PlayGate.m_IsBuilding = [this]() noexcept { return m_GamePlugin.m_bBuilding; };
-            m_PlayGate.m_StartBuild = [this]() noexcept { xlevel::StartGameReload(m_GamePlugin); };
-#endif
             m_GamePlugin.m_Events.m_OnCollectRequiredComponents.Register<&session::CollectRequiredComponents>(*this);
             m_GamePlugin.m_Events.m_OnBeforeReload.Register<&session::BeforeReload>(*this);
             m_GamePlugin.m_Events.m_OnAfterReload.Register<&session::AfterReload>(*this);
 
             xlevel::g_pGamePlugin = &m_GamePlugin;
 
-            // Service registration: lets xlevel::FindLevelContext()/TryGateLevelMutation (the write-lock gate
-            // wired as EditorHost.m_OnBeforeEdit) and xscene:: code that takes a scene_context& reach this
-            // session, the same way LevelEditor_AppInit.h used to provide its own CmdContext.
+            // Registration: lets xlevel::TryGateLevelMutation (the write-lock gate wired as EditorHost.m_OnBeforeEdit) and the
+            // commands that act on "the Level the user is working on" reach this editor. The newest real Level becomes the
+            // active one; the stand-in editor (no Level) only serves until there is one.
+            m_CmdContext.m_pToolEditor = &m_ToolEditor;
+            g_LevelContexts.push_back(&m_CmdContext);
+            if (g_pActiveLevelContext == nullptr || !m_LevelGuid.m_Instance.empty())
+                g_pActiveLevelContext = &m_CmdContext;
             if (auto* pHost = xeditor::host::current())
-            {
-                pHost->provide(m_CmdContext);
-                pHost->provide<xscene::scene_context>(m_CmdContext);
-                pHost->provide(m_ToolEditor);
-#if defined(XECS_BUILD_SHARED)
-                pHost->provide(m_PlayGate);
-#endif
                 pHost->m_IdleWork.m_OnRun.Register<&xlevel::scene_sanity_scanner::Run>(m_SceneScanner);
-            }
 
             if (m_pDevice)   // non-headless: same one-time toolbar-position persistence AppInit.h used to do
             {
@@ -276,31 +316,54 @@ namespace xlevel
                 m_EditorToolbarHost.m_Items.push_back
                 ({ "Scene", ximgui::toolbar::toolbar_host_edge::Top, ximgui::toolbar::axis::Horizontal
                  , ImVec2(kSceneToolbarWidth, kEditorToolbarHeight), ImVec2(32.0f, 250.0f), ImVec2(24.0f, 72.0f) });
-                ximgui::toolbar::RegisterSettingsHandler(m_EditorToolbarHost, "LevelEditorToolbar");
+                // One handler per editor, under its own name, and removed again in the destructor (it points at this editor).
+                std::snprintf(m_ToolbarHandlerName, sizeof(m_ToolbarHandlerName), "LevelEditorToolbar%016llX", static_cast<unsigned long long>(m_LevelGuid.m_Instance.m_Value));
+                ximgui::toolbar::RegisterSettingsHandler(m_EditorToolbarHost, m_ToolbarHandlerName);
+                m_bToolbarHandler = true;
             }
 
-            // TODO(stage c, command/undo split): register the Level-tagged half of
-            // source/Editors/LevelEditor/commands/LevelEditor_CommandSet.h against m_Undo here (CmdSelect through
-            // CmdDeleteFolder/CmdMakePrefabVariant - the entity/scene/play mutation commands; everything else -
-            // asset CRUD, source control, compile, idle-work, Say/GetLog, OpenResourceEditor - stays registered
-            // against the shell's own framework workspace xundo::system). Deferred so this checkpoint is a clean,
-            // single, reviewable cut rather than two half-migrated command sets.
+            // A Level editor is for one Level: load it (and every Scene it owns) right away, and have the game module's
+            // build check run once it is up, like the old double-click did.
+            if (!m_LevelGuid.m_Instance.empty())
+            {
+                m_bOpenRequested = true;
+                xlevel::OpenLevel(*m_pGameMgr, m_State, m_LevelGuid);
+                xlevel::MarkDocumentClean(m_State, m_Undo);
+                m_State.m_bPendingStartGameReloadAfterOpen = true;
+            }
+
+            // The shell builds the commands that are addressed to this editor by name (Name\Command) and keeps them in
+            // m_ShellCommands, which goes away before anything they refer to.
+            if (g_OnSessionCreated) g_OnSessionCreated(*this);
         }
 
         ~session() noexcept override
         {
+            m_ShellCommands.reset();   // the commands registered on m_Undo go first
+
+            // A closing editor gives back whatever it held: the Play slot and its Scene/Level write locks.
             if (auto* pHost = xeditor::host::current())
             {
                 pHost->m_IdleWork.m_OnRun.RemoveDelegates(&m_SceneScanner);
-#if defined(XECS_BUILD_SHARED)
-                pHost->withdraw<play_gate>();
-#endif
-                pHost->withdraw<xscene::scene_context>();
-                pHost->withdraw<viewport_tools::editor>();
-                pHost->withdraw<level_context>();
+                pHost->end_play(&m_State);
+                if (auto* pMe = xlevel::FindHostSession(m_Undo))
+                    std::erase_if(pHost->m_WriteLocks, [&](const xeditor::host::write_lock& L) noexcept { return L.pWriter == pMe; });
             }
+
+            m_GamePlugin.m_Events.m_OnCollectRequiredComponents.RemoveDelegates(this);
+            m_GamePlugin.m_Events.m_OnBeforeReload.RemoveDelegates(this);
+            m_GamePlugin.m_Events.m_OnAfterReload.RemoveDelegates(this);
+
+            std::erase(g_LevelContexts, &m_CmdContext);
+            if (g_pActiveLevelContext == &m_CmdContext)
+            {
+                g_pActiveLevelContext = nullptr;
+                for (auto* pCtx : g_LevelContexts) g_pActiveLevelContext = pCtx;   // the newest one left (the stand-in if that is all there is)
+            }
+
+            if (m_bToolbarHandler && ImGui::GetCurrentContext()) ImGui::RemoveSettingsHandler(m_ToolbarHandlerName);
+
             m_pGameMgr.reset();
-            xlevel::UnloadGamePlugin(m_GamePlugin);
             m_Grid.Release();
         }
 
@@ -330,7 +393,7 @@ namespace xlevel
 
             if (PersistMode == xlevel::persist_mode::RawSnapshotBridge)
             {
-                xlevel::LoadSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath());
+                xlevel::LoadSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath(m_LevelGuid.m_Instance.m_Value));
                 xlevel::ReattachOpenScenes(*m_pGameMgr, std::move(m_ReloadCapture));
                 if (!m_State.m_CurrentLevel.empty())
                     m_pGameMgr->m_LevelMgr.Load(m_State.m_CurrentLevel);
@@ -340,7 +403,8 @@ namespace xlevel
                 xlevel::OpenLevel(*m_pGameMgr, m_State, xresource::full_guid{ m_State.m_CurrentLevel.m_Instance, m_State.m_CurrentLevel.m_Type });
             }
 
-            xlevel::LogWorldEntityCount(*m_pGameMgr, PersistMode == xlevel::persist_mode::RawSnapshotBridge ? "Vn restore" : "V1/disk restore");
+            if (!m_LevelGuid.m_Instance.empty())   // the stand-in editor has no world worth reporting
+                xlevel::LogWorldEntityCount(*m_pGameMgr, PersistMode == xlevel::persist_mode::RawSnapshotBridge ? "Vn restore" : "V1/disk restore");
 
             if (m_State.m_SelectedEntityId != xecs::scene::invalid_permanent_id_v)
             {
@@ -368,7 +432,7 @@ namespace xlevel
         void BeforeReload() noexcept
         {
             m_ReloadCapture = xlevel::CaptureOpenScenes(*m_pGameMgr, m_State);
-            xlevel::SaveSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath());
+            xlevel::SaveSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath(m_LevelGuid.m_Instance.m_Value));
             m_pGameMgr.reset();
         }
 
@@ -469,8 +533,8 @@ namespace xlevel
                     && (!m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty())
                     && xlevel::HasUnsavedDocumentChanges(m_State, m_Undo);
                 ToolbarButton("Save", "S", false, !bCanSave, [&]() { xlevel::SaveEverything(*m_pGameMgr, m_State); xlevel::MarkDocumentClean(m_State, m_Undo); });
-                ToolbarButton("Undo", "U", false, m_State.isPlaying(), [&]() { m_Undo.Undo(); });
-                ToolbarButton("Redo", "R", false, m_State.isPlaying(), [&]() { m_Undo.Redo(); });
+                ToolbarButton("Undo", "U", false, m_State.isPlaying(), [&]() { if (xlevel::MayUndoRedo(m_Undo, false)) m_Undo.Undo(); });
+                ToolbarButton("Redo", "R", false, m_State.isPlaying(), [&]() { if (xlevel::MayUndoRedo(m_Undo, true))  m_Undo.Redo(); });
                 ToolbarButton("Assets", "A", false, false, [&]() { if (auto* pHost = xeditor::host::current()) pHost->open_drawer_tab(ImGui::GetMainViewport(), 1); });
                 ToolbarSeparator();
 
@@ -478,9 +542,9 @@ namespace xlevel
                 bFirstButton = false;
 
                 ToolbarSeparator();
-                ToolbarButton("Hierarchy", "H", false, false, [&]() { ImGui::SetWindowFocus(xlevel::editor_tabs::kLevelTreeWindow); });
-                ToolbarButton("Inspector", "I", false, false, [&]() { ImGui::SetWindowFocus(xlevel::editor_tabs::kInspectorWindow); });
-                ToolbarButton("Systems", "Y", false, false, [&]() { ImGui::SetWindowFocus(xlevel::editor_tabs::kSystemRegistryWindow); });
+                ToolbarButton("Hierarchy", "H", false, false, [&]() { ImGui::SetWindowFocus(m_Names.m_LevelTree); });
+                ToolbarButton("Inspector", "I", false, false, [&]() { ImGui::SetWindowFocus(m_Names.m_Inspector); });
+                ToolbarButton("Systems", "Y", false, false, [&]() { ImGui::SetWindowFocus(m_Names.m_SystemRegistry); });
             }
             else
             {
@@ -590,7 +654,10 @@ namespace xlevel
             // system collect its entities (after GameMgr.Run() finished, when Playing) and issues the GPU commands.
             xgpu::tools::imgui::AddCustomRenderCallback([this, Avail](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
-                xlionrender::Draw(CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y);
+                // Read at render time, so the click-to-pick further down this frame is already in. Every open Level draws its
+                // own world, with its own selection outlined.
+                xlionrender::SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
+                xlionrender::Draw(m_pGameMgr.get(), CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y);
             });
 
             // Gizmo (Move/Rotate/Scale tools, m_SceneTool 1/2/3) - drives the primary selection's
@@ -652,9 +719,9 @@ namespace xlevel
 
             // Component viewport tools (collider wireframes for the selection, and the active "Edit
             // Collider"-style edit) - drawn before the Transform gizmo so its handles stay on top.
-            bGizmoInteracting |= m_ToolEditor.Run(m_CmdContext, m_State.isPlaying(), ToolView);
+            bGizmoInteracting |= m_ToolEditor.Run(m_CmdContext, m_State.isPlaying() || !m_bLevelWritable, ToolView);
 
-            if (!m_ToolEditor.isActive() && m_SceneTool >= 1 && m_SceneTool <= 3 && bHasSelection)
+            if (!m_ToolEditor.isActive() && m_SceneTool >= 1 && m_SceneTool <= 3 && bHasSelection && m_bLevelWritable)
             {
                 if (auto* pXform = xscene::commands::ResolveTransform(m_CmdContext, m_State.m_SelectedEntityScene, m_State.m_SelectedEntityId))
                 {
@@ -775,7 +842,7 @@ namespace xlevel
                             const float GroundT = -Origin.m_Y / Dir.m_Y;
                             if (GroundT > 1.0e-6f) MaxT = GroundT;
                         }
-                        const auto Hit = xlionrender::Pick(Origin, Dir, MaxT);
+                        const auto Hit = xlionrender::Pick(m_pGameMgr.get(), Origin, Dir, MaxT);
 
                         xecs::scene::guid          HitScene{};
                         xecs::scene::permanent_id  HitId = xecs::scene::invalid_permanent_id_v;
@@ -810,13 +877,6 @@ namespace xlevel
                 }
             }
 
-            // Tell LIONRender which entity (if any) to draw with an outline this frame - matches the
-            // same primary selection the Inspector/Level Tree already show (multi-select beyond the
-            // primary isn't outlined yet, a possible follow-up). Read by the Draw callback queued
-            // above when it actually executes at render time, so setting it here (after this frame's
-            // click-to-pick) is still in time.
-            xlionrender::SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
-
             // Last, so it sits above the scene, the wireframes and the gizmo (a child window - while the
             // mouse is over it the viewport button isn't hovered, so no pick/orbit through it).
             m_ToolEditor.RenderOverlay(ToolView);
@@ -832,7 +892,30 @@ namespace xlevel
         // PollGameReload/deferred-Stop calls always ran.
         void PumpBeforeFrame() noexcept
         {
-            xlevel::PollGameReload(m_CmdContext, m_GamePlugin, &session::RegisterHostComponents);
+            xlevel::PollGameReload(m_CmdContext, m_GamePlugin, &session::RegisterHostComponents, m_SeenBuildSeq);
+
+            // Scenes another Level editor saved while this one had them open (read-only here): reload them from disk.
+            if (!m_State.m_ScenesToReload.empty() && !m_State.isPlaying())
+            {
+                auto Reload = std::move(m_State.m_ScenesToReload);
+                m_State.m_ScenesToReload.clear();
+                for (auto& SceneGuid : Reload)
+                {
+                    if (std::find(m_State.m_OpenScenes.begin(), m_State.m_OpenScenes.end(), SceneGuid) == m_State.m_OpenScenes.end()) continue;
+                    xscene::CloseScene(*m_pGameMgr, m_State, SceneGuid);
+                    xscene::OpenScene(*m_pGameMgr, m_State, xlevel::SceneResourceGuid(SceneGuid));
+                }
+                m_State.m_bEntityInspectorDirty = true;
+            }
+
+            // Nothing unsaved (a save, or undoing back to it) means this editor edits nothing: its Scene locks go.
+            if (!xlevel::HasUnsavedDocumentChanges(m_State, m_Undo))
+                if (auto* pHost = xeditor::host::current())
+                    if (auto* pMe = xlevel::FindHostSession(m_Undo)) xlevel::ReleaseLevelEditAccess(*pHost, *pMe, m_State);
+
+            // Closing the Level closes its editor (the shell drops it at the start of the next frame).
+            if (m_bOpenRequested && m_State.m_CurrentLevel.empty() && m_State.m_OpenScenes.empty() && !m_State.m_bAwaitingSaveBeforeClose)
+                m_bOpen = false;
 
             if (m_State.m_bPlayWorldRebuildRequested)
             {
@@ -852,6 +935,16 @@ namespace xlevel
             }
         }
 
+        // True when the window the user is working in (keyboard/nav focus) is one of this editor's own panels.
+        bool IsOneOfMyWindowsFocused() const noexcept
+        {
+            ImGuiWindow* pNav = ImGui::GetCurrentContext() ? ImGui::GetCurrentContext()->NavWindow : nullptr;
+            if (pNav == nullptr) return false;
+            for (const char* pName : { m_Names.m_Editor, m_Names.m_LevelTree, m_Names.m_Inspector, m_Names.m_SystemRegistry })
+                if (ImGuiWindow* pMine = ImGui::FindWindowByName(pName); pMine && (pNav == pMine || pNav->RootWindow == pMine)) return true;
+            return false;
+        }
+
         // ---- The whole tool window: dockspace, panels, modals, the Play tick gate. ----
         // A peer root like Texture's own document_editor::Render(), but hand-implemented (not
         // xeditor::document_editor<T_DOC>) because a Level's own dockspace/panel shape (Level Tree + Inspector +
@@ -860,6 +953,9 @@ namespace xlevel
         void Render() noexcept override
         {
             auto* pHost = xeditor::host::current();
+
+            // Whichever editor the user last touched is the one the commands that name no Level act on.
+            if (IsOneOfMyWindowsFocused()) g_pActiveLevelContext = &m_CmdContext;
 
             std::string LevelTabName;
             if (!m_State.m_CurrentLevel.empty())
@@ -888,7 +984,7 @@ namespace xlevel
             {
                 bool bTabOpen = m_State.m_bLevelEditorOpen;
                 bParentEditorVisible = xlevel::editor_tabs::RenderLevelEditorDockspace(
-                    [this]() { RenderParentEditorToolbar(); },
+                    [this]() { RenderParentEditorToolbar(); }, m_Names,
                     LevelTabName.c_str(), m_pDevice, xecs::level::type_guid_v, LevelDockGuid, &bTabOpen);
                 if (!bTabOpen)
                 {
@@ -931,8 +1027,8 @@ namespace xlevel
 
                 if (!ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt && !m_State.isPlaying())
                 {
-                    if (ImGui::IsKeyPressed(ImGuiKey_Z) && !ImGui::GetIO().KeyShift) m_Undo.Undo();
-                    else if (ImGui::IsKeyPressed(ImGuiKey_Y) || (ImGui::IsKeyPressed(ImGuiKey_Z) && ImGui::GetIO().KeyShift)) m_Undo.Redo();
+                    if (ImGui::IsKeyPressed(ImGuiKey_Z) && !ImGui::GetIO().KeyShift) { if (xlevel::MayUndoRedo(m_Undo, false)) m_Undo.Undo(); }
+                    else if (ImGui::IsKeyPressed(ImGuiKey_Y) || (ImGui::IsKeyPressed(ImGuiKey_Z) && ImGui::GetIO().KeyShift)) { if (xlevel::MayUndoRedo(m_Undo, true)) m_Undo.Redo(); }
                 }
             }
 
@@ -972,35 +1068,28 @@ namespace xlevel
                     ImGui::EndPopup();
                 }
 
-                xeditor::session* pMySession = nullptr;
-                if (pHost) for (auto& S : pHost->m_Sessions) if (S && &S->undo() == &m_Undo) { pMySession = S.get(); break; }
-                const bool bLevelWritable = xlevel::IsLevelWritable(pHost, pMySession, m_State);
-                m_bLevelWritable = bLevelWritable;
-                if (!bLevelWritable)
-                {
-                    xlevel::editor_tabs::SetNextLevelEditorToolClass();
-                    if (ImGui::Begin("##LevelReadOnlyBanner", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize))
-                        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Read-only: this Level/scene is being edited in another session.");
-                    ImGui::End();
-                }
+                // Read-only is per Scene: the selected entity's Scene may be owned by another Level editor (see
+                // TryGateLevelMutation). The Level Tree marks every such Scene itself.
+                const bool bSelectedLocked = xlevel::IsSceneLockedByOther(m_CmdContext, m_State.m_SelectedEntityScene);
+                m_bLevelWritable = !bSelectedLocked;
+                const std::string ReadOnlyReason = bSelectedLocked
+                    ? std::format("Read-only: this Scene is being edited in {}", xlevel::SceneOwnerName(m_State.m_SelectedEntityScene))
+                    : std::string{};
 
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
-                xlevel::RenderLevelTreePanel(m_CmdContext, xlevel::editor_tabs::kLevelTreeWindow, m_Undo, !bLevelWritable);
-
-                if (xlevel::FlushPendingOpenLevelFromTree(*m_pGameMgr, m_State, m_Undo))
-                    xlevel::StartGameReload(m_GamePlugin);
+                xlevel::RenderLevelTreePanel(m_CmdContext, m_Names.m_LevelTree, m_Undo);
 
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
-                xscene::RenderEntityPropertiesPanel(m_CmdContext, xlevel::editor_tabs::kInspectorWindow, m_EntityInspector, m_InspectorBridge, !bLevelWritable);
+                xscene::RenderEntityPropertiesPanel(m_CmdContext, m_Names.m_Inspector, m_EntityInspector, m_InspectorBridge, bSelectedLocked, ReadOnlyReason.c_str());
 
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
-                xlevel::RenderSystemRegistryPanel(*m_pGameMgr, m_State);
+                xlevel::RenderSystemRegistryPanel(*m_pGameMgr, m_State, m_Names.m_SystemRegistry);
 
                 ImGui::SetNextWindowPos(ImVec2(250.0f, 90.0f), ImGuiCond_FirstUseEver);
                 ImGui::SetNextWindowSize(ImVec2(1050.0f, 480.0f), ImGuiCond_FirstUseEver);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
-                if (ImGui::Begin(xlevel::editor_tabs::kEditorWindow))
+                if (ImGui::Begin(m_Names.m_Editor))
                 {
                     ximgui::toolbar::RenderToolbarHost(m_EditorToolbarHost, ImGui::GetContentRegionAvail(),
                         [this](const char* Name, ximgui::toolbar::axis Axis) { RenderEditorToolbar(Name, Axis); },
@@ -1012,6 +1101,9 @@ namespace xlevel
                 xlevel::RenderReloadCompatibilityModal(m_CmdContext);
             }
         }
+
+        // What the shell keeps for this editor (its by-name commands). Declared last so it is destroyed first.
+        std::shared_ptr<void> m_ShellCommands;
     };
 
     // Same shape as xmaterial_editor.h's own g_Registration.

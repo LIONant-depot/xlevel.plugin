@@ -20,26 +20,22 @@
 namespace xlevel::commands
 {
     //================================================================================================
-    // OpenLevel - loads a Level (by its instance guid, same 16-hex-digit convention every other
-    // command already uses for a Scene guid) and activates it, which - per xlevel::OpenLevel's own
-    // existing behavior (xlevel_editor.h) - loads every Scene the Level owns automatically
-    // (direct user request from earlier in this project: "Scenes should always be loaded if they are
-    // part of the level"). Reports success/failure by checking State.m_CurrentLevel afterward rather
-    // than trusting xlevel::OpenLevel's own return type (void - it only reports failure via a blocking
-    // xeditor::NotifyError() modal popup, the same existing failure-UX every other command's own error path
-    // already inherits, not something new introduced here).
+    // OpenLevel - opens a Level in its own editor (a Level is a resource like any other, so several can be open at
+    // once; asking for one that is already open just says so). The Level's own editor loads it, which - per
+    // xlevel::OpenLevel's behavior (xlevel_editor.h) - loads every Scene the Level owns. The shell provides the function
+    // that creates the editor (g_OpenLevelSession, xlevel_command_context.h) and builds the reply.
     //================================================================================================
     struct open_level_cmd : level_query_command
     {
         open_level_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "OpenLevel", pDataBase) { RegisterArguments(); }
         const char* getCommandHelp() const noexcept override
         {
-            return "Loads a Level and activates every Scene it owns. If another Level is open and dirty, pass -Save 1 or -Save 0 first. Usage: OpenLevel -Level hexguid [-Save 0|1]";
+            return "Opens a Level in its own editor, next to the ones already open, and loads every Scene it owns. Usage: OpenLevel -Level hexguid [-Save 0|1, ignored: other Levels stay open]";
         }
         void RegisterArguments() noexcept override
         {
             m_hLevel = m_Parser.addOption("Level", "Level instance guid, 16 hex digits", true, 1);
-            m_hSave  = m_Parser.addOption("Save", "When the current Level has unsaved changes: 1/true = save then switch, 0/false = discard then switch. Ignored when clean or nothing open.", false, 1);
+            m_hSave  = m_Parser.addOption("Save", "Ignored (kept so older scripts still run): opening a Level no longer closes the one that is open.", false, 1);
         }
 
         std::string Query() noexcept override
@@ -47,69 +43,10 @@ namespace xlevel::commands
             auto LevelArg = m_Parser.getOptionArgAs<std::string>(m_hLevel, 0);
             if (std::holds_alternative<xerr>(LevelArg))
                 return "OpenLevel: bad arguments";
-
-
-            auto& State = get<level_context>().State();
-            if (State.isPlaying()) return "OpenLevel: blocked while Play/Paused";
+            if (!g_OpenLevelSession) return "OpenLevel: no editor available";
 
             const std::uint64_t Value = std::strtoull(std::get<std::string>(LevelArg).c_str(), nullptr, 16);
-            const xresource::full_guid LevelGuid{
-                .m_Instance = { Value },
-                .m_Type     = xecs::level::type_guid_v
-            };
-            const xecs::level::guid AsLevel{ .m_Instance = LevelGuid.m_Instance };
-
-            if (!State.m_CurrentLevel.empty() && State.m_CurrentLevel.m_Instance == AsLevel.m_Instance)
-                return std::format("OpenLevel: {:016X} is already open", Value);
-
-            std::optional<bool> SaveOverride;
-            if (auto SaveArg = m_Parser.getOptionArgAs<std::string>(m_hSave, 0); !std::holds_alternative<xerr>(SaveArg))
-            {
-                const auto& S = std::get<std::string>(SaveArg);
-                SaveOverride = (S == "true" || S == "1");
-            }
-
-            const bool bHaveDoc = !State.m_CurrentLevel.empty() || !State.m_OpenScenes.empty();
-            const bool bDirty   = xlevel::HasUnsavedDocumentChanges(State, LevelContext().m_Undo);
-            if (bHaveDoc && bDirty && !SaveOverride.has_value())
-                return "OpenLevel: current Level has unsaved changes; pass -Save 1 (save) or -Save 0 (discard)";
-
-            if (bHaveDoc)
-            {
-                if (bDirty && SaveOverride.value())
-                {
-                    xlevel::SaveEverything(World(), State);
-                    xlevel::MarkDocumentClean(State, LevelContext().m_Undo);
-                }
-                xlevel::CloseLevel(World(), State, LevelContext().m_Undo);
-            }
-
-            xlevel::OpenLevel(World(), State, LevelGuid);
-            xlevel::MarkDocumentClean(State, LevelContext().m_Undo);
-
-            if (State.m_CurrentLevel.m_Instance.m_Value != Value)
-                return std::format("OpenLevel: failed to open {:016X} (unknown Level guid or load error)", Value);
-
-            // Component-registry compatibility plan, Phase 4: informational, not blocking - EnsureLoaded
-            // already soft-fails a per-entity missing-component-type case on its own (skips that one
-            // entity, logs a warning, the rest of the scene loads fine - xecs_scene_inline.h's own
-            // established behavior, unchanged here). This just surfaces the SAME class of problem more
-            // visibly, at the command's own return value, right after the scenes just opened, instead
-            // of only a console log line buried in the editor's own scrollback.
-            std::vector<xecs::scene::component_dependency> Missing;
-            for (auto& SceneGuid : State.m_OpenScenes)
-                for (auto& Dep : xecs::scene::LoadSceneComponentDependencies(e10::g_LibMgr.m_ProjectPath, SceneGuid))
-                    if (!xscene::IsComponentInLiveRegistry(Dep.m_Guid) && std::find_if(Missing.begin(), Missing.end(), [&](auto& M) noexcept { return M.m_Guid == Dep.m_Guid; }) == Missing.end())
-                        Missing.push_back(Dep);
-
-            std::string Result = std::format("Opened Level {:016X}, {} scene(s) now open", Value, State.m_OpenScenes.size());
-            if (!Missing.empty())
-            {
-                std::string Names;
-                for (auto& Dep : Missing) Names += (Names.empty() ? "" : ", ") + Dep.m_Name;
-                Result += std::format(" - WARNING: {} component type(s) used by these scenes are not currently registered: {}", Missing.size(), Names);
-            }
-            return Result;
+            return g_OpenLevelSession(xresource::full_guid{ .m_Instance = { Value }, .m_Type = xecs::level::type_guid_v });
         }
 
         xcmdline::parser::handle m_hLevel;

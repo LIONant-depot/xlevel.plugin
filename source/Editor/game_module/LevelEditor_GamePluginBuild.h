@@ -65,6 +65,12 @@ namespace xlevel
         std::future<build_result> m_BuildFuture;
         bool                    m_bBuilding        = false;
 
+        // The outcome of the last finished build, for every editor to react to in its own time (an editor that asked for
+        // Play while the build ran starts playing; the others carry on). m_ResultSeq counts finished builds; each editor
+        // remembers the last one it has seen.
+        build_result            m_LastResult       = build_result::UpToDate;
+        std::uint32_t           m_ResultSeq        = 0;
+
         bool isLoaded(void) const noexcept { return m_hModule != nullptr; }
     };
 

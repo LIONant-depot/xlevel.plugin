@@ -68,7 +68,7 @@ namespace xlevel
     // RestoreFromSnapshot() on the way out - this panel just surfaces that distinction with a note so
     // it isn't a silent surprise later.
     //---------------------------------------------------------------------------
-    void RenderSystemRegistryPanel(xecs::game_mgr::instance& GameMgr, xlevel::level_state& State) noexcept
+    void RenderSystemRegistryPanel(xecs::game_mgr::instance& GameMgr, xlevel::level_state& State, const char* pWindowName) noexcept
     {
         // Stacked below the Entity Properties panel (18,18 / 480x500) rather than at the Level
         // Editor panel's own (915,18) spot, so the two don't land on top of each other on a
@@ -76,8 +76,8 @@ namespace xlevel
         // afterward like every other panel here.
         ImGui::SetNextWindowPos(ImVec2(18, 530), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(480, 220), ImGuiCond_FirstUseEver);
-        const bool bWindowVisible = ImGui::Begin(xlevel::editor_tabs::kSystemRegistryWindow);
-        xeditor::diagnostics::Log("window begin: %s visible=%d", xlevel::editor_tabs::kSystemRegistryWindow, bWindowVisible ? 1 : 0);
+        const bool bWindowVisible = ImGui::Begin(pWindowName);
+        xeditor::diagnostics::Log("window begin: %s visible=%d", pWindowName, bWindowVisible ? 1 : 0);
         if (bWindowVisible)
         {
             if (State.isPlaying())
@@ -253,7 +253,7 @@ namespace xlevel
             }
         }
         ImGui::End();
-        xeditor::diagnostics::Log("window end: %s", xlevel::editor_tabs::kSystemRegistryWindow);
+        xeditor::diagnostics::Log("window end: %s", pWindowName);
     }
 } // namespace xlevel
 

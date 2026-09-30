@@ -10,6 +10,13 @@
 #include "dependencies/xeditor/include/xeditor/commands.h"
 #include "dependencies/xeditor/include/xeditor/serialize.h"
 
+namespace xlevel
+{
+    // Opens a Level in its own editor and returns the reply text for the OpenLevel command. Provided by the shell, which owns the
+    // list of open editors.
+    inline std::function<std::string(xresource::full_guid)> g_OpenLevelSession;
+}
+
 namespace xlevel::commands
 {
     // The same for the commands of the Level editor: World(), State() (with the Level fields), LevelContext().
