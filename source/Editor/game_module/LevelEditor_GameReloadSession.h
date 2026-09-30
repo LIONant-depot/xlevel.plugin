@@ -164,6 +164,16 @@ namespace xlevel
     {
         if (Plugin.m_bBuilding) return;
 
+        // A project with no script modules has nothing to put in Game.dll: no cmake, no build, no DLL - the check is answered
+        // right away (the editors waiting on it, e.g. for Play, see "up to date" at their next frame).
+        if (g_ScriptConfig.m_ModuleRefs.empty() && !Plugin.isLoaded())
+        {
+            Plugin.m_LastStatus = "Game.dll: the project has no script modules - nothing to build";
+            Plugin.m_LastResult = build_result::UpToDate;
+            ++Plugin.m_ResultSeq;
+            return;
+        }
+
         Plugin.m_bBuilding  = true;
         // Computed HERE, on the main thread, and captured by value - NOT re-computed inside the
         // background task. See BuildGamePluginIfStale's own comment on ModuleSourceTime for why: it

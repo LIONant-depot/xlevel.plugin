@@ -63,6 +63,11 @@ namespace xlevel
         game_plugin_state Plugin;
         play_gate         Gate;
         bool              bReady = false;
+
+        // True while the editor started without a usable Game.dll and is building its first one in the background. The
+        // editor is up and responsive meanwhile, but opening a Level (and the command pipe) waits for it: a Level opened
+        // without its script components would silently drop them from every entity that has one.
+        bool              bInitialBuild = false;
     };
 
     inline level_services& Services() noexcept { static level_services s_Services; return s_Services; }
@@ -74,6 +79,14 @@ namespace xlevel
         if (!Svc.bReady) return;
 #if defined(XECS_BUILD_SHARED)
         if (auto* pHost = xeditor::host::current()) pHost->withdraw<play_gate>();
+
+        // A build still running is stopped rather than waited for.
+        if (Svc.Plugin.m_bBuilding)
+        {
+            xlevel::CancelGameBuild();
+            if (Svc.Plugin.m_BuildFuture.valid()) Svc.Plugin.m_BuildFuture.wait();
+            Svc.Plugin.m_bBuilding = false;
+        }
 #endif
         xlevel::UnloadGamePlugin(Svc.Plugin);
         Svc.bReady = false;
@@ -217,11 +230,35 @@ namespace xlevel
             // process-wide registry, each editor only registers the systems into its own world).
             if (auto& Svc = Services(); !Svc.bReady)
             {
+                // Never blocks startup on a build:
+                //  - no script modules in the project: there is nothing to build or load at all;
+                //  - a usable Game.dll (built by this configuration) is loaded right away, even if its sources changed -
+                //    the rebuild then runs in the background and swaps it in like any other reload;
+                //  - no usable Game.dll: the first one is built in the background (bInitialBuild) and Levels open when it is.
                 m_GamePlugin.m_Paths = xlevel::MakeScriptProjectPaths();
-                if (!std::filesystem::exists(m_GamePlugin.m_Paths.m_CMakeLists))
-                    xlevel::RegenerateGameModuleSources(m_GamePlugin.m_Paths);
-                xlevel::BuildGamePluginIfStale(m_GamePlugin, xlevel::GetLatestModuleSourceWriteTime(m_GamePlugin.m_Paths));
-                xlevel::LoadGamePluginComponents(*m_pGameMgr, m_GamePlugin, /*Generation*/ 1);
+                if (auto Err = xlevel::LoadScriptConfig(m_GamePlugin.m_Paths.m_Project.wstring(), xlevel::g_ScriptConfig); Err)
+                    xlevel::LogGamePlugin(std::format("Game.dll: failed to read Script.config.txt: {}", Err.getMessage()));
+                xlevel::RegenerateGameModuleSources(m_GamePlugin.m_Paths);   // rewrites only what changed
+
+                if (xlevel::g_ScriptConfig.m_ModuleRefs.empty())
+                {
+                    m_GamePlugin.m_LastStatus = "Game.dll: the project has no script modules - nothing to build or load";
+                    xlevel::LogGamePlugin(m_GamePlugin.m_LastStatus);
+                }
+                else
+                {
+                    if (xlevel::IsGamePluginUsable(m_GamePlugin.m_Paths))
+                        xlevel::LoadGamePluginComponents(*m_pGameMgr, m_GamePlugin, /*Generation*/ 1);
+
+                    if (xlevel::IsGamePluginStale(m_GamePlugin.m_Paths, xlevel::GetLatestModuleSourceWriteTime(m_GamePlugin.m_Paths)))
+                    {
+                        xlevel::LogGamePlugin(m_GamePlugin.isLoaded()
+                            ? "Game.dll: sources changed - rebuilding in the background, the current build stays loaded until then"
+                            : "Game.dll: no usable build - building in the background, Levels open when it is ready");
+                        xlevel::StartGameReload(m_GamePlugin);
+                        Svc.bInitialBuild = !m_GamePlugin.isLoaded();
+                    }
+                }
 
                 Svc.Gate.m_IsBuilding = []() noexcept { return Services().Plugin.m_bBuilding; };
                 Svc.Gate.m_StartBuild = []() noexcept { xlevel::StartGameReload(Services().Plugin); };
@@ -893,6 +930,7 @@ namespace xlevel
         void PumpBeforeFrame() noexcept
         {
             xlevel::PollGameReload(m_CmdContext, m_GamePlugin, &session::RegisterHostComponents, m_SeenBuildSeq);
+            if (Services().bInitialBuild && !m_GamePlugin.m_bBuilding) Services().bInitialBuild = false;   // first build done (or failed)
 
             // Scenes another Level editor saved while this one had them open (read-only here): reload them from disk.
             if (!m_State.m_ScenesToReload.empty() && !m_State.isPlaying())

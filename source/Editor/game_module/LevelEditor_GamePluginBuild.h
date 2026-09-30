@@ -98,6 +98,28 @@ namespace xlevel
     // reconfigure, then the actual build - see its own comment on why) without duplicating this
     // pipe-capture machinery, and without the fragile nested-quoting a single `cmd /c "A && B"` string
     // would need for two already-quoted `cmake` invocations.
+    // Every process a Game.dll build starts (cmake, MSBuild, the compiler) runs in this job. Closing the editor kills the
+    // job with it - a build left running would keep the precompiled header and the PDB locked and break the next build - and
+    // CancelGameBuild stops a build on purpose.
+    inline HANDLE GameBuildJob() noexcept
+    {
+        static HANDLE s_hJob = []() noexcept
+        {
+            HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION Info{};
+            Info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if (hJob) SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &Info, sizeof(Info));
+            return hJob;
+        }();
+        return s_hJob;
+    }
+
+    // Kills whatever the running build started; the build then reports Failed.
+    inline void CancelGameBuild() noexcept
+    {
+        if (auto hJob = GameBuildJob()) TerminateJobObject(hJob, 1);
+    }
+
     inline int RunCmakeCommand( std::wstring CmdLine, const std::filesystem::path& WorkingDir ) noexcept
     {
         SECURITY_ATTRIBUTES PipeSa{ .nLength = sizeof(PipeSa), .bInheritHandle = TRUE };
@@ -118,13 +140,16 @@ namespace xlevel
         std::vector<wchar_t> CmdLineBuf(CmdLine.begin(), CmdLine.end());
         CmdLineBuf.push_back(L'\0');
 
-        if (!CreateProcessW(nullptr, CmdLineBuf.data(), nullptr, nullptr, TRUE, 0, nullptr, WorkingDir.c_str(), &Si, &Pi))
+        if (!CreateProcessW(nullptr, CmdLineBuf.data(), nullptr, nullptr, TRUE, CREATE_SUSPENDED, nullptr, WorkingDir.c_str(), &Si, &Pi))
         {
             CloseHandle(ReadPipe);
             CloseHandle(WritePipe);
             LogGamePlugin(std::format("Game.dll: failed to launch cmake (err={})", GetLastError()));
             return -1;
         }
+        // In the job before it runs a single instruction, so everything it starts is in it too.
+        if (auto hJob = GameBuildJob()) AssignProcessToJobObject(hJob, Pi.hProcess);
+        ResumeThread(Pi.hThread);
 
         // This process's own handle to the write end must close BEFORE reading, or ReadFile below
         // blocks forever waiting for a write-end closure that never comes (the child's copy alone
@@ -184,26 +209,46 @@ namespace xlevel
         return Args;
     }
 
+    // Each configuration builds its own Game.dll (script_project_paths::m_Dll); a marker written after each build says which
+    // configuration built the file there, so a DLL from before that split (or copied in by hand) is never loaded into an
+    // editor of the other configuration - that crashes on the first call (the standard library and the ECS types differ).
+    inline std::filesystem::path GamePluginConfigMarker( const script_project_paths& P ) noexcept
+    {
+        return P.m_BuildDir / std::format(L"Game.{}.config", P.m_Config);
+    }
+
+    // The DLL this editor would load exists and was built by this configuration: it can be loaded right away, even while a
+    // newer one is being built.
+    inline bool IsGamePluginUsable( const script_project_paths& P ) noexcept
+    {
+        std::error_code Ec;
+        if (!std::filesystem::exists(P.m_Dll, Ec)) return false;
+        std::wifstream In(GamePluginConfigMarker(P));
+        std::wstring   S;
+        std::getline(In, S);
+        return S == P.m_Config;
+    }
+
+    // Something the DLL is built from is newer than the DLL (or there is no usable DLL at all).
+    inline bool IsGamePluginStale( const script_project_paths& P, std::filesystem::file_time_type ModuleSourceTime ) noexcept
+    {
+        if (!IsGamePluginUsable(P)) return true;
+        // Compared with the last successful build (the marker is written after each one), not with the DLL: when nothing needed
+        // recompiling MSBuild leaves the DLL untouched, and it would then look stale at every launch.
+        std::error_code Ec;
+        const auto BuiltAt = std::filesystem::last_write_time(GamePluginConfigMarker(P), Ec);
+        return Ec || ModuleSourceTime > BuiltAt;
+    }
+
     inline build_result BuildGamePluginIfStale( game_plugin_state& Plugin, std::filesystem::file_time_type ModuleSourceTime ) noexcept
     {
         std::error_code Ec;
         const auto& P = Plugin.m_Paths;
 
-        const bool bDllMissing = !std::filesystem::exists(P.m_Dll, Ec);
-        bool bStale = bDllMissing;
-        if (!bStale)
-        {
-            const auto DllTime = std::filesystem::last_write_time(P.m_Dll, Ec);
-            bStale = Ec || ModuleSourceTime > DllTime;
-        }
-
-        // Game.dll is one file for both configurations, so it must have been built with the configuration this editor runs in:
-        // a Release DLL loaded into a Debug editor crashes on the first call (the standard library and the ECS types differ).
-        // A marker written after each build records the configuration.
-        const auto ConfigMarker = P.m_BuildDir / L"Game.config";
-        const auto ReadMarker   = [&]() noexcept { std::wifstream In(ConfigMarker); std::wstring S; std::getline(In, S); return S; };
-        const bool bWrongConfig = !bStale && ReadMarker() != P.m_Config;
-        bStale = bStale || bWrongConfig;
+        const bool bDllMissing  = !std::filesystem::exists(P.m_Dll, Ec);
+        const bool bWrongConfig = !bDllMissing && !IsGamePluginUsable(P);
+        const bool bStale       = IsGamePluginStale(P, ModuleSourceTime);
+        const auto ConfigMarker = GamePluginConfigMarker(P);
 
         if (!bStale)
         {

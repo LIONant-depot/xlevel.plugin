@@ -273,7 +273,10 @@ namespace xlevel
             if (bReadOnly) ImGui::BeginDisabled();
             if (State.m_CurrentLevel.empty())
             {
-                ImGui::TextDisabled("Create or open a Level from the asset browser (or drop a Level here).");
+                if (!g_PendingOpenLevels.empty())
+                    ImGui::TextDisabled("Opening the Level as soon as Game.dll has finished building...");
+                else
+                    ImGui::TextDisabled("Create or open a Level from the asset browser (or drop a Level here).");
                 // Fill the rest of the panel so a Level dragged from Resources/asset browser can land
                 // anywhere in the empty Level Tree - same OpenLevel path as double-clicking the asset.
                 // Clamp: ImGui::InvisibleButton asserts size_arg.x/y != 0 (imgui_widgets.cpp) - on the

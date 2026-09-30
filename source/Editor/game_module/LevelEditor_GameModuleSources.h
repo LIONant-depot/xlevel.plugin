@@ -22,7 +22,10 @@ namespace xlevel
         std::filesystem::path m_Root;         // <project>\Cache\Script
         std::filesystem::path m_BuildDir;     // <Root>\Build: the Visual Studio solution and its intermediate files
         std::filesystem::path m_CMakeLists;   // <Root>\CMakeLists.txt, generated
-        std::filesystem::path m_Dll;          // <project>\Cache\Resources\Platforms\WINDOWS\Game.dll, the compiled resource
+        std::filesystem::path m_DllRoot;      // <project>\Cache\Resources\Platforms\WINDOWS: where the compiled resource goes
+        std::filesystem::path m_Dll;          // m_DllRoot\Game.dll for Release, m_DllRoot\<Config>\Game.dll otherwise: the compiled
+                                              // resource for the running configuration (one per configuration, so switching between
+                                              // a Debug and a Release editor never forces a rebuild)
         std::filesystem::path m_PdbDir;       // where the linker writes Game.pdb for the running configuration
         std::filesystem::path m_LoadedDir;    // <Root>\Loaded: the copies of Game.dll that are actually loaded
         std::filesystem::path m_XGpuRoot;     // the xGPU checkout this editor was built from
@@ -46,7 +49,8 @@ namespace xlevel
         P.m_Root       = Project / L"Cache" / L"Script";
         P.m_BuildDir   = P.m_Root / L"Build";
         P.m_CMakeLists = P.m_Root / L"CMakeLists.txt";
-        P.m_Dll        = Project / L"Cache" / L"Resources" / L"Platforms" / L"WINDOWS" / L"Game.dll";
+        P.m_DllRoot    = Project / L"Cache" / L"Resources" / L"Platforms" / L"WINDOWS";
+        P.m_Dll        = (P.m_Config == L"Release" ? P.m_DllRoot : P.m_DllRoot / P.m_Config) / L"Game.dll";
         P.m_PdbDir     = P.m_BuildDir / L"GamePdb" / P.m_Config;
         P.m_LoadedDir  = P.m_Root / L"Loaded";
         return P;
@@ -178,8 +182,8 @@ namespace xlevel
         // is linked with only its bare name (/PDBALTPATH) and the editor copies it next to the copy of the DLL it loads. That
         // leaves the compiler's own PDB free to be rewritten while a debugger is attached. /FS lets concurrent compiles share
         // one PDB, which /MP makes likely.
-        const auto DllDir = Fwd(P.m_Dll.parent_path());
-        C += std::format(L"set_target_properties(Game PROPERTIES RUNTIME_OUTPUT_DIRECTORY_DEBUG \"{0}\" RUNTIME_OUTPUT_DIRECTORY_RELEASE \"{0}\" PDB_OUTPUT_DIRECTORY \"${{CMAKE_BINARY_DIR}}/GamePdb\")\n", DllDir);
+        const auto DllDir = Fwd(P.m_DllRoot);
+        C += std::format(L"set_target_properties(Game PROPERTIES RUNTIME_OUTPUT_DIRECTORY_DEBUG \"{0}/Debug\" RUNTIME_OUTPUT_DIRECTORY_RELEASE \"{0}\" PDB_OUTPUT_DIRECTORY \"${{CMAKE_BINARY_DIR}}/GamePdb\")\n", DllDir);
         C += L"set_property(TARGET Game APPEND_STRING PROPERTY LINK_FLAGS \" /PDBALTPATH:Game.pdb\")\n";
         C += L"target_compile_options(Game PRIVATE /FS /MP)\n\n";
 
