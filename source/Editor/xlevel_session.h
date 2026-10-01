@@ -232,6 +232,17 @@ namespace xlevel
         // The "Editor" viewport's own camera + ground grid - every other 3D editor already shares these
         // via xeditor_tools; the Level Editor never had a camera or a grid at all before this.
         xeditor_tools::camera                       m_Camera;
+        xecs::scene::permanent_id                   m_CameraAimedAt = xecs::scene::invalid_permanent_id_v;     // the selection the camera last turned to look at
+
+        // The camera turns to look at a new selection without moving: the eye stays where it is, the angles (and the distance to the orbit
+        // point) glide from what they are to what looks at the entity.
+        struct camera_glide
+        {
+            xmath::fvec3 m_Eye   = xmath::fvec3::fromZero();
+            float        m_Pitch = 0, m_Yaw = 0, m_Distance = 0;       // where the glide started
+            float        m_dPitch = 0, m_dYaw = 0, m_dDistance = 0;    // how far it goes
+            float        m_T = 1.0f;                                   // how far along it is (1 = arrived)
+        }                                           m_CameraGlide;
         xeditor_tools::grid                          m_Grid;
         static constexpr float                       kEditorToolbarWidth      = 570.0f;
         static constexpr float                       kSceneToolbarWidth       = 390.0f;
@@ -743,6 +754,60 @@ namespace xlevel
             // InvisibleButton (see the gizmo block's comment) - so this is one frame stale relative to
             // this frame's HandleInput() orbit adjustment. Only visible while actively orbiting, and
             // orbiting (right/middle) and dragging the gizmo (left) are mutually exclusive anyway.
+            // A new selection (from the viewport, the tree, undo...) becomes the point the camera orbits around and looks at.
+            // Only when the selection changes, so orbiting and panning afterwards stay free.
+            if (m_State.m_SelectedEntityId != m_CameraAimedAt)
+            {
+                m_CameraAimedAt = m_State.m_SelectedEntityId;
+                if (m_CameraAimedAt != xecs::scene::invalid_permanent_id_v)
+                    if (auto* pXform = xscene::commands::ResolveTransform(m_CmdContext, m_State.m_SelectedEntityScene, m_State.m_SelectedEntityId))
+                    {
+                        // The orbit that puts the entity at the target from where the eye is now: eye = target + RotateY(yaw)(RotateX(pitch)((0,0,distance))).
+                        const auto  Eye = m_Camera.m_View.getPosition();
+                        const auto  Off = Eye - pXform->m_Position;
+                        const float Len = std::sqrt(Off.m_X * Off.m_X + Off.m_Y * Off.m_Y + Off.m_Z * Off.m_Z);
+                        if (Len > 0.05f)           // the eye is on top of it: no direction to turn to
+                        {
+                            constexpr float Pi = 3.14159265f;
+                            auto& G     = m_CameraGlide;
+                            G.m_Eye     = Eye;
+                            G.m_Pitch   = m_Camera.m_Angles.m_Pitch.m_Value;
+                            G.m_Yaw     = m_Camera.m_Angles.m_Yaw.m_Value;
+                            G.m_Distance= m_Camera.m_Distance;
+                            const float Limit = 89.0f * Pi / 180.0f;
+                            G.m_dPitch  = std::clamp(-std::asin(std::clamp(Off.m_Y / Len, -1.0f, 1.0f)), -Limit, Limit) - G.m_Pitch;
+                            float dYaw  = std::atan2(Off.m_X, Off.m_Z) - G.m_Yaw;
+                            G.m_dYaw    = dYaw - 2.0f * Pi * std::round(dYaw / (2.0f * Pi));      // the short way round
+                            G.m_dDistance = Len - G.m_Distance;
+                            G.m_T       = 0.0f;
+                        }
+                    }
+            }
+
+            // Glide, easing in and out. Grabbing the camera (orbit / pan / fly) ends the glide.
+            if (m_CameraGlide.m_T < 1.0f)
+            {
+                constexpr float Seconds = 0.3f;
+                auto& G = m_CameraGlide;
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle)) G.m_T = 1.0f;
+                else
+                {
+                    G.m_T = std::min(1.0f, G.m_T + ImGui::GetIO().DeltaTime / Seconds);
+                    const float u = G.m_T;
+                    const float t = u * u * u * (u * (u * 6.0f - 15.0f) + 10.0f);                    // smootherstep: slow start, fast middle, slow stop
+
+                    m_Camera.m_Angles.m_Pitch.m_Value = G.m_Pitch + G.m_dPitch * t;
+                    m_Camera.m_Angles.m_Yaw.m_Value   = G.m_Yaw   + G.m_dYaw   * t;
+                    m_Camera.m_Distance               = G.m_Distance + G.m_dDistance * t;
+
+                    // Keep the eye where it was: the target is the eye minus the orbit offset of these angles.
+                    xmath::fvec3 Orbit(0, 0, m_Camera.m_Distance);
+                    Orbit.RotateX(m_Camera.m_Angles.m_Pitch);
+                    Orbit.RotateY(m_Camera.m_Angles.m_Yaw);
+                    m_Camera.m_Target = G.m_Eye - Orbit;
+                }
+            }
+
             m_Camera.UpdateView(Min, Avail.x, Avail.y);
 
             // The 3D scene is queued FIRST, before the gizmo: AddCustomRenderCallback just inserts a
