@@ -1,3 +1,5 @@
+#include "dependencies/xeditor/include/xeditor/hint.h"
+#include "dependencies/xeditor/include/xeditor/shortcuts.h"
 #ifndef XLEVEL_PANEL_PLAY_TRANSPORT_H
 #define XLEVEL_PANEL_PLAY_TRANSPORT_H
 #pragma once
@@ -51,10 +53,10 @@ namespace xlevel
         auto Tip = [&](const char* Title, const char* Hint) noexcept
         {
             if (!Layout.m_bTooltips || !ImGui::IsItemHovered()) return;
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted(Title);
-            ImGui::TextDisabled("%s", Hint);
-            ImGui::EndTooltip();
+            // The key the action has right now (Level/Play, Level/Stop), from the host; the other buttons have none.
+            const std::string Keys = std::string_view(Title) == "Play" ? xeditor::ShortcutText("Level/Play")
+                                   : std::string_view(Title) == "Stop" ? xeditor::ShortcutText("Level/Stop") : std::string{};
+            xeditor::hint::Draw({ Title, Hint, Keys });
         };
         auto Next = [&]() noexcept { if (Layout.m_bHorizontal) ImGui::SameLine(); };
 
@@ -67,7 +69,7 @@ namespace xlevel
             if (bStopped) RequestPlay(Ed);
             else          RequestStop(Ed, std::nullopt);
         });
-        if (bStopped && bOtherPlaying) { if (Layout.m_bTooltips && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Another Level is playing - stop it first"); }
+        if (bStopped && bOtherPlaying) { if (Layout.m_bTooltips && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) xeditor::hint::Text("Another Level is playing - stop it first"); }
         else Tip(bStopped ? "Play" : "Stop", bStopped ? "Start playback" : "Stop playback");
 
         Next();

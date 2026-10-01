@@ -9,6 +9,7 @@
 // LevelEditor_Theme.h included directly (not just relying on LevelEditor_Main.cpp's own later include)
 // for UnityCheckbox - same self-sufficiency reasoning as level/LevelEditor_Panel_LevelTree.h's own top comment.
 #include "source/Editors/LevelEditor/LevelEditor_Theme.h"
+#include "dependencies/xeditor/include/xeditor/hint.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_system_usage.h"
 
 namespace xlevel
@@ -20,6 +21,7 @@ namespace xlevel
     //---------------------------------------------------------------------------
     inline void RenderSystemAccessTooltip(const xecs::system::type::info& Info, const char* pHeader) noexcept
     {
+        xeditor::hint::PlaceAwayFromEdges(16.0f, ImVec2(380.0f, 220.0f));
         if (!ImGui::BeginTooltip()) return;
         ImGui::TextUnformatted(pHeader);
         ImGui::Separator();

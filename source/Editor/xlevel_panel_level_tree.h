@@ -4,6 +4,8 @@
 
 // The Level tree panel: Level -> Scenes -> Folders -> Entities, with drag and drop, the source control column and the Level's
 // own edit commands. Meant to be included from xlevel_editor.h, after everything it calls.
+#include "dependencies/xeditor/include/xeditor/shortcuts.h"
+#include "dependencies/xeditor/include/xeditor/hint.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_commands_selection.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_commands_entity_lifecycle.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_commands_scene_organization.h"
@@ -157,7 +159,7 @@ namespace xlevel
         {
             const char* Title = ""; const char* Desc = "";
             xresource_editor::GetSourceControlTooltipText(StatusBadge, LockBadge, Title, Desc);
-            ImGui::BeginTooltip();
+            xeditor::hint::PlaceAwayFromEdges(16.0f, ImVec2(380.0f, 220.0f)); ImGui::BeginTooltip();
             ImGui::Text("%s", Title);
             ImGui::TextDisabled("%s", Desc);
             ImGui::EndTooltip();
@@ -649,9 +651,12 @@ namespace xlevel
                                             if (State.m_RenameArmedId == Id && State.m_RenameArmedScene == SceneGuid && !ImGui::IsMouseDown(ImGuiMouseButton_Left)
                                                 && ImGui::GetTime() - State.m_RenameArmedTime > ImGui::GetIO().MouseDoubleClickTime + 0.15)
                                                 BeginRename();
-                                            if (bEntitySelected && State.m_RenameId != Id && !State.isPlaying() && !ImGui::GetIO().WantTextInput
-                                                && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_F2, false))
+                                            // F2 is the Level/Entity/Rename action: it only raises m_bRenameRequested, this row (the selected one) takes it.
+                                            if (bEntitySelected && State.m_bRenameRequested && State.m_RenameId != Id && !State.isPlaying())
+                                            {
+                                                State.m_bRenameRequested = false;
                                                 BeginRename();
+                                            }
                                             const bool bRenaming = State.m_RenameId == Id && State.m_RenameScene == SceneGuid;
 
                                             bool bEntityOpen;
@@ -789,9 +794,9 @@ namespace xlevel
                                                         , xscene::commands::FormatEntityId(Id)
                                                         ));
                                                 }
-                                                if (ImGui::MenuItem("Rename", "F2", false, !State.isPlaying())) BeginRename();
+                                                if (ImGui::MenuItem("Rename", xeditor::ShortcutText("Level/Entity/Rename", "F2").c_str(), false, !State.isPlaying())) BeginRename();
                                                 ImGui::Separator();
-                                                if (ImGui::MenuItem("Delete Entity")) DoDeleteEntity();
+                                                if (ImGui::MenuItem("Delete Entity", xeditor::ShortcutText("Level/Entity/Delete").c_str())) DoDeleteEntity();
                                                 ImGui::EndDisabled();
                                                 ImGui::Separator();
                                                 // Single-file revert of exactly the resource this row's

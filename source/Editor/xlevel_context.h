@@ -19,6 +19,7 @@ namespace xlevel
         xecs::scene::permanent_id   m_RenameId       = xecs::scene::invalid_permanent_id_v;
         std::array<char, 256>       m_RenameText     = {};
         bool                        m_bRenameFocus   = false;      // focus the edit box on its first frame
+        bool                        m_bRenameRequested = false;    // the Rename action (F2) asks the tree to start renaming the selected entity; the tree row takes it the same frame
         // A click on the already-selected row arms a rename; it starts once the double-click window has passed.
         xecs::scene::guid           m_RenameArmedScene = {};
         xecs::scene::permanent_id   m_RenameArmedId    = xecs::scene::invalid_permanent_id_v;
