@@ -145,7 +145,7 @@ namespace xlevel::commands
     struct describe_entity_query_cmd : level_query_command
     {
         describe_entity_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "DescribeEntity", pDataBase) { RegisterArguments(); }
-        const char* getCommandHelp() const noexcept override { return "Lists every component on an entity (data/share/tag) with each property's path/value/TypeGuid - everything SetProperty needs - then which systems run on it, what they read/write, which don't run and why, and what removing each component would change. Usage: DescribeEntity -Scene hexguid -Id hexid"; }
+        const char* getCommandHelp() const noexcept override { return "Lists every component on an entity (kind data/share/tag, plus \",builder\" for a builder component: one that only configures the entity while it is created in the game) with each property's path/value/TypeGuid - everything SetProperty needs - then which systems run on it, what they read/write, which don't run and why, and what removing each component would change. Usage: DescribeEntity -Scene hexguid -Id hexid"; }
         void RegisterArguments() noexcept override
         {
             m_hScene = m_Parser.addOption("Scene", "Scene guid, 16 hex digits",      true, 1);
@@ -180,7 +180,8 @@ namespace xlevel::commands
                 const char* pKind = pInfo->m_TypeID == xecs::component::type::id::SHARE ? "share"
                                   : pInfo->m_TypeID == xecs::component::type::id::TAG   ? "tag"
                                   :                                                        "data";
-                Out += std::format("[{:016X}] {}  ({})\n", pInfo->m_Guid.m_Value, pInfo->m_pName, pKind);
+                // ",builder" marks a builder component (a builder system consumes it when the entity is created in the game).
+                Out += std::format("[{:016X}] {}  ({}{})\n", pInfo->m_Guid.m_Value, pInfo->m_pName, pKind, pInfo->m_bBuilder ? ",builder" : "");
                 if (!pInfo->m_pPropertyTable) continue;
                 // DATA lives in the entity's pool, SHARE on its family's share-entity, TAG nowhere.
                 auto* pData = static_cast<std::byte*>(xscene::ResolveComponentPointer(World(), Entity, *pInfo));
@@ -212,7 +213,7 @@ namespace xlevel::commands
     struct list_component_types_query_cmd : level_query_command
     {
         list_component_types_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "ListComponentTypes", pDataBase) { RegisterArguments(); }
-        const char* getCommandHelp() const noexcept override { return "Lists every addable component type (guid, kind data/share/tag, name, and which systems use it). Usage: ListComponentTypes"; }
+        const char* getCommandHelp() const noexcept override { return "Lists every addable component type (guid, kind data/share/tag with \",builder\" added for builder components, name, and which systems use it). Usage: ListComponentTypes"; }
         void RegisterArguments() noexcept override {}
 
         std::string Query() noexcept override
@@ -229,7 +230,8 @@ namespace xlevel::commands
                                   :                                                        nullptr;
                 if (!pKind || xscene::IsInternalComponent(pInfo)) continue;
                 const auto Used = xscene::system_usage::UsedBy(Systems, pInfo->m_Guid.m_Value);
-                Out += std::format("{:016X}  {:<5}  {}{}\n", pInfo->m_Guid.m_Value, pKind, pInfo->m_pName, Used.empty() ? "" : "   used by: " + Used);
+                // ",builder" marks a builder component (it only configures an entity while it is created in the game).
+                Out += std::format("{:016X}  {:<13}  {}{}\n", pInfo->m_Guid.m_Value, std::string(pKind) + (pInfo->m_bBuilder ? ",builder" : ""), pInfo->m_pName, Used.empty() ? "" : "   used by: " + Used);
             }
             return Out;
         }
