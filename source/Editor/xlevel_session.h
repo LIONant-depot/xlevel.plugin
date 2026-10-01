@@ -37,6 +37,7 @@
 #include "source/Tools/Editor/xeditor_resource_editor.h"
 #include "dependencies/xeditor/include/xeditor/host.h"
 #include "dependencies/toolbar.imgui/ximgui_toolbar.h"
+#include "dependencies/actions.imgui/ximgui_actions.h"
 #include "dependencies/xresource_pipeline_v2/source/editor/E10_AssetBrowser.h"
 #include "dependencies/xeditor_tools/src/xeditor_tools_camera.h"
 #include "dependencies/xeditor_tools/src/xeditor_tools_grid.h"
@@ -96,6 +97,62 @@ namespace xlevel
     // The shell hooks this to give every new Level editor its commands (the ones that are addressed to it by name).
     inline std::function<void(session&)> g_OnSessionCreated;
 
+    // The Level editor's ACTIONS: what its keys, menus, toolbar buttons, the command palette and the command pipe reach.
+    // An action is an xproperty function member; its identity is its path (Level/Save, Level/Viewport/ToolMove). Keys are
+    // member_keys tags (defaults - the user's keymap replaces them), the "why not" is member_dynamic_reason. See
+    // dependencies/actions.imgui. Each does exactly what the hand-written key check or toolbar lambda used to do.
+    struct session_actions
+    {
+        session* m_pS = nullptr;        // xproperty creates objects by default construction, so the owner is a pointer set by the session
+        session_actions() noexcept = default;
+        explicit session_actions(session& S) noexcept : m_pS(&S) {}
+        session& S() const noexcept { return *m_pS; }
+
+        void        Save()       noexcept;      const char* WhyNoSave() const noexcept;
+        void        Undo()       noexcept;      const char* WhyNoUndo() const noexcept;
+        void        Redo()       noexcept;      const char* WhyNoRedo() const noexcept;
+        void        ToolSelect() noexcept;
+        void        ToolMove()   noexcept;
+        void        ToolRotate() noexcept;
+        void        ToolScale()  noexcept;
+        const char* WhyNoTool()  const noexcept;
+
+        XPROPERTY_DEF
+        ( "Level", session_actions
+        , obj_action<"Save", &session_actions::Save
+            , member_help<"Saves the Level and the Scenes it may write">
+            , ximgui::actions::member_keys<"Ctrl+S", true>
+            , member_dynamic_reason<+[](const session_actions& A) noexcept -> const char* { return A.WhyNoSave(); }> >
+        , obj_action<"Undo", &session_actions::Undo
+            , member_help<"Undoes the last change to this Level">
+            , ximgui::actions::member_keys<"Ctrl+Z">
+            , member_dynamic_reason<+[](const session_actions& A) noexcept -> const char* { return A.WhyNoUndo(); }> >
+        , obj_action<"Redo", &session_actions::Redo
+            , member_help<"Redoes the change that was just undone">
+            , ximgui::actions::member_keys<"Ctrl+Y,Ctrl+Shift+Z">
+            , member_dynamic_reason<+[](const session_actions& A) noexcept -> const char* { return A.WhyNoRedo(); }> >
+        , obj_scope<"Viewport"
+            , obj_action<"ToolSelect", &session_actions::ToolSelect
+                , member_help<"Select tool (while a viewport tool is editing: finishes it)">
+                , ximgui::actions::member_keys<"Q">
+                , member_dynamic_reason<+[](const session_actions& A) noexcept -> const char* { return A.WhyNoTool(); }> >
+            , obj_action<"ToolMove", &session_actions::ToolMove
+                , member_help<"Move tool (while a viewport tool is editing: Move mode)">
+                , ximgui::actions::member_keys<"W">
+                , member_dynamic_reason<+[](const session_actions& A) noexcept -> const char* { return A.WhyNoTool(); }> >
+            , obj_action<"ToolRotate", &session_actions::ToolRotate
+                , member_help<"Rotate tool (while a viewport tool is editing: Rotate mode)">
+                , ximgui::actions::member_keys<"E">
+                , member_dynamic_reason<+[](const session_actions& A) noexcept -> const char* { return A.WhyNoTool(); }> >
+            , obj_action<"ToolScale", &session_actions::ToolScale
+                , member_help<"Scale tool (while a viewport tool is editing: Resize mode)">
+                , ximgui::actions::member_keys<"R">
+                , member_dynamic_reason<+[](const session_actions& A) noexcept -> const char* { return A.WhyNoTool(); }> >
+            >
+        )
+    };
+    XPROPERTY_REG(session_actions)
+
     // This editor's world: a fresh one with its systems, project paths, System Registry order and inspector
     // wiring. Ported from source/Editors/LevelEditor/LevelEditor_AppWorld.h's app::CreateWorld - component types
     // are registered once for the whole process (RegisterHostComponents, below), not per world.
@@ -124,6 +181,7 @@ namespace xlevel
         // State/CmdContext/pGameMgr/GamePlugin directly, so they had to move here with the rest of the world/
         // document ownership rather than staying behind in the shell as originally sketched in stage (a)).
         int                                          m_SceneTool = 0; // Q=select, W=move, E=rotate, R=scale, F=frame
+        session_actions                              m_Actions{ *this };      // the keys/menu/toolbar actions (see session_actions)
         bool                                         m_bPivotCenter = true;
         bool                                         m_bLocalSpace  = false;
         ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost;
@@ -501,6 +559,30 @@ namespace xlevel
             if (auto* pHost = xeditor::host::current()) pHost->end_play(&m_State);
         }
 
+        // The host's action context (keys, hints), if it provides one.
+        ximgui::actions::context* ActionContext() const noexcept
+        {
+            auto* pHost = xeditor::host::current();
+            return pHost ? pHost->find<ximgui::actions::context>() : nullptr;
+        }
+
+        // Q/W/E/R and their toolbar buttons: while a viewport tool is editing they drive ITS mode (Move/Rotate/Resize, Q ends
+        // it); otherwise they pick the scene tool.
+        void SetSceneTool(int ToolIndex) noexcept
+        {
+            if (m_ToolEditor.isActive() && ToolIndex <= 3) m_ToolEditor.SetToolIndex(ToolIndex);
+            else                                           m_SceneTool = ToolIndex;
+        }
+
+        // After a toolbar button: the action's hint (name, live key, why not) in place of a hand-written tooltip.
+        void ActionHint(std::string_view SubPath, const char* pFallback) noexcept
+        {
+            auto* pCtx = ActionContext();
+            const auto* pA = pCtx ? pCtx->Find(*xproperty::getObject(m_Actions), SubPath) : nullptr;
+            if (pA) pCtx->Hint(*pA, &m_Actions);
+            else if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::TextUnformatted(pFallback); ImGui::EndTooltip(); }
+        }
+
         // ---- Menu bar + the "Editor"/"Scene" toolbars (ported from LevelEditor_AppToolbars.h) ----
         void RenderParentEditorToolbar() noexcept
         {
@@ -514,12 +596,13 @@ namespace xlevel
 
                 ImGui::Separator();
 
-                const bool bCanSave = !m_State.isPlaying()
-                    && (!m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty())
-                    && xlevel::HasUnsavedDocumentChanges(m_State, m_Undo);
-                ImGui::BeginDisabled(!bCanSave);
-                if (ImGui::MenuItem("Save", "Ctrl+S")) { xlevel::SaveEverything(*m_pGameMgr, m_State); xlevel::MarkDocumentClean(m_State, m_Undo); }
-                ImGui::EndDisabled();
+                if (auto* pCtx = ActionContext()) pCtx->MenuItem(m_Actions, "Save");
+                else
+                {
+                    ImGui::BeginDisabled(m_Actions.WhyNoSave() != nullptr);
+                    if (ImGui::MenuItem("Save")) m_Actions.Save();
+                    ImGui::EndDisabled();
+                }
 
                 const bool bCanClose = !m_State.isPlaying() && (!m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty());
                 ImGui::BeginDisabled(!bCanClose);
@@ -543,11 +626,12 @@ namespace xlevel
         {
             const bool bHorizontal = Axis == ximgui::toolbar::axis::Horizontal;
             const float ButtonHeight = bHorizontal ? kEditorToolbarHeight - 4.0f : 28.0f;
+            if (auto* pCtx = ActionContext(); pCtx && pCtx->DrawToolbar(Name, !bHorizontal)) return;     // the user's own layout of this toolbar (keymap file)
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kEditorToolbarItemSpacing, ImGui::GetStyle().ItemSpacing.y));
             ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * kEditorToolbarFontScale);
             bool bFirstButton = true;
 
-            auto ToolbarButton = [&](const char* LongLabel, const char* ShortLabel, bool bActive, bool bDisabled, auto&& OnClick)
+            auto ToolbarButton = [&](const char* LongLabel, const char* ShortLabel, bool bActive, bool bDisabled, auto&& OnClick, const char* pAction = nullptr)
             {
                 if (bHorizontal && !bFirstButton) ImGui::SameLine();
                 bFirstButton = false;
@@ -556,7 +640,8 @@ namespace xlevel
                 if (ImGui::Button(bHorizontal ? LongLabel : ShortLabel, bHorizontal ? ImVec2(52.0f, ButtonHeight) : ImVec2(32.0f, ButtonHeight))) OnClick();
                 ImGui::EndDisabled();
                 if (bActive) ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::TextUnformatted(LongLabel); ImGui::EndTooltip(); }
+                if (pAction) ActionHint(pAction, LongLabel);
+                else if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::TextUnformatted(LongLabel); ImGui::EndTooltip(); }
             };
             auto ToolbarSeparator = [&]()
             {
@@ -566,12 +651,9 @@ namespace xlevel
 
             if (std::strcmp(Name, "Editor") == 0)
             {
-                const bool bCanSave = !m_State.isPlaying()
-                    && (!m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty())
-                    && xlevel::HasUnsavedDocumentChanges(m_State, m_Undo);
-                ToolbarButton("Save", "S", false, !bCanSave, [&]() { xlevel::SaveEverything(*m_pGameMgr, m_State); xlevel::MarkDocumentClean(m_State, m_Undo); });
-                ToolbarButton("Undo", "U", false, m_State.isPlaying(), [&]() { if (xlevel::MayUndoRedo(m_Undo, false)) m_Undo.Undo(); });
-                ToolbarButton("Redo", "R", false, m_State.isPlaying(), [&]() { if (xlevel::MayUndoRedo(m_Undo, true))  m_Undo.Redo(); });
+                ToolbarButton("Save", "S", false, m_Actions.WhyNoSave() != nullptr, [&]() { m_Actions.Save(); }, "Save");
+                ToolbarButton("Undo", "U", false, m_Actions.WhyNoUndo() != nullptr, [&]() { m_Actions.Undo(); }, "Undo");
+                ToolbarButton("Redo", "R", false, m_Actions.WhyNoRedo() != nullptr, [&]() { m_Actions.Redo(); }, "Redo");
                 ToolbarButton("Assets", "A", false, false, [&]() { if (auto* pHost = xeditor::host::current()) pHost->open_drawer_tab(ImGui::GetMainViewport(), 1); });
                 ToolbarSeparator();
 
@@ -585,7 +667,7 @@ namespace xlevel
             }
             else
             {
-                auto SceneButton = [&](const char* Label, int ToolIndex, const char* Tooltip)
+                auto SceneButton = [&](const char* Label, int ToolIndex, const char* Tooltip, const char* pAction = nullptr)
                 {
                     if (bHorizontal && !bFirstButton) ImGui::SameLine();
                     bFirstButton = false;
@@ -594,19 +676,15 @@ namespace xlevel
                     const bool bActive  = bToolKey ? ToolIndex >= 1 && static_cast<int>(m_ToolEditor.m_Mode) == ToolIndex - 1
                                                    : m_SceneTool == ToolIndex;
                     if (bActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Header]);
-                    if (ImGui::Button(Label, ImVec2(32.0f, ButtonHeight)))
-                    {
-                        if (!bToolKey)          m_SceneTool = ToolIndex;
-                        else if (ToolIndex > 0) m_ToolEditor.m_Mode = static_cast<viewport_tools::mode>(ToolIndex - 1);
-                        else                    m_ToolEditor.End();
-                    }
+                    if (ImGui::Button(Label, ImVec2(32.0f, ButtonHeight))) SetSceneTool(ToolIndex);
                     if (bActive) ImGui::PopStyleColor();
-                    if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::TextUnformatted(Tooltip); ImGui::EndTooltip(); }
+                    if (pAction) ActionHint(pAction, Tooltip);
+                    else if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::TextUnformatted(Tooltip); ImGui::EndTooltip(); }
                 };
-                SceneButton("Q", 0, "Select tool");
-                SceneButton("W", 1, "Move tool");
-                SceneButton("E", 2, "Rotate tool");
-                SceneButton("R", 3, "Scale tool");
+                SceneButton("Q", 0, "Select tool", "Viewport/ToolSelect");
+                SceneButton("W", 1, "Move tool",   "Viewport/ToolMove");
+                SceneButton("E", 2, "Rotate tool", "Viewport/ToolRotate");
+                SceneButton("R", 3, "Scale tool",  "Viewport/ToolScale");
                 SceneButton("F", 4, "Frame selected");
                 ToolbarSeparator();
 
@@ -837,22 +915,11 @@ namespace xlevel
                 ImGui::InvisibleButton("##LevelEditorViewport", Avail);
                 m_Camera.HandleInput();
 
-                // Gizmo tool hotkeys (Unity convention: Q=select, W=move, E=rotate, R=scale), only while
-                // the viewport is hovered, no text field wants the keystroke, and the camera isn't
-                // flying (right mouse held - xeditor_tools::camera::HandleInput reads Q/W/E on the same
-                // keys for strafe/up-down while flying; without this, holding right-click and pressing W
-                // to fly forward would also switch to the Move tool on every keypress).
+                // The Q/W/E/R tool keys are the Level/Viewport/Tool* actions (see session_actions: unavailable while the camera
+                // flies - right mouse held - because xeditor_tools::camera::HandleInput reads Q/W/E for strafe/up-down then).
+                // Esc finishes a viewport tool that is editing.
                 if (ImGui::IsItemHovered() && !ImGui::GetIO().WantTextInput && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
-                {
-                    if (m_ToolEditor.isActive()) m_ToolEditor.HandleHotkeys();   // W/E/R = tool mode, Q/Esc = done
-                    else
-                    {
-                        if (ImGui::IsKeyPressed(ImGuiKey_Q)) m_SceneTool = 0;
-                        if (ImGui::IsKeyPressed(ImGuiKey_W)) m_SceneTool = 1;
-                        if (ImGui::IsKeyPressed(ImGuiKey_E)) m_SceneTool = 2;
-                        if (ImGui::IsKeyPressed(ImGuiKey_R)) m_SceneTool = 3;
-                    }
-                }
+                    m_ToolEditor.HandleHotkeys();
 
                 // Click-to-select: CPU ray-pick against every rendered entity's rigid_body AABB
                 // (xlionrender::Pick - xeditor_tools_picking.h under the hood, the same shared primitives
@@ -995,6 +1062,14 @@ namespace xlevel
             // Whichever editor the user last touched is the one the commands that name no Level act on.
             if (IsOneOfMyWindowsFocused()) g_pActiveLevelContext = &m_CmdContext;
 
+            // Make this editor's actions live in its windows (the viewport window also makes Level/Viewport/... live).
+            if (auto* pCtx = ActionContext())
+            {
+                pCtx->ScopeWindow(ImGui::FindWindowByName(m_Names.m_Editor), m_Actions, "Viewport");
+                for (const char* pName : { m_Names.m_LevelTree, m_Names.m_Inspector, m_Names.m_SystemRegistry })
+                    pCtx->ScopeWindow(ImGui::FindWindowByName(pName), m_Actions);
+            }
+
             std::string LevelTabName;
             if (!m_State.m_CurrentLevel.empty())
                 e10::RemapGUIDToString(LevelTabName, xresource::full_guid{ m_State.m_CurrentLevel.m_Instance, m_State.m_CurrentLevel.m_Type });
@@ -1055,19 +1130,8 @@ namespace xlevel
 #endif
                 }
 
-                if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && !m_State.isPlaying()
-                    && (!m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty())
-                    && xlevel::HasUnsavedDocumentChanges(m_State, m_Undo))
-                {
-                    xlevel::SaveEverything(*m_pGameMgr, m_State);
-                    xlevel::MarkDocumentClean(m_State, m_Undo);
-                }
-
-                if (!ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt && !m_State.isPlaying())
-                {
-                    if (ImGui::IsKeyPressed(ImGuiKey_Z) && !ImGui::GetIO().KeyShift) { if (xlevel::MayUndoRedo(m_Undo, false)) m_Undo.Undo(); }
-                    else if (ImGui::IsKeyPressed(ImGuiKey_Y) || (ImGui::IsKeyPressed(ImGuiKey_Z) && ImGui::GetIO().KeyShift)) { if (xlevel::MayUndoRedo(m_Undo, true)) m_Undo.Redo(); }
-                }
+                // Ctrl+S / Ctrl+Z / Ctrl+Y are the Level/Save, Undo and Redo actions (see session_actions): resolved once a frame by
+                // the host's ximgui::actions::context, only while one of this editor's windows has the focus.
             }
 
             if (m_State.m_PlayState == xlevel::level_state::play_state::Playing)
@@ -1143,6 +1207,42 @@ namespace xlevel
         // What the shell keeps for this editor (its by-name commands). Declared last so it is destroyed first.
         std::shared_ptr<void> m_ShellCommands;
     };
+
+    // ---- session_actions: the bodies. Same conditions and calls the hand-written key checks / toolbar lambdas had. ----
+    inline const char* session_actions::WhyNoSave() const noexcept
+    {
+        if (S().m_State.isPlaying()) return "not while playing";
+        if (S().m_State.m_CurrentLevel.empty() && S().m_State.m_OpenScenes.empty()) return "nothing is open";
+        if (!xlevel::HasUnsavedDocumentChanges(S().m_State, S().m_Undo)) return "no changes to save";
+        return nullptr;
+    }
+    inline void session_actions::Save() noexcept
+    {
+        xlevel::SaveEverything(*S().m_pGameMgr, S().m_State);
+        xlevel::MarkDocumentClean(S().m_State, S().m_Undo);
+    }
+
+    inline const char* session_actions::WhyNoUndo() const noexcept
+    {
+        if (S().m_State.isPlaying()) return "not while playing";
+        if (S().m_Undo.GetUndoIndex() <= 0) return "nothing to undo";
+        return nullptr;
+    }
+    inline void session_actions::Undo() noexcept { if (xlevel::MayUndoRedo(S().m_Undo, false)) S().m_Undo.Undo(); }
+
+    inline const char* session_actions::WhyNoRedo() const noexcept
+    {
+        if (S().m_State.isPlaying()) return "not while playing";
+        if (S().m_Undo.GetUndoIndex() >= static_cast<int>(S().m_Undo.GetHistoryCount())) return "nothing to redo";
+        return nullptr;
+    }
+    inline void session_actions::Redo() noexcept { if (xlevel::MayUndoRedo(S().m_Undo, true)) S().m_Undo.Redo(); }
+
+    inline const char* session_actions::WhyNoTool() const noexcept { return ImGui::IsMouseDown(ImGuiMouseButton_Right) ? "the camera is flying" : nullptr; }
+    inline void session_actions::ToolSelect() noexcept { S().SetSceneTool(0); }
+    inline void session_actions::ToolMove()   noexcept { S().SetSceneTool(1); }
+    inline void session_actions::ToolRotate() noexcept { S().SetSceneTool(2); }
+    inline void session_actions::ToolScale()  noexcept { S().SetSceneTool(3); }
 
     // Same shape as xmaterial_editor.h's own g_Registration.
     inline const xeditor::auto_register_resource_editor g_Registration

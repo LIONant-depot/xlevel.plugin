@@ -325,14 +325,20 @@ namespace xlevel::viewport_tools
             ImGui::PopID();
         }
 
-        // W/E/R switch the mode, Q/Esc finish - called only while the viewport owns the keyboard.
-        void HandleHotkeys(void) noexcept
+        // The Level/Viewport tool actions (Q W E R, the toolbar) land here while a tool is editing: W/E/R switch the mode
+        // (when the tool has it), Q finishes. ToolIndex is the scene tool index: 0 = Q, 1 = W, 2 = E, 3 = R.
+        void SetToolIndex(int ToolIndex) noexcept
         {
             if (!isActive()) return;
-            if (ImGui::IsKeyPressed(ImGuiKey_W, false) && m_pTool->SupportsMode(mode::MOVE))   m_Mode = mode::MOVE;
-            if (ImGui::IsKeyPressed(ImGuiKey_E, false) && m_pTool->SupportsMode(mode::ROTATE)) m_Mode = mode::ROTATE;
-            if (ImGui::IsKeyPressed(ImGuiKey_R, false) && m_pTool->SupportsMode(mode::RESIZE)) m_Mode = mode::RESIZE;
-            if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) End();
+            if (ToolIndex == 0) { End(); return; }
+            const auto Mode = static_cast<mode>(ToolIndex - 1);
+            if (m_pTool->SupportsMode(Mode)) m_Mode = Mode;
+        }
+
+        // Esc finishes the tool - called only while the viewport owns the keyboard.
+        void HandleHotkeys(void) noexcept
+        {
+            if (isActive() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) End();
         }
 
         // Draws every registered tool's visualization for the selected entity and runs the active
