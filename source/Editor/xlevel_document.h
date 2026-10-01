@@ -35,7 +35,7 @@ namespace xlevel
         {
             if (!m_pEd || m_pEd->State().m_CurrentLevel.empty()) return {};
             std::string Name;
-            e10::RemapGUIDToString(Name, CurrentGuid());
+            xresource_editor::RemapGUIDToString(Name, CurrentGuid());
             return Name.empty() ? std::string("Level") : Name;
         }
 

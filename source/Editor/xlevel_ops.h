@@ -4,7 +4,7 @@
 namespace xlevel
 {
     // Same icon glyphs the asset browser's own virtual folder tree uses for a folder-with-children
-    // vs. an empty one (E10_asset_browser_virtual_tree_tab.h) - reused verbatim rather than picking new
+    // vs. an empty one (xresource_editor_asset_browser_virtual_tree_tab.h) - reused verbatim rather than picking new
     // ones, per direct user request. Both come from the icon font already loaded once, globally, for
     // the whole app (source/Tools/xgpu_imgui_breach.cpp) - E29 shares that same font atlas already.
     const char* FolderIcon(bool bHasChildren) noexcept
@@ -14,7 +14,7 @@ namespace xlevel
 
     // Level/Scene row icons - direct user request. Segoe MDL2 Assets "Globe"/"Video" codepoints,
     // distinct from FolderIcon's own pair above and from every icon already used elsewhere in this
-    // app (E10_AssetBrowser.h's tab icons) - picked and confirmed via a live screenshot, not inferred
+    // app (xresource_editor_asset_browser.h's tab icons) - picked and confirmed via a live screenshot, not inferred
     // from font metadata (see e10_asset_tree_polish_pass2 memory for why metadata alone isn't
     // trustworthy for this specific font).
     constexpr const char* LevelIcon() noexcept { return "\xEE\x9D\xB4"; }

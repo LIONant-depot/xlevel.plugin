@@ -287,7 +287,7 @@ namespace xlevel
     //---------------------------------------------------------------------------
     // "You changed N properties while Playing - keep them?" - renders every frame regardless (same
     // ImGui::OpenPopup/BeginPopupModal-every-frame convention the Asset Tree's own
-    // RenderPendingConfirmationModal already established, E10_asset_browser_files_tab.h), so the
+    // RenderPendingConfirmationModal already established, xresource_editor_asset_browser_files_tab.h), so the
     // dialog keeps showing across frames until answered, including one opened by a CLI Stop call with
     // no -Keep (RequestStop sets the exact same m_bAwaitingKeepTweaksAnswer flag either way). Only
     // decides Keep-vs-Discard here; the real Stop itself still runs at the usual deferred, safe frame

@@ -119,9 +119,9 @@ namespace xlevel
     inline void RenderSaveBeforeCloseModal(xecs::game_mgr::instance& GameMgr, level_state& State, xundo::system& Undo) noexcept
     {
         if (State.m_bAwaitingSaveBeforeClose)
-            ImGui::OpenPopup("Save changes?##E29Document");
+            ImGui::OpenPopup("Save changes?##LevelDocument");
 
-        if (ImGui::BeginPopupModal("Save changes?##E29Document", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        if (ImGui::BeginPopupModal("Save changes?##LevelDocument", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
             const bool bOpeningOther = !State.m_PendingOpenLevelAfterClose.empty();
             ImGui::TextUnformatted(State.m_CurrentLevel.empty()

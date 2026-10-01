@@ -9,9 +9,9 @@
 #include "plugins/xscene.plugin/source/Editor/xscene_commands_scene_organization.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_commands_scene_dependency.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_commands_level.h"
-#include "dependencies/xresource_pipeline_v2/source/editor/E10_Commands_SourceControl.h"
-#include "dependencies/xresource_pipeline_v2/source/editor/E10_SourceControlCache.h"
-#include "dependencies/xresource_pipeline_v2/source/editor/E10_Panel_SourceControl.h"
+#include "dependencies/xresource_pipeline_v2/source/editor/xresource_editor_commands_source_control.h"
+#include "dependencies/xresource_pipeline_v2/source/editor/xresource_editor_source_control_cache.h"
+#include "dependencies/xresource_pipeline_v2/source/editor/xresource_editor_panel_source_control.h"
 
 // BeginDragDropTargetCustom: the window-wide highlight when a Level is dropped while another is open.
 #include "imgui_internal.h"
@@ -36,8 +36,8 @@ namespace xlevel
     // True when the current DESCRIPTOR_GUID drag is a Level asset (PeekOnly-safe).
     inline bool PeekDescriptorPayloadIsLevel(const ImGuiPayload* Peek) noexcept
     {
-        if (!Peek || Peek->DataSize != sizeof(e10::drag_and_drop_folder_payload_t)) return false;
-        return reinterpret_cast<const e10::drag_and_drop_folder_payload_t*>(Peek->Data)->m_Source.m_Type == xecs::level::type_guid_v;
+        if (!Peek || Peek->DataSize != sizeof(xresource_editor::drag_and_drop_folder_payload_t)) return false;
+        return reinterpret_cast<const xresource_editor::drag_and_drop_folder_payload_t*>(Peek->Data)->m_Source.m_Type == xecs::level::type_guid_v;
     }
 
     // Inside an active BeginDragDropTarget / Custom: accept Level only, open on delivery.
@@ -49,8 +49,8 @@ namespace xlevel
         if (!PeekDescriptorPayloadIsLevel(Peek)) return false;
         if (const ImGuiPayload* Payload = ImGui::AcceptDragDropPayload("DESCRIPTOR_GUID"))
         {
-            IM_ASSERT(Payload->DataSize == sizeof(e10::drag_and_drop_folder_payload_t));
-            auto& Dropped = *reinterpret_cast<const e10::drag_and_drop_folder_payload_t*>(Payload->Data);
+            IM_ASSERT(Payload->DataSize == sizeof(xresource_editor::drag_and_drop_folder_payload_t));
+            auto& Dropped = *reinterpret_cast<const xresource_editor::drag_and_drop_folder_payload_t*>(Payload->Data);
             if (Payload->IsDelivery())
                 RequestOpenLevelFromTreeDrop(Dropped.m_Source);
         }
@@ -60,20 +60,20 @@ namespace xlevel
     // Renders the Level Tree's own source-control status/lock badge for a Scene or Level resource -
     // direct user request: "the 'level Tree' left source control column... similar to the one we
     // have done in all other views." Scoped to Scene/Level rows only, same granularity the Source
-    // Control panel itself already uses (E10_Panel_SourceControl.h's own top comment: a Scene is one
+    // Control panel itself already uses (xresource_editor_panel_source_control.h's own top comment: a Scene is one
     // committable file as far as git is concerned - an Entity/Folder has no file of its own to track,
     // "a real, separate future feature," not this one). Draws directly into the CURRENT table cell
     // (call this right after TableSetColumnIndex for the dedicated "##SC" column), reusing the exact
-    // same e10::DrawSourceControlBadge/GetSourceControlTooltipText helpers the Asset Tree and Source
+    // same xresource_editor::DrawSourceControlBadge/GetSourceControlTooltipText helpers the Asset Tree and Source
     // Control panel already share, so all three views read identically.
     //
     // There is no existing "given only a full_guid, which library owns it" helper - getNodeInfo's own
-    // global-search overload (E10_AssetMgr.h) loops every open library internally but never surfaces
+    // global-search overload (xresource_editor_asset_mgr.h) loops every open library internally but never surfaces
     // which one matched - so this does that resolution itself via the per-library overload, same
     // "try each open library" idiom BuildSourceControlRows/CollectDistinctDepots already use elsewhere
     // for depot-wide scans. The Descriptor.txt path derivation (info.txt's own path -> sibling
     // Descriptor.txt -> strip the owning library's root) mirrors
-    // E10_asset_browser_virtual_tree_tab.h's own tile-badge derivation exactly, so a Scene/Level's
+    // xresource_editor_asset_browser_virtual_tree_tab.h's own tile-badge derivation exactly, so a Scene/Level's
     // badge here and its badge in the Asset Tree (if ever shown there) would always agree.
     // A resource's resolved SC identity - which library owns it, that library's real root path, and
     // both the single Descriptor.txt (status/lock badge granularity) and the whole containing .desc
@@ -83,7 +83,7 @@ namespace xlevel
     // itself represents, instead of re-deriving it a second time.
     struct level_tree_sc_target
     {
-        e10::library::guid m_Library;
+        xresource_editor::library::guid m_Library;
         std::wstring        m_RootPath;
         std::wstring        m_DescriptorPath; // library-relative, e.g. "Descriptors\...\Descriptor.txt"
         std::wstring        m_FolderPath;     // library-relative, the ".desc" folder containing it
@@ -91,14 +91,14 @@ namespace xlevel
 
     inline std::optional<level_tree_sc_target> ResolveLevelTreeSourceControlTarget(const xresource::full_guid& ResourceGuid) noexcept
     {
-        for (auto& Lib : e10::g_LibMgr.m_mLibraryDB)
+        for (auto& Lib : xresource_editor::g_LibMgr.m_mLibraryDB)
         {
             std::wstring FolderPath, DescriptorPath;
-            // NOT noexcept - getNodeInfo's own function_traits deduction (E10_AssetMgr.h) doesn't
+            // NOT noexcept - getNodeInfo's own function_traits deduction (xresource_editor_asset_mgr.h) doesn't
             // handle a noexcept lambda's operator() type (the established noexcept-lambda trait trap,
             // see memory xgpu_xcontainer_noexcept_lambda_trait_trap - recurs anywhere a lambda is
             // passed to one of these FindAsReadOnly-style helpers).
-            const bool bFound = e10::g_LibMgr.getNodeInfo(Lib.first, ResourceGuid, [&](const e10::library_db::info_node& Node)
+            const bool bFound = xresource_editor::g_LibMgr.getNodeInfo(Lib.first, ResourceGuid, [&](const xresource_editor::library_db::info_node& Node)
             {
                 const auto SlashPos = Node.m_Path.find_last_of(L'\\');
                 FolderPath     = (SlashPos == std::wstring::npos) ? Node.m_Path : Node.m_Path.substr(0, SlashPos);
@@ -118,7 +118,7 @@ namespace xlevel
             });
             if (!bFound) continue;
 
-            const auto RootPath = e10::commands::ResolveLibraryRootPath(Lib.first);
+            const auto RootPath = xresource_editor::commands::ResolveLibraryRootPath(Lib.first);
             if (RootPath.empty()) return std::nullopt;
 
             return level_tree_sc_target{ Lib.first, RootPath, DescriptorPath, FolderPath };
@@ -131,23 +131,23 @@ namespace xlevel
         const auto Target = ResolveLevelTreeSourceControlTarget(ResourceGuid);
         if (!Target) return;
 
-        e10::asset_status_badge StatusBadge = e10::asset_status_badge::None;
-        if (auto Status = e10::source_control::GetCachedFileStatus(Target->m_RootPath, Target->m_DescriptorPath))
-            StatusBadge = Status->untracked ? e10::asset_status_badge::Untracked : e10::asset_status_badge::Modified;
-        else if (e10::source_control::GetLastRefreshTime(Target->m_RootPath))
-            StatusBadge = e10::asset_status_badge::Clean;
+        xresource_editor::asset_status_badge StatusBadge = xresource_editor::asset_status_badge::None;
+        if (auto Status = xresource_editor::source_control::GetCachedFileStatus(Target->m_RootPath, Target->m_DescriptorPath))
+            StatusBadge = Status->untracked ? xresource_editor::asset_status_badge::Untracked : xresource_editor::asset_status_badge::Modified;
+        else if (xresource_editor::source_control::GetLastRefreshTime(Target->m_RootPath))
+            StatusBadge = xresource_editor::asset_status_badge::Clean;
 
-        e10::asset_lock_badge LockBadge = e10::asset_lock_badge::None;
-        if (auto Lock = e10::source_control::GetCachedLockStatus(Target->m_RootPath, Target->m_DescriptorPath))
-            LockBadge = (Lock->ownership == sc::LockOwnership::CurrentUser) ? e10::asset_lock_badge::LockedByMe : e10::asset_lock_badge::LockedByOther;
+        xresource_editor::asset_lock_badge LockBadge = xresource_editor::asset_lock_badge::None;
+        if (auto Lock = xresource_editor::source_control::GetCachedLockStatus(Target->m_RootPath, Target->m_DescriptorPath))
+            LockBadge = (Lock->ownership == sc::LockOwnership::CurrentUser) ? xresource_editor::asset_lock_badge::LockedByMe : xresource_editor::asset_lock_badge::LockedByOther;
 
-        if (StatusBadge == e10::asset_status_badge::None && LockBadge == e10::asset_lock_badge::None) return;
+        if (StatusBadge == xresource_editor::asset_status_badge::None && LockBadge == xresource_editor::asset_lock_badge::None) return;
 
-        constexpr float BadgeSize = 12.0f; // matches E10_asset_browser_virtual_tree_tab.h/files_tab's own badge size - direct user correction, never asked to change the icon size
+        constexpr float BadgeSize = 12.0f; // matches xresource_editor_asset_browser_virtual_tree_tab.h/files_tab's own badge size - direct user correction, never asked to change the icon size
         const ImVec2 CellMin  = ImGui::GetCursorScreenPos();
         const ImVec2 CellSize = ImGui::GetContentRegionAvail();
         const ImVec2 Center{ CellMin.x + CellSize.x * 0.5f, CellMin.y + ImGui::GetTextLineHeight() * 0.5f };
-        e10::DrawSourceControlBadge(ImGui::GetWindowDrawList(), Center, BadgeSize, StatusBadge, LockBadge);
+        xresource_editor::DrawSourceControlBadge(ImGui::GetWindowDrawList(), Center, BadgeSize, StatusBadge, LockBadge);
 
         // Invisible placeholder so the cell has a real item (row-height/clip participation) and a
         // hover target for the tooltip - the badge itself is drawn via raw ImDrawList primitives,
@@ -156,7 +156,7 @@ namespace xlevel
         if (ImGui::IsItemHovered())
         {
             const char* Title = ""; const char* Desc = "";
-            e10::GetSourceControlTooltipText(StatusBadge, LockBadge, Title, Desc);
+            xresource_editor::GetSourceControlTooltipText(StatusBadge, LockBadge, Title, Desc);
             ImGui::BeginTooltip();
             ImGui::Text("%s", Title);
             ImGui::TextDisabled("%s", Desc);
@@ -195,7 +195,7 @@ namespace xlevel
     inline void RenderLevelTreeSCRevertMenuItem(xundo::system& Undo, const xresource::full_guid& ResourceGuid, bool bWholeFolder, const char* WarningText) noexcept
     {
         const auto Target = ResolveLevelTreeSourceControlTarget(ResourceGuid);
-        const bool bModified = Target && e10::source_control::GetCachedFileStatus(Target->m_RootPath, Target->m_DescriptorPath).has_value();
+        const bool bModified = Target && xresource_editor::source_control::GetCachedFileStatus(Target->m_RootPath, Target->m_DescriptorPath).has_value();
 
         if (ImGui::MenuItem("SC Revert...", nullptr, false, bModified))
         {
@@ -225,14 +225,14 @@ namespace xlevel
             {
                 if (const auto Target = ResolveLevelTreeSourceControlTarget(Req.m_ResourceGuid))
                 {
-                    // Shared tail (E10_Commands_SourceControl.h) with the Resources/Assets tabs' own
+                    // Shared tail (xresource_editor_commands_source_control.h) with the Resources/Assets tabs' own
                     // whole-folder revert - same enumerate-then-batch-revert primitive, not
                     // reimplemented here. The single-file case is simple enough to stay inline.
                     if (Req.m_bWholeFolder)
-                        e10::commands::RunRevertUnderFolder(Undo, Target->m_Library, Target->m_RootPath, Target->m_FolderPath);
+                        xresource_editor::commands::RunRevertUnderFolder(Undo, Target->m_Library, Target->m_RootPath, Target->m_FolderPath);
                     else
                         xeditor::RunQuery(Undo, std::format("SourceControlRevert -Library {} -Path {}"
-                            , e10::commands::FormatLibraryGuid(Target->m_Library), e10::commands::EncodeAssetPath(Target->m_DescriptorPath)));
+                            , xresource_editor::commands::FormatLibraryGuid(Target->m_Library), xresource_editor::commands::EncodeAssetPath(Target->m_DescriptorPath)));
                 }
                 ImGui::CloseCurrentPopup();
             }
@@ -289,8 +289,8 @@ namespace xlevel
                 {
                     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("DESCRIPTOR_GUID"))
                     {
-                        IM_ASSERT(payload->DataSize == sizeof(e10::drag_and_drop_folder_payload_t));
-                        auto& Dropped = *reinterpret_cast<const e10::drag_and_drop_folder_payload_t*>(payload->Data);
+                        IM_ASSERT(payload->DataSize == sizeof(xresource_editor::drag_and_drop_folder_payload_t));
+                        auto& Dropped = *reinterpret_cast<const xresource_editor::drag_and_drop_folder_payload_t*>(payload->Data);
                         if (Dropped.m_Source.m_Type == xecs::level::type_guid_v)
                             xlevel::RequestOpenLevelFromTreeDrop(Dropped.m_Source);
                     }
@@ -300,7 +300,7 @@ namespace xlevel
             else if (auto* pLevel = GameMgr.m_LevelMgr.Find(State.m_CurrentLevel))
             {
                 std::string LevelLabel;
-                e10::RemapGUIDToString(LevelLabel, xresource::full_guid{ State.m_CurrentLevel.m_Instance, State.m_CurrentLevel.m_Type });
+                xresource_editor::RemapGUIDToString(LevelLabel, xresource::full_guid{ State.m_CurrentLevel.m_Instance, State.m_CurrentLevel.m_Type });
 
                 // Search box, visually matching the asset browser's own (RenderTreeSearchBar's own
                 // comment). Adding entities/folders is right-click-in-place on a Scene/Folder row now
@@ -388,8 +388,8 @@ namespace xlevel
                         }
                         else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("DESCRIPTOR_GUID"))
                         {
-                            IM_ASSERT(payload->DataSize == sizeof(e10::drag_and_drop_folder_payload_t));
-                            auto& Dropped = *reinterpret_cast<const e10::drag_and_drop_folder_payload_t*>(payload->Data);
+                            IM_ASSERT(payload->DataSize == sizeof(xresource_editor::drag_and_drop_folder_payload_t));
+                            auto& Dropped = *reinterpret_cast<const xresource_editor::drag_and_drop_folder_payload_t*>(payload->Data);
                             if (Dropped.m_Source.m_Type == xecs::scene::type_guid_v)
                             {
                                 const xecs::scene::guid NewSceneGuid{ .m_Instance = Dropped.m_Source.m_Instance };
@@ -419,7 +419,7 @@ namespace xlevel
                             const auto SceneGuid = pLevel->m_Scenes[iScene];
 
                             std::string SceneLabel;
-                            e10::RemapGUIDToString(SceneLabel, xresource::full_guid{ SceneGuid.m_Instance, SceneGuid.m_Type });
+                            xresource_editor::RemapGUIDToString(SceneLabel, xresource::full_guid{ SceneGuid.m_Instance, SceneGuid.m_Type });
 
                             const bool bIsOpenScene = std::find(State.m_OpenScenes.begin(), State.m_OpenScenes.end(), SceneGuid) != State.m_OpenScenes.end();
 
@@ -493,13 +493,13 @@ namespace xlevel
                             }
 
                             // Drag this Level-Tree scene onto another scene's Dependencies folder
-                            // (same DESCRIPTOR_GUID + e10::drag_and_drop_folder_payload_t the asset
+                            // (same DESCRIPTOR_GUID + xresource_editor::drag_and_drop_folder_payload_t the asset
                             // browser emits for Scene assets). Also works as a drop onto the Level
                             // row (AddScene skips duplicates). SourceAllowNullID: TreeNodeEx items
                             // don't always have a stable ImGui ID the way Button/Selectable do.
                             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
                             {
-                                e10::drag_and_drop_folder_payload_t Payload{};
+                                xresource_editor::drag_and_drop_folder_payload_t Payload{};
                                 Payload.m_Source     = xresource::full_guid{ SceneGuid.m_Instance, SceneGuid.m_Type };
                                 Payload.m_bSelection = false;
                                 ImGui::SetDragDropPayload("DESCRIPTOR_GUID", &Payload, sizeof(Payload));
@@ -509,8 +509,8 @@ namespace xlevel
 
                             // Drop a Prefab asset from the asset browser here to instantiate it -
                             // decodes the SAME "DESCRIPTOR_GUID" payload the browser's own asset icons
-                            // already drag (see e10::drag_and_drop_folder_payload_t). ALSO accepts an
-                            // entity dragged out of a folder back to loose/root (E29_ENTITY_DRAG,
+                            // already drag (see xresource_editor::drag_and_drop_folder_payload_t). ALSO accepts an
+                            // entity dragged out of a folder back to loose/root (LEVEL_ENTITY_DRAG,
                             // reusing the same payload struct the prefab-creation drag already uses -
                             // it already carries exactly {SceneGuid, Id}).
                             if (bIsOpenScene && !bSceneLocked && ImGui::BeginDragDropTarget())
@@ -522,8 +522,8 @@ namespace xlevel
                                 }
                                 else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("DESCRIPTOR_GUID"))
                                 {
-                                    IM_ASSERT(payload->DataSize == sizeof(e10::drag_and_drop_folder_payload_t));
-                                    auto& Dropped = *reinterpret_cast<const e10::drag_and_drop_folder_payload_t*>(payload->Data);
+                                    IM_ASSERT(payload->DataSize == sizeof(xresource_editor::drag_and_drop_folder_payload_t));
+                                    auto& Dropped = *reinterpret_cast<const xresource_editor::drag_and_drop_folder_payload_t*>(payload->Data);
                                     if (Dropped.m_Source.m_Type == xecs::prefab::type_guid_v)
                                     {
                                         if (auto* pDropScene = GameMgr.m_SceneMgr.Find(SceneGuid))
@@ -535,7 +535,7 @@ namespace xlevel
                                         }
                                     }
                                 }
-                                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("E29_ENTITY_DRAG"))
+                                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LEVEL_ENTITY_DRAG"))
                                 {
                                     IM_ASSERT(payload->DataSize == sizeof(xscene::entity_drag_payload_t));
                                     auto& Dropped = *reinterpret_cast<const xscene::entity_drag_payload_t*>(payload->Data);
@@ -605,7 +605,7 @@ namespace xlevel
                                             if (pPI)
                                             {
                                                 std::string PrefabName;
-                                                e10::RemapGUIDToString(PrefabName, pPI->m_PrefabInstance);
+                                                xresource_editor::RemapGUIDToString(PrefabName, pPI->m_PrefabInstance);
                                                 EntityLabel += std::format(" (Prefab: {})", PrefabName);
                                             }
 
@@ -743,7 +743,7 @@ namespace xlevel
                                             if (bBeganDragSource)
                                             {
                                                 xscene::entity_drag_payload_t Payload{ SceneGuid, Id };
-                                                ImGui::SetDragDropPayload("E29_ENTITY_DRAG", &Payload, sizeof(Payload));
+                                                ImGui::SetDragDropPayload("LEVEL_ENTITY_DRAG", &Payload, sizeof(Payload));
                                                 ImGui::Text("%s", EntityLabel.c_str());
                                                 ImGui::EndDragDropSource();
                                             }
@@ -924,8 +924,8 @@ namespace xlevel
                                                     }
                                                     else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("DESCRIPTOR_GUID"))
                                                     {
-                                                        IM_ASSERT(payload->DataSize == sizeof(e10::drag_and_drop_folder_payload_t));
-                                                        auto& Dropped = *reinterpret_cast<const e10::drag_and_drop_folder_payload_t*>(payload->Data);
+                                                        IM_ASSERT(payload->DataSize == sizeof(xresource_editor::drag_and_drop_folder_payload_t));
+                                                        auto& Dropped = *reinterpret_cast<const xresource_editor::drag_and_drop_folder_payload_t*>(payload->Data);
                                                         if (Dropped.m_Source.m_Type == xecs::prefab::type_guid_v)
                                                         {
                                                             const auto NewId = xscene::NextFreeEntityId(*pScene);
@@ -934,7 +934,7 @@ namespace xlevel
                                                                 , Dropped.m_Source.m_Instance.m_Value, static_cast<std::uint32_t>(FolderId)));
                                                         }
                                                     }
-                                                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("E29_ENTITY_DRAG"))
+                                                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LEVEL_ENTITY_DRAG"))
                                                     {
                                                         IM_ASSERT(payload->DataSize == sizeof(xscene::entity_drag_payload_t));
                                                         auto& Dropped = *reinterpret_cast<const xscene::entity_drag_payload_t*>(payload->Data);
@@ -1021,8 +1021,8 @@ namespace xlevel
                                                 }
                                                 else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("DESCRIPTOR_GUID"))
                                                 {
-                                                    IM_ASSERT(payload->DataSize == sizeof(e10::drag_and_drop_folder_payload_t));
-                                                    auto& Dropped = *reinterpret_cast<const e10::drag_and_drop_folder_payload_t*>(payload->Data);
+                                                    IM_ASSERT(payload->DataSize == sizeof(xresource_editor::drag_and_drop_folder_payload_t));
+                                                    auto& Dropped = *reinterpret_cast<const xresource_editor::drag_and_drop_folder_payload_t*>(payload->Data);
                                                     if (Dropped.m_Source.m_Type == xecs::scene::type_guid_v && Dropped.m_Source.m_Instance != SceneGuid.m_Instance)
                                                     {
                                                         const xecs::scene::guid NewParent{ .m_Instance = Dropped.m_Source.m_Instance };
@@ -1043,7 +1043,7 @@ namespace xlevel
                                                 {
                                                     ImGui::PushID(static_cast<int>(iDep));
                                                     std::string DepName;
-                                                    e10::RemapGUIDToString(DepName, xresource::full_guid{ pScene->m_ParentScenes[iDep].m_Instance, pScene->m_ParentScenes[iDep].m_Type });
+                                                    xresource_editor::RemapGUIDToString(DepName, xresource::full_guid{ pScene->m_ParentScenes[iDep].m_Instance, pScene->m_ParentScenes[iDep].m_Type });
 
                                                     ImGui::TableNextRow();
                                                     ImGui::TableSetColumnIndex(1);
@@ -1254,7 +1254,7 @@ namespace xlevel
                 }
                 ImGui::PopStyleVar(2); // IndentSpacing + CellPadding, both pushed unconditionally above BeginTable
 
-                // Window-wide Level drop (E10 FilesBackgroundDropTarget pattern): ImGui picks the
+                // Window-wide Level drop (xresource_editor FilesBackgroundDropTarget pattern): ImGui picks the
                 // smallest accepting target, so row Prefab/Scene targets still win for those types.
                 // Rows PeekOnly-skip Level, so this large ContentRegionRect owns Level highlight + open.
                 if (ImGui::BeginDragDropTargetCustom(ImGui::GetCurrentWindow()->ContentRegionRect, ImGui::GetID("LevelTreeLevelDrop")))

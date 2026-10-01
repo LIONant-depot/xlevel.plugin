@@ -38,7 +38,7 @@
 #include "dependencies/xeditor/include/xeditor/host.h"
 #include "dependencies/toolbar.imgui/ximgui_toolbar.h"
 #include "dependencies/actions.imgui/ximgui_actions.h"
-#include "dependencies/xresource_pipeline_v2/source/editor/E10_AssetBrowser.h"
+#include "dependencies/xresource_pipeline_v2/source/editor/xresource_editor_asset_browser.h"
 #include "dependencies/xeditor_tools/src/xeditor_tools_camera.h"
 #include "dependencies/xeditor_tools/src/xeditor_tools_grid.h"
 #include "source/tools/xgpu_imgui_breach.h"
@@ -254,7 +254,7 @@ namespace xlevel
             xecs::component::mgr::SyncLocalBitIDs<xlioncore::static_tag, xlioncore::transform>();
         }
 
-        session(xresource::full_guid Guid, e10::library::guid /*LibraryGuid*/, xgpu::device* pDevice) noexcept
+        session(xresource::full_guid Guid, xresource_editor::library::guid /*LibraryGuid*/, xgpu::device* pDevice) noexcept
             : m_pDevice(pDevice)
         {
             m_LevelGuid = Guid;
@@ -281,7 +281,7 @@ namespace xlevel
                 if (Parent.empty() || Parent == Dir) break;
                 Dir = Parent;
             }
-            if (!RepoRoot.empty()) m_ProjectPath = e10::g_LibMgr.m_ProjectPath;   // the shell has already opened the project by the time Open() can run
+            if (!RepoRoot.empty()) m_ProjectPath = xresource_editor::g_LibMgr.m_ProjectPath;   // the shell has already opened the project by the time Open() can run
 
 #if defined(XECS_BUILD_SHARED)
             // The first editor brings the game module up; every other one just uses it (its components are already in the
@@ -347,7 +347,7 @@ namespace xlevel
             m_EntityInspector.m_Settings.m_FramePadding      = ImVec2(4.0f, 3.0f);
             m_EntityInspector.m_Settings.m_ItemSpacing       = ImVec2(1.0f, 1.0f);
             m_EntityInspector.m_Settings.m_TableFramePadding = ImVec2(4.0f, 1.0f);
-            e10::WireResourcePickerCallbacks(m_EntityInspector);
+            xresource_editor::WireResourcePickerCallbacks(m_EntityInspector);
             m_InspectorBridge.RegisterCallbacks(m_EntityInspector, m_CmdContext);
 
             // Per-element viewport-tool toggles ("Edit Collider" on each PhysicsColliderBox box row).
@@ -591,7 +591,7 @@ namespace xlevel
             if (ImGui::BeginMenu("File"))
             {
                 if (auto* pHost = xeditor::host::current())
-                    if (auto* pBrowser = pHost->find<e10::assert_browser>())
+                    if (auto* pBrowser = pHost->find<xresource_editor::asset_browser>())
                         if (ImGui::MenuItem("Asset Browser...")) pBrowser->Show(true);
 
                 ImGui::Separator();
@@ -1072,7 +1072,7 @@ namespace xlevel
 
             std::string LevelTabName;
             if (!m_State.m_CurrentLevel.empty())
-                e10::RemapGUIDToString(LevelTabName, xresource::full_guid{ m_State.m_CurrentLevel.m_Instance, m_State.m_CurrentLevel.m_Type });
+                xresource_editor::RemapGUIDToString(LevelTabName, xresource::full_guid{ m_State.m_CurrentLevel.m_Instance, m_State.m_CurrentLevel.m_Type });
             else
                 LevelTabName = "Level";
 
@@ -1247,7 +1247,7 @@ namespace xlevel
     // Same shape as xmaterial_editor.h's own g_Registration.
     inline const xeditor::auto_register_resource_editor g_Registration
     { xecs::level::type_guid_v
-    , [](xresource::full_guid Guid, e10::library::guid LibraryGuid, xgpu::device* pDevice) -> std::unique_ptr<xeditor::resource_editor>
+    , [](xresource::full_guid Guid, xresource_editor::library::guid LibraryGuid, xgpu::device* pDevice) -> std::unique_ptr<xeditor::resource_editor>
       { return std::make_unique<session>(Guid, LibraryGuid, pDevice); }
     };
 }

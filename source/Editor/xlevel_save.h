@@ -82,7 +82,7 @@ namespace xlevel
         }
 
         xproperty::settings::context Context;
-        e10::g_LibMgr.Save(Context);
+        xresource_editor::g_LibMgr.Save(Context);
 
         for (auto* pOther : g_LevelContexts)
         {

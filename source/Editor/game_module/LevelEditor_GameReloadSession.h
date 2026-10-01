@@ -177,7 +177,7 @@ namespace xlevel
         Plugin.m_bBuilding  = true;
         // Computed HERE, on the main thread, and captured by value - NOT re-computed inside the
         // background task. See BuildGamePluginIfStale's own comment on ModuleSourceTime for why: it
-        // reads xlevel::g_ScriptConfig/e10::g_LibMgr, neither safe to touch from the background thread
+        // reads xlevel::g_ScriptConfig/xresource_editor::g_LibMgr, neither safe to touch from the background thread
         // this function's lambda runs on.
         const auto ModuleSourceTime = GetLatestModuleSourceWriteTime(Plugin.m_Paths);
         Plugin.m_BuildFuture = std::async(std::launch::async, [&Plugin, ModuleSourceTime]() noexcept

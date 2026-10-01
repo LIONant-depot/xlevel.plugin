@@ -300,12 +300,12 @@ namespace xlevel
     {
         if (g_PendingRemoveDependencyConfirm.m_bOpen)
         {
-            ImGui::OpenPopup("Clear dependency refs?##E29");
+            ImGui::OpenPopup("Clear dependency refs?##LevelClearDependencyRefs");
             g_PendingRemoveDependencyConfirm.m_bOpen = false;
         }
 
         ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
-        if (ImGui::BeginPopupModal("Clear dependency refs?##E29", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        if (ImGui::BeginPopupModal("Clear dependency refs?##LevelClearDependencyRefs", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f);
             ImGui::TextUnformatted(std::format(

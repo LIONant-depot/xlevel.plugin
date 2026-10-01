@@ -72,7 +72,7 @@ namespace xlevel::commands
 
         std::string Query() noexcept override
         {
-            const auto ScenesRoot = std::filesystem::path(e10::g_LibMgr.m_ProjectPath) / L"Descriptors" / L"Scene";
+            const auto ScenesRoot = std::filesystem::path(xresource_editor::g_LibMgr.m_ProjectPath) / L"Descriptors" / L"Scene";
             std::error_code Ec;
             if (!std::filesystem::exists(ScenesRoot, Ec)) return "AuditComponentUsage: no scenes found";
 
@@ -90,7 +90,7 @@ namespace xlevel::commands
                 ++ScenesScanned;
 
                 std::vector<xecs::scene::component_dependency> Missing;
-                for (auto& Dep : xecs::scene::LoadSceneComponentDependencies(e10::g_LibMgr.m_ProjectPath, SceneGuid))
+                for (auto& Dep : xecs::scene::LoadSceneComponentDependencies(xresource_editor::g_LibMgr.m_ProjectPath, SceneGuid))
                     if (!xscene::IsComponentInLiveRegistry(Dep.m_Guid))
                         Missing.push_back(Dep);
 
@@ -141,8 +141,8 @@ namespace xlevel::commands
         xcmdline::parser::handle m_hScene;
     };
 
-    // Shared by ListLevels/ListScenes - walks e10::g_LibMgr's own type-indexed asset map (the same one
-    // the Asset Browser itself walks, E10_AssetBrowser.h) and returns {instance guid value -> display
+    // Shared by ListLevels/ListScenes - walks xresource_editor::g_LibMgr's own type-indexed asset map (the same one
+    // the Asset Browser itself walks, xresource_editor_asset_browser.h) and returns {instance guid value -> display
     // name} for every asset of TypeGuid, across every open library. Not a single-lookup helper (like
     // library_mgr::getInfo, which needs a specific library::guid up front) - ListScenes needs to
     // resolve names for a whole SET of scene guids (a Level's own m_Scenes) at once, so building one
@@ -150,9 +150,9 @@ namespace xlevel::commands
     inline std::unordered_map<std::uint64_t, std::string> BuildAssetNameMap(xresource::type_guid TypeGuid) noexcept
     {
         std::unordered_map<std::uint64_t, std::string> Out;
-        for (auto& L : e10::g_LibMgr.m_mLibraryDB)
+        for (auto& L : xresource_editor::g_LibMgr.m_mLibraryDB)
         {
-            L.second->m_InfoByTypeDataBase.FindAsReadOnly(TypeGuid, [&](const std::unique_ptr<e10::library_db::info_db>& TypeDB)
+            L.second->m_InfoByTypeDataBase.FindAsReadOnly(TypeGuid, [&](const std::unique_ptr<xresource_editor::library_db::info_db>& TypeDB)
             {
                 for (auto& I : TypeDB->m_InfoDataBase)
                     Out[I.second.m_Info.m_Guid.m_Instance.m_Value] = I.second.m_Info.m_Name;
