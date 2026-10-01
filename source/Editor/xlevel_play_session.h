@@ -299,7 +299,7 @@ namespace xlevel
         if (State.m_bAwaitingKeepTweaksAnswer)
             ImGui::OpenPopup("Keep Play Mode Changes?");
 
-        if (ImGui::BeginPopupModal("Keep Play Mode Changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        if (ImGui::BeginPopupModal("Keep Play Mode Changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
         {
             const auto Count = State.m_PendingKeepTweaksCommands.size();
             ImGui::Text("You changed %zu propert%s while Playing.", Count, Count == 1 ? "y" : "ies");

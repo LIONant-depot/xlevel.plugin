@@ -284,7 +284,7 @@ namespace xlevel
         if (g_PendingReloadCompatibility.has_value())
             ImGui::OpenPopup("Game.dll Reload - Missing Components");
 
-        if (ImGui::BeginPopupModal("Game.dll Reload - Missing Components", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        if (ImGui::BeginPopupModal("Game.dll Reload - Missing Components", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
         {
             if (g_PendingReloadCompatibility.has_value())
             {

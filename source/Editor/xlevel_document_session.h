@@ -121,7 +121,7 @@ namespace xlevel
         if (State.m_bAwaitingSaveBeforeClose)
             ImGui::OpenPopup("Save changes?##LevelDocument");
 
-        if (ImGui::BeginPopupModal("Save changes?##LevelDocument", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        if (ImGui::BeginPopupModal("Save changes?##LevelDocument", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
         {
             const bool bOpeningOther = !State.m_PendingOpenLevelAfterClose.empty();
             ImGui::TextUnformatted(State.m_CurrentLevel.empty()

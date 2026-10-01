@@ -219,7 +219,7 @@ namespace xlevel
             ImGui::OpenPopup("SC Revert##LevelTreeConfirm");
             Req.m_bPending = false;
         }
-        if (ImGui::BeginPopupModal("SC Revert##LevelTreeConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        if (ImGui::BeginPopupModal("SC Revert##LevelTreeConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
         {
             ImGui::TextUnformatted(Req.m_WarningText.c_str());
             ImGui::Separator();

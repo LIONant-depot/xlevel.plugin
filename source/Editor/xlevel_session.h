@@ -1253,7 +1253,7 @@ namespace xlevel
                     ImGui::OpenPopup("##PlayBusy");
                     m_State.m_bPlayBusyPopup = false;
                 }
-                if (ImGui::BeginPopupModal("##PlayBusy", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+                if (ImGui::BeginPopupModal("##PlayBusy", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
                 {
                     ImGui::Text("Play is already active in another Level editor.");
                     ImGui::Text("Stop that Play first, then try again.");
