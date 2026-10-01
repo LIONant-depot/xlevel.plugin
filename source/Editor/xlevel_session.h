@@ -104,6 +104,28 @@ namespace xlevel
     // An action is an xproperty function member; its identity is its path (Level/Save, Level/Viewport/ToolMove). Keys are
     // member_keys tags (defaults - the user's keymap replaces them), the "why not" is member_dynamic_reason. See
     // dependencies/actions.imgui. Each does exactly what the hand-written key check or toolbar lambda used to do.
+    // What the mouse does in the Level editor's surfaces (listed on the mouse in the F1 view, and in the status line under the cursor).
+    // Descriptions only: the viewport and the tree handle the mouse themselves, as before.
+    namespace gestures
+    {
+        using namespace ximgui::actions;
+        inline constexpr gesture viewport[] =
+        { { 0,             mouse_input::Left,   mouse_kind::Click,  "Select",      "Selects the entity under the mouse; clicking empty ground clears the selection." }
+        , { ImGuiMod_Ctrl, mouse_input::Left,   mouse_kind::Click,  "Add / remove","Adds the entity under the mouse to the selection, or takes it out." }
+        , { 0,             mouse_input::Left,   mouse_kind::Drag,   "Gizmo",       "Drag a handle of the gizmo to move, rotate or scale the selected entity (Q W E R choose the tool)." }
+        , { 0,             mouse_input::Right,  mouse_kind::Drag,   "Look around", "Turns the camera where it is." }
+        , { 0,             mouse_input::Right,  mouse_kind::Drag,   "Fly",         "Keep it held and press W A S D to move, Q down, E up.", "W A S D Q E" }
+        , { 0,             mouse_input::Middle, mouse_kind::Drag,   "Pan",         "Slides the camera sideways and up / down." }
+        , { 0,             mouse_input::Wheel,  mouse_kind::Scroll, "Zoom",        "Moves the camera toward or away from what it looks at." } };
+
+        inline constexpr gesture tree[] =
+        { { 0,             mouse_input::Left,   mouse_kind::Click,  "Select",      "Selects the entity (when the button is released, so a drag can start from the row)." }
+        , { ImGuiMod_Ctrl, mouse_input::Left,   mouse_kind::Click,  "Add / remove","Adds the entity to the selection, or takes it out." }
+        , { 0,             mouse_input::Left,   mouse_kind::Click,  "Rename",      "Clicking the one selected entity again starts renaming it." }
+        , { 0,             mouse_input::Left,   mouse_kind::Drag,   "Move",        "Drag an entity onto a folder, or onto the Level row to take it out of its folder." }
+        , { 0,             mouse_input::Right,  mouse_kind::Click,  "Menu",        "Opens the menu of the row." } };
+    }
+
     struct session_actions
     {
         session* m_pS = nullptr;        // xproperty creates objects by default construction, so the owner is a pointer set by the session
@@ -210,7 +232,7 @@ namespace xlevel
         session_actions                              m_Actions{ *this };      // the keys/menu/toolbar actions (see session_actions)
         bool                                         m_bPivotCenter = true;
         bool                                         m_bLocalSpace  = false;
-        ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost;
+        ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost{ {}, false, [](const char* pText) noexcept { xeditor::hint::Text("%s", pText); } };      // its tooltip is the editors' hint window
         char                                         m_ToolbarHandlerName[48] = {};
         bool                                         m_bToolbarHandler = false;
 
@@ -1133,6 +1155,8 @@ namespace xlevel
             {
                 pCtx->ScopeWindow(ImGui::FindWindowByName(m_Names.m_Editor),    m_Actions, "Viewport", "Entity");
                 pCtx->ScopeWindow(ImGui::FindWindowByName(m_Names.m_LevelTree), m_Actions, "Entity");
+                pCtx->GesturesWindow(ImGui::FindWindowByName(m_Names.m_Editor),    "Viewport", gestures::viewport);
+                pCtx->GesturesWindow(ImGui::FindWindowByName(m_Names.m_LevelTree), "Level tree", gestures::tree);
                 for (const char* pName : { m_Names.m_Inspector, m_Names.m_SystemRegistry })
                     pCtx->ScopeWindow(ImGui::FindWindowByName(pName), m_Actions);
             }
