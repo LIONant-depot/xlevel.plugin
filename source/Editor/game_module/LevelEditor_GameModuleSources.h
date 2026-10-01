@@ -6,7 +6,9 @@
 // project's referenced modules into a CMake project it generates under <project>\Cache\Script (never checked in, rebuilt from
 // the modules), builds it with Visual Studio's generator, and gets Game.dll in the root of the project's compiled resources
 // (<project>\Cache\Resources\Platforms\WINDOWS). The generated project links the game entry points of xscript_module.plugin
-// and the xECSV2 import library of this editor's own build, so the DLL shares the editor's one component registry.
+// and the import library of the editor's own ECS (LIONCore.lib: xECSV2 is compiled into LIONCore.dll, see xLIONCore), so the DLL shares the
+// editor's one component registry. (It used to link xECSV2.lib, the stale import library of a DLL the build no longer makes: the game DLL then
+// registered its components in a second registry that no world ever read.)
 //
 // The project is regenerated when the module list changes (AddProjectModuleReference and friends) and once when the project
 // loads. The cmake reconfigure and build it needs ride the Game.dll reload triggers (window focus regained, Play pressed).
@@ -29,7 +31,7 @@ namespace xlevel
         std::filesystem::path m_PdbDir;       // where the linker writes Game.pdb for the running configuration
         std::filesystem::path m_LoadedDir;    // <Root>\Loaded: the copies of Game.dll that are actually loaded
         std::filesystem::path m_XGpuRoot;     // the xGPU checkout this editor was built from
-        std::filesystem::path m_XGpuBinDir;   // its build directory: <Config>\xECSV2.lib is under it
+        std::filesystem::path m_XGpuBinDir;   // its build directory: xLIONCore\<Config>\LIONCore.lib is under it
         std::wstring          m_Config;       // "Debug" or "Release": the configuration of the running editor
 
         std::filesystem::path RuntimeDir() const { return m_XGpuRoot / L"plugins" / L"xscript_module.plugin" / L"source" / L"Runtime"; }
@@ -171,10 +173,11 @@ namespace xlevel
         C += L"set(BACKEND_SOURCES \"${XGPU_ROOT}/dependencies/xtextfile/source/xtextfile.cpp\" \"${XGPU_ROOT}/dependencies/xproperty/source/xcore/my_properties.cpp\")\n";
         C += L"add_library(Game SHARED \"${XGPU_ROOT}/plugins/xscript_module.plugin/source/Runtime/xscript_game_entry.cpp\" ${MODULE_SOURCES} ${BACKEND_SOURCES})\n";
         C += L"target_include_directories(Game PRIVATE \"${XGPU_ROOT}\"";
-        for (const wchar_t* Dep : { L"xECSV2/src", L"xerr", L"xresource_guid", L"xtextfile", L"xproperty", L"xresource_pipeline_v2", L"xstrtool", L"xcontainer", L"xdelegate", L"xscheduler", L"xmath", L"xbits" })
+        for (const wchar_t* Dep : { L"xECSV2/src", L"xerr", L"xresource_guid", L"xtextfile", L"xproperty", L"xresource_pipeline_v2", L"xstrtool", L"xcontainer", L"xdelegate", L"xscheduler", L"xmath", L"xbits", L"box3d/include" })
             C += std::format(L" \"${{XGPU_ROOT}}/dependencies/{}\"", Dep);
         C += L")\ntarget_compile_definitions(Game PRIVATE XECS_BUILD_SHARED)\n";
-        C += std::format(L"target_link_libraries(Game PRIVATE \"{}/$<CONFIG>/xECSV2.lib\")\n", Fwd(P.m_XGpuBinDir));
+        // The ECS is compiled into LIONCore.dll (xLIONCore), so that is the import library the game DLL needs to share the editor's registry.
+        C += std::format(L"target_link_libraries(Game PRIVATE \"{}/xLIONCore/$<CONFIG>/LIONCore.lib\")\n", Fwd(P.m_XGpuBinDir));
         C += L"target_precompile_headers(Game PRIVATE \"$<$<COMPILE_LANGUAGE:CXX>:${XGPU_ROOT}/dependencies/xECSV2/src/xecs.h>\" ${MODULE_PCH_HEADERS})\n";
         C += L"set_source_files_properties(${BACKEND_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)\n";
 

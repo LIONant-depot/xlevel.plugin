@@ -583,6 +583,12 @@ namespace xlevel
 
         void BeforeReload() noexcept
         {
+            // The Inspector keeps the property values of the selected entity, and those carry the type functions of the components'
+            // property tables - including the ones that live in the Game.dll about to be unloaded. Destroying them afterwards calls
+            // into an unmapped DLL (the crash of "select an entity, then the game rebuilds"), so they go now and are rebuilt for the new DLL.
+            m_EntityInspector.clear();
+            m_State.m_bEntityInspectorDirty = true;
+
             m_ReloadCapture = xlevel::CaptureOpenScenes(*m_pGameMgr, m_State);
             xlevel::SaveSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath(m_LevelGuid.m_Instance.m_Value));
             m_pGameMgr.reset();
