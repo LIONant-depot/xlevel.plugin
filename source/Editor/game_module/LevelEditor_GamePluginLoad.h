@@ -1,6 +1,7 @@
 #ifndef XLVL_NEW_LevelEditor_GAME_PLUGIN_LOAD_H
 #define XLVL_NEW_LevelEditor_GAME_PLUGIN_LOAD_H
 #pragma once
+#include <fstream>
 
 // Extracted from LevelEditor_GamePlugin.h (mechanical move, phase 3 of the kit split - see the umbrella
 // file's own top comment). The shadow-copy + LoadLibrary/GetProcAddress mechanics: copying the
@@ -81,6 +82,19 @@ namespace xlevel
             std::filesystem::copy_file(SrcPdb, NewPdb, std::filesystem::copy_options::overwrite_existing, PdbEc);
         }
 
+        // The DLLs the modules' third-party libraries bring (the generator lists them in Cache\Script\runtime_files.txt): next to the copy that is loaded,
+        // where LoadLibraryExW looks for them. One that is still mapped by an earlier generation is already there and is left alone.
+        {
+            std::wifstream Manifest(P.m_Root / L"runtime_files.txt");
+            for (std::wstring Line; std::getline(Manifest, Line); )
+            {
+                if (Line.empty()) continue;
+                std::error_code RuntimeEc;
+                const std::filesystem::path Source(Line);
+                std::filesystem::copy_file(Source, P.m_LoadedDir / Source.filename(), std::filesystem::copy_options::overwrite_existing, RuntimeEc);
+                if (RuntimeEc && !std::filesystem::exists(P.m_LoadedDir / Source.filename(), RuntimeEc)) LogGamePlugin(std::format("Game.dll: a runtime file of a library is missing: {}", Source.string()));
+            }
+        }
         return NewDll.wstring();
     }
 
@@ -124,7 +138,7 @@ namespace xlevel
         // window-stack bookkeeping. A missing/failed-to-load Game.dll is an expected, benign
         // condition anyway (nothing has been built yet on a fresh checkout) - a plain log line is
         // the right amount of ceremony for it, not a modal.
-        HMODULE hModule = LoadLibraryW(LoadedPath.c_str());
+        HMODULE hModule = LoadLibraryExW(LoadedPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);       // the DLL's own folder is searched for the DLLs it needs (the libraries' runtime files)
         if (hModule == nullptr)
         {
             LogGamePlugin(std::format("Game.dll: LoadLibrary failed for {}", std::filesystem::path(LoadedPath).filename().string()));
