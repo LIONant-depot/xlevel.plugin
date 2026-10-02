@@ -61,8 +61,33 @@ namespace xlevel
         auto Next = [&]() noexcept { if (Layout.m_bHorizontal) ImGui::SameLine(); };
 
         // Centered on the two-slot pair ALWAYS, so slots 1 and 2 stay pixel-fixed when slot 3 appears.
+        const float PairX = (ImGui::GetWindowWidth() - (Layout.m_ButtonSize.x * 2.0f + ImGui::GetStyle().ItemSpacing.x)) * 0.5f;
+
+        // The speed of the game, left of Play: 0.25x to 3x, with snaps at the usual speeds (and right-click for 1x). It is the multiplier of
+        // this editor's game time, so it is already set when Play is pressed.
+        if (Layout.m_bHorizontal && Ed.m_pGame)
+        {
+            constexpr float SliderW = 120.0f;
+            constexpr auto& Snaps = xlioncore::game_time::kScaleSteps;
+            auto& Scale = Ed.m_pGame->m_Time.m_TimeScale;
+            ImGui::SameLine(std::max(0.0f, PairX - SliderW - ImGui::GetStyle().ItemSpacing.x * 2.0f));
+            ImGui::SetNextItemWidth(SliderW);
+            if (ImGui::SliderFloat("##TimeScale", &Scale, Snaps.front(), Snaps.back(), "%.2fx", ImGuiSliderFlags_AlwaysClamp))
+                Scale = xlioncore::game_time::NearestScaleStep(Scale);                      // no smooth values: always one of the stops
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) Scale = 1.0f;
+            if (Layout.m_bTooltips && ImGui::IsItemHovered()) xeditor::hint::Text("Speed of the game: %.2fx  (0.25 0.5 0.75 1 1.5 2 3, right-click for 1x)", Scale);
+            { // the snaps, as small marks under the slider
+                const ImVec2 Min = ImGui::GetItemRectMin(), Max = ImGui::GetItemRectMax();
+                const float  Grab = ImGui::GetStyle().GrabMinSize;
+                for (float Snap : Snaps)
+                {
+                    const float X = Min.x + Grab * 0.5f + (Max.x - Min.x - Grab) * ((Snap - Snaps.front()) / (Snaps.back() - Snaps.front()));
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(X, Max.y - 3.0f), ImVec2(X, Max.y), IM_COL32(200, 200, 200, 160));
+                }
+            }
+        }
         if (Layout.m_bHorizontal)
-            ImGui::SameLine((ImGui::GetWindowWidth() - (Layout.m_ButtonSize.x * 2.0f + ImGui::GetStyle().ItemSpacing.x)) * 0.5f);
+            ImGui::SameLine(PairX);
 
         Slot(bStopped ? PlayIcon : StopIcon, bBuilding || (bStopped && bOtherPlaying), false, [&]
         {

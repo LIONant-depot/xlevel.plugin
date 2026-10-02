@@ -1,4 +1,5 @@
 #pragma once
+#include "dependencies/xLIONCore/src/game/xlioncore_game.h"
 
 // level_state: the scene state plus what is specific to a Level editor: which Level is open, whether it is playing, and
 // where its document stands (saved or not).
@@ -90,6 +91,8 @@ namespace xlevel
             : xscene::scene_context{ State, pWorld, Undo } {}
 
         level_state& State() noexcept { return static_cast<level_state&>(m_State); }
+
+        xlioncore::game* m_pGame = nullptr;   // this editor's game (the game manager and the time), set by its session
 
         void* m_pToolEditor = nullptr;   // this editor's viewport_tools::editor (the "Edit Collider" tools), set by its session
     };
