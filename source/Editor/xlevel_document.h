@@ -155,7 +155,7 @@ namespace xlevel
             Owned = std::make_unique<xeditor::session>();
             Owned->m_Document = std::make_unique<LevelDocument>();
             if (auto Err = Owned->m_Undo.Init({}, false); !Err.empty())
-                xeditor::NotifyError(std::format("Level session xundo Init failed: {}", Err));
+                xeditor::NotifyModal(std::format("Level session xundo Init failed: {}", Err));
             pLive = Owned.get();
         }
 
@@ -239,7 +239,7 @@ namespace xlevel
         else
             bOk = Check(Undo.GetHistoryCommandString(Index));
 
-        if (!bOk) xeditor::NotifyError(bRedo ? "Redo refused: it changes a Scene another Level is editing" : "Undo refused: it changes a Scene another Level is editing");
+        if (!bOk) xeditor::NotifyToast(bRedo ? "Redo refused: it changes a Scene another Level is editing" : "Undo refused: it changes a Scene another Level is editing");
         return bOk;
     }
 }

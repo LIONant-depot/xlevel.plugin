@@ -42,7 +42,7 @@ namespace xlevel
             Ed.State().m_bPlayRequested = false;
             Ed.State().m_bStepOneFrame  = false;
             if (auto* pHost = xeditor::host::current()) pHost->end_play(&Ed.State());
-            xeditor::NotifyError(std::format("Play cancelled: {} entities of the open scene(s) are not in the world (the scene is out of step with it). Reopen the Level.", Unknown));
+            xeditor::NotifyToast(std::format("Play cancelled: {} entities of the open scene(s) are not in the world (the scene is out of step with it). Reopen the Level.", Unknown));
             return;
         }
         SaveEverything(Ed.World(), Ed.State());

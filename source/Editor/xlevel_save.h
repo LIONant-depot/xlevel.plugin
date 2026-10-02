@@ -61,7 +61,7 @@ namespace xlevel
         if (!State.m_CurrentLevel.empty() && GameMgr.m_LevelMgr.Find(State.m_CurrentLevel))
         {
             if (auto Err = GameMgr.m_LevelMgr.Save(State.m_CurrentLevel); Err)
-                xeditor::NotifyError(std::format("Failed to save Level: {}", Err.getMessage()));
+                xeditor::NotifyToast(std::format("Failed to save Level: {}", Err.getMessage()));
         }
 
         for (auto& SceneGuid : State.m_OpenScenes)
@@ -82,18 +82,18 @@ namespace xlevel
             if (auto* pScene = GameMgr.m_SceneMgr.Find(SceneGuid))
                 if (const auto Unknown = CountUnknownEntities(GameMgr, *pScene); Unknown)
                 {
-                    xeditor::NotifyError(std::format("Scene {:016X} was not saved: {} of its entities are not in the world (the scene is out of step with it). Reopen the Level.", SceneGuid.m_Instance.m_Value, Unknown));
+                    xeditor::NotifyToast(std::format("Scene {:016X} was not saved: {} of its entities are not in the world (the scene is out of step with it). Reopen the Level.", SceneGuid.m_Instance.m_Value, Unknown));
                     continue;
                 }
             // A scene out of step with its world would be saved from entities that are not there: refuse, and say why (the file on disk stays as it was).
             if (auto* pScene = GameMgr.m_SceneMgr.Find(SceneGuid))
                 if (const auto Unknown = CountUnknownEntities(GameMgr, *pScene); Unknown)
                 {
-                    xeditor::NotifyError(std::format("Scene {:016X} was not saved: {} of its entities are not in the world (the scene is out of step with it). Reopen the Level.", SceneGuid.m_Instance.m_Value, Unknown));
+                    xeditor::NotifyToast(std::format("Scene {:016X} was not saved: {} of its entities are not in the world (the scene is out of step with it). Reopen the Level.", SceneGuid.m_Instance.m_Value, Unknown));
                     continue;
                 }
             if (auto Err = GameMgr.m_SceneMgr.SaveScene(SceneGuid); Err)
-                xeditor::NotifyError(std::format("Failed to save Scene: {}", Err.getMessage()));
+                xeditor::NotifyToast(std::format("Failed to save Scene: {}", Err.getMessage()));
         }
 
         xproperty::settings::context Context;

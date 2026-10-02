@@ -16,6 +16,7 @@
 //   testing had to read a raw .entity file off disk by hand to get this information even once - the
 //   whole point of phase 5+ was to never need that.
 #include "plugins/xlevel.plugin/source/Editor/xlevel_command_context.h"
+#include "dependencies/xeditor/include/xeditor/gpu_log.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_system_usage.h"
 
 // Defined with the game plugin state (game_module/LevelEditor_GamePluginLoad.h), which comes after this header.
@@ -395,16 +396,47 @@ namespace xlevel::commands
     struct raise_error_cmd : level_query_command
     {
         raise_error_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "RaiseError", pDataBase) { RegisterArguments(); }
-        const char* getCommandHelp() const noexcept override { return "Diagnostic: shows the error popup with a message, centered on the editor that has the focus. Usage: RaiseError -Message text"; }
-        void RegisterArguments() noexcept override { m_hMessage = m_Parser.addOption("Message", "The text of the error", true, 1); }
+        const char* getCommandHelp() const noexcept override { return "Diagnostic: shows the error popup with a message, centered on the editor that has the focus. Usage: RaiseError -Message text [-Style modal|toast|badge]"; }
+        void RegisterArguments() noexcept override
+        {
+            m_hMessage = m_Parser.addOption("Message", "The text of the error", true, 1);
+            m_hStyle = m_Parser.addOption("Style", "modal (default), toast or badge: how loudly it is told (every one is recorded in the Logs)", false, 1);
+        }
         std::string Query() noexcept override
         {
             auto A = m_Parser.getOptionArgAs<std::string>(m_hMessage, 0);
             if (std::holds_alternative<xerr>(A)) return "RaiseError: -Message is required";
-            xeditor::NotifyError(std::get<std::string>(A));
+            auto S = m_Parser.getOptionArgAs<std::string>(m_hStyle, 0);
+            const std::string Style = std::holds_alternative<xerr>(S) ? std::string("modal") : std::get<std::string>(S);
+            if (Style != "modal" && Style != "toast" && Style != "badge") return "RaiseError: -Style is modal, toast or badge";
+            xeditor::NotifyError(std::get<std::string>(A), Style == "modal" ? xeditor::notify_style::Modal : Style == "toast" ? xeditor::notify_style::Toast : xeditor::notify_style::Badge);
             return "RaiseError: raised";
         }
-        xcmdline::parser::handle m_hMessage;
+        xcmdline::parser::handle m_hMessage, m_hStyle;
+    };
+
+    // Diagnostic, for the smoke tests: hands a line to the xGPU adapter exactly as xGPU's own callback would (the line is base64: Vulkan's messages have brackets and quotes),
+    // so the adapter's parsing (code, title, where) is tested without needing a real validation error.
+    struct simulate_gpu_message_cmd : level_query_command
+    {
+        simulate_gpu_message_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "SimulateGpuMessage", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Diagnostic: gives a line to the xGPU adapter as xGPU's error or warning callback does. Usage: SimulateGpuMessage -Text base64 [-Severity error|warning]"; }
+        void RegisterArguments() noexcept override
+        {
+            m_hText = m_Parser.addOption("Text", "The line, base64", true, 1);
+            m_hSeverity = m_Parser.addOption("Severity", "error (default) or warning", false, 1);
+        }
+        std::string Query() noexcept override
+        {
+            auto T = m_Parser.getOptionArgAs<std::string>(m_hText, 0);
+            if (std::holds_alternative<xerr>(T)) return "SimulateGpuMessage: -Text is required";
+            auto S = m_Parser.getOptionArgAs<std::string>(m_hSeverity, 0);
+            const bool bWarning = !std::holds_alternative<xerr>(S) && std::get<std::string>(S) == "warning";
+            const std::string Line = xlog::Base64Decode(std::get<std::string>(T));
+            xeditor::LogGpuMessage(Line, bWarning ? xlog::severity::Warning : xlog::severity::Error, "xlion.simulated");        // a made-up line: its own producer, never counted as the real thing
+            return "SimulateGpuMessage: given";
+        }
+        xcmdline::parser::handle m_hText, m_hSeverity;
     };
 
     struct modal_state_cmd : level_query_command
@@ -420,8 +452,10 @@ namespace xlevel::commands
             const ImVec2       Editor  = xeditor::EditorRect(true).GetCenter();
             const ImVec2       Anchor  = pHost ? pHost->m_Notifier.m_Anchor : ImVec2(0, 0);
             const ImVec2       Viewport= ImGui::GetMainViewport()->GetCenter();
-            return std::format("Open={}\nPopupCenter={:.0f},{:.0f}\nAnchor={:.0f},{:.0f}\nEditorCenter={:.0f},{:.0f}\nViewportCenter={:.0f},{:.0f}"
-                , pModal != nullptr, Popup.x, Popup.y, Anchor.x, Anchor.y, Editor.x, Editor.y, Viewport.x, Viewport.y);
+            std::string        DrawerText = "unknown";           // the focused window's drawer: closed, or open:<tab index>
+            if (pHost) if (ImGuiViewport* vp = xeditor::FocusedDrawerViewport()) { const auto& D = pHost->drawer_for(vp->ID); DrawerText = D.m_bOpen ? std::format("open:{}", D.m_ActiveTab) : std::string("closed"); }
+            return std::format("Open={}\nPopupCenter={:.0f},{:.0f}\nAnchor={:.0f},{:.0f}\nEditorCenter={:.0f},{:.0f}\nViewportCenter={:.0f},{:.0f}\nToasts={}\nToastsRaised={}\nDrawer={}"
+                , pModal != nullptr, Popup.x, Popup.y, Anchor.x, Anchor.y, Editor.x, Editor.y, Viewport.x, Viewport.y, pHost ? pHost->m_Toaster.size() : 0, pHost ? pHost->m_Toaster.m_Raised : 0, DrawerText);
         }
     };
 

@@ -324,7 +324,7 @@ namespace xlevel
             m_Names.Init(Guid.m_Instance.m_Value);
 
             if (auto Err = m_Undo.Init({}, false); !Err.empty())
-                xeditor::NotifyError(std::format("Level session xundo Init failed: {}", Err));
+                xeditor::NotifyModal(std::format("Level session xundo Init failed: {}", Err));
             m_Document.Bind(m_CmdContext);
 
             m_Game.CreateWorld();
@@ -401,7 +401,7 @@ namespace xlevel
             m_pGameMgr->m_PrefabMgr.m_ProjectPath = m_ProjectPath;
             m_pGameMgr->m_SystemMgr.m_ProjectPath = m_ProjectPath;
             if (auto Err = m_pGameMgr->m_SystemMgr.Load(); Err)
-                xeditor::NotifyError(std::format("Failed to load System Registry order: {}", Err.getMessage()));
+                xeditor::NotifyToast(std::format("Failed to load System Registry order: {}", Err.getMessage()));
 
             m_EntityInspector.m_Settings.m_bRenderBackgroundDepth = false;
             m_EntityInspector.m_Settings.m_bRenderLeftBackground  = false;
@@ -535,7 +535,7 @@ namespace xlevel
             RegisterHostSystems(*m_pGameMgr);
             if (xlevel::RegisterGamePluginSystems(*m_pGameMgr, m_GamePlugin)) return;
 
-            xeditor::NotifyError(m_GamePlugin.m_LastStatus);
+            xeditor::NotifyToast(m_GamePlugin.m_LastStatus);
             m_Game.AbandonWorld();
             m_Game.CreateWorld();
             RegisterHostSystems(*m_pGameMgr);
@@ -551,7 +551,7 @@ namespace xlevel
             m_pGameMgr->m_PrefabMgr.m_ProjectPath = m_ProjectPath;
             m_pGameMgr->m_SystemMgr.m_ProjectPath = m_ProjectPath;
             if (auto Err = m_pGameMgr->m_SystemMgr.Load(); Err)
-                xeditor::NotifyError(std::format("Failed to load System Registry order: {}", Err.getMessage()));
+                xeditor::NotifyToast(std::format("Failed to load System Registry order: {}", Err.getMessage()));
         }
 
         void RestoreWorld(xlevel::persist_mode PersistMode) noexcept

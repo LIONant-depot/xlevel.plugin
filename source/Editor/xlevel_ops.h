@@ -30,7 +30,7 @@ namespace xlevel
         const xecs::level::guid Guid{ .m_Instance = LevelGuid.m_Instance };
         if (auto Err = GameMgr.m_LevelMgr.Load(Guid); Err)
         {
-            xeditor::NotifyError(std::format("Failed to load Level: {}", Err.getMessage()));
+            xeditor::NotifyToast(std::format("Failed to load Level: {}", Err.getMessage()));
             return;
         }
         State.m_CurrentLevel = Guid;
@@ -46,7 +46,7 @@ namespace xlevel
         {
             if (auto Err = GameMgr.m_LevelMgr.Activate(Guid); Err)
             {
-                xeditor::NotifyError(std::format("Failed to activate Level (load its scenes): {}", Err.getMessage()));
+                xeditor::NotifyToast(std::format("Failed to activate Level (load its scenes): {}", Err.getMessage()));
                 return;
             }
             for (auto& SceneGuid : pLevel->m_Scenes)

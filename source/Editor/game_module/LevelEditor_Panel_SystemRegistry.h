@@ -326,7 +326,7 @@ namespace xlevel
             if (bChanged && !State.isPlaying())
             {
                 if (auto Err = GameMgr.m_SystemMgr.Save(); Err)
-                    xeditor::NotifyError(std::format("Failed to save System Registry order: {}", Err.getMessage()));
+                    xeditor::NotifyToast(std::format("Failed to save System Registry order: {}", Err.getMessage()));
             }
         }
         ImGui::End();
