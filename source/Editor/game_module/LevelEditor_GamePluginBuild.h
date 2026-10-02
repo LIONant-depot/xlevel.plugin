@@ -8,6 +8,8 @@
 // (BuildGamePluginIfStale), which builds the generated script project (LevelEditor_GameModuleSources.h). Meant to be included via the umbrella (LevelEditor_GamePlugin.h) only, after
 // LevelEditor_GamePluginLog.h (LogGamePlugin).
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GameModuleSources.h"
+#include "dependencies/xlog/source/xlog_build.h"
+#include <optional>
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GameModuleEvents.h"
 
 namespace xlevel
@@ -125,7 +127,9 @@ namespace xlevel
         if (auto hJob = GameBuildJob()) TerminateJobObject(hJob, 1);
     }
 
-    inline int RunCmakeCommand( std::wstring CmdLine, const std::filesystem::path& WorkingDir ) noexcept
+    // pAdapter, when there is one, turns the output into structured diagnostics (a diagnostic with the lines that belong to it is one event); the raw line
+    // is still printed, as it always was. Without an adapter (no host) the line is just logged.
+    inline int RunCmakeCommand( std::wstring CmdLine, const std::filesystem::path& WorkingDir, xlog::build_output_adapter* pAdapter = nullptr ) noexcept
     {
         SECURITY_ATTRIBUTES PipeSa{ .nLength = sizeof(PipeSa), .bInheritHandle = TRUE };
         HANDLE ReadPipe = nullptr, WritePipe = nullptr;
@@ -176,7 +180,8 @@ namespace xlevel
                     if (Chunk[i] == '\n')
                     {
                         if (!LineBuffer.empty() && LineBuffer.back() == '\r') LineBuffer.pop_back();
-                        LogGamePlugin(LineBuffer);
+                        if (pAdapter) { std::printf("%s\n", LineBuffer.c_str()); std::fflush(stdout); pAdapter->Feed(LineBuffer); }
+                        else          LogGamePlugin(LineBuffer);
                         LineBuffer.clear();
                     }
                     else
@@ -185,7 +190,12 @@ namespace xlevel
                     }
                 }
             }
-            if (!LineBuffer.empty()) LogGamePlugin(LineBuffer);
+            if (!LineBuffer.empty())
+            {
+                if (pAdapter) { std::printf("%s\n", LineBuffer.c_str()); std::fflush(stdout); pAdapter->Feed(LineBuffer); }
+                else          LogGamePlugin(LineBuffer);
+            }
+            if (pAdapter) pAdapter->Finish();           // the block still pending is complete: the readers are done
         }
         CloseHandle(ReadPipe);
 
@@ -271,6 +281,21 @@ namespace xlevel
         // MSBUILDDISABLENODEREUSE forces that onto every node a build spawns; the /nodeReuse:false switch alone did not.
         SetEnvironmentVariableW(L"MSBUILDDISABLENODEREUSE", L"1");
 
+        // The whole build is ONE operation with an outcome: what a script reads to know "did the game build", and why not. Its output goes
+        // through the build adapter; the translation units MSBuild names as it compiles them are what a successful incremental build really checked.
+        // A full build (no DLL, or another configuration's) checks everything.
+        auto* pLogs = xlog::hub::current();
+        xlog::op_handle Op;
+        std::optional<xlog::build_output_adapter> Adapter;
+        if (pLogs)
+        {
+            Op = pLogs->Begin("game.build", { xlog::origin::type::Tool, "msbuild", 0 }
+                , { xlog::ref::type::File, P.m_Dll.string(), 0, 0, 0, 0 }, "Build Game.dll"
+                , std::format("Game.dll|{}|x64", std::filesystem::path(P.m_Config).string()));
+            Adapter.emplace(*pLogs, Op);
+        }
+        auto* pAdapter = Adapter ? &*Adapter : nullptr;
+
         // An explicit reconfigure before every build: `cmake --build`'s own automatic reconfigure does not reliably notice that
         // the generated CMakeLists.txt changed (a module was added or removed). It is cheap when nothing changed. The
         // generator is only given the first time, when the build directory is created.
@@ -279,10 +304,11 @@ namespace xlevel
 
         std::wstring Configure = std::format(L"cmake -S \"{}\" -B \"{}\"", P.m_Root.wstring(), P.m_BuildDir.wstring());
         if (!std::filesystem::exists(P.m_BuildDir / L"CMakeCache.txt", Ec)) Configure += ScriptProjectGeneratorArgs(P);
-        if (const auto ConfigureExit = RunCmakeCommand(Configure, P.m_Root); ConfigureExit != 0)
+        if (const auto ConfigureExit = RunCmakeCommand(Configure, P.m_Root, pAdapter); ConfigureExit != 0)
         {
-            Plugin.m_LastStatus = std::format("Game.dll: cmake reconfigure FAILED (exit={}) - see stdout for the error log", ConfigureExit);
+            Plugin.m_LastStatus = std::format("Game.dll: cmake reconfigure FAILED (exit={}) - see the Logs (LogProblems -Operation {})", ConfigureExit, Op.Id());
             LogGamePlugin(Plugin.m_LastStatus);
+            Op.Fail();
             return build_result::Failed;
         }
 
@@ -291,11 +317,12 @@ namespace xlevel
         if (const auto PchFile = P.m_BuildDir / L"CMakeFiles" / L"Game.dir" / L"cmake_pch.cxx"; std::filesystem::exists(PchFile, Ec))
             std::filesystem::last_write_time(PchFile, std::filesystem::file_time_type::clock::now(), Ec);
 
-        const auto BuildExit = RunCmakeCommand(std::format(L"cmake --build \"{}\" --target Game --config {} -- /nodeReuse:false", P.m_BuildDir.wstring(), P.m_Config), P.m_Root);
+        const auto BuildExit = RunCmakeCommand(std::format(L"cmake --build \"{}\" --target Game --config {} -- /nodeReuse:false", P.m_BuildDir.wstring(), P.m_Config), P.m_Root, pAdapter);
         if (BuildExit != 0)
         {
-            Plugin.m_LastStatus = std::format("Game.dll: BUILD FAILED (exit={}) - see stdout for the compiler's own error log", BuildExit);
+            Plugin.m_LastStatus = std::format("Game.dll: BUILD FAILED (exit={}) - see the Logs (LogProblems -Operation {})", BuildExit, Op.Id());
             LogGamePlugin(Plugin.m_LastStatus);
+            Op.Fail();
             return build_result::Failed; // the currently loaded generation is left completely untouched
         }
 
@@ -304,6 +331,8 @@ namespace xlevel
 
         Plugin.m_LastStatus = "Game.dll: rebuild succeeded";
         LogGamePlugin(Plugin.m_LastStatus);
+        Op.SetCoverage((bDllMissing || bWrongConfig) ? xlog::coverage_kind::Complete : xlog::coverage_kind::Subjects);
+        Op.Succeed();
         return build_result::Rebuilt;
     }
 
