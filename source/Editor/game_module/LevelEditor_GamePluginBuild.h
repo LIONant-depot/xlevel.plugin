@@ -71,6 +71,11 @@ namespace xlevel
         build_result            m_LastResult       = build_result::UpToDate;
         std::uint32_t           m_ResultSeq        = 0;
 
+        // The module crashed while registering (see GuardedModuleCall): it stays loaded - what it half registered still points into it - but
+        // none of its systems run, until the next reload swaps or unloads it.
+        bool                    m_bCrashed         = false;
+        bool                    m_bSimulateCrash   = false;      // diagnostic (SimulateModuleCrash): RegisterSystems of the module crashes on purpose
+
         bool isLoaded(void) const noexcept { return m_hModule != nullptr; }
     };
 

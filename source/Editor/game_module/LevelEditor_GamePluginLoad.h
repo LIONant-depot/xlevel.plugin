@@ -174,6 +174,29 @@ namespace xlevel
         return Result;
     }
 
+    // A call into the game module, under a structured-exception handler: a module that registers badly (a system that queries a component
+    // it never told the DLL about reads an unset bit id, for one) must not take the whole editor down with it. The call is plain function
+    // + context so this function holds no C++ objects (__try cannot live next to destructors).
+    inline bool RunGuarded( void (*pFn)(void*), void* pContext, unsigned long& Code ) noexcept
+    {
+        __try                                                                   { pFn(pContext); return true; }
+        __except( (Code = GetExceptionCode()) == EXCEPTION_BREAKPOINT ? EXCEPTION_CONTINUE_SEARCH : EXCEPTION_EXECUTE_HANDLER ) { return false; }
+    }
+
+    // Runs pFn(pContext) guarded. On a crash: says so in the log and in the status line, and flags the module as crashed (it is left
+    // loaded, see game_plugin_state::m_bCrashed). Returns false then.
+    inline bool GuardedModuleCall( game_plugin_state& Plugin, const char* pWhat, void (*pFn)(void*), void* pContext ) noexcept
+    {
+        unsigned long Code = 0;
+        if (RunGuarded(pFn, pContext, Code)) return true;
+
+        Plugin.m_bCrashed   = true;
+        Plugin.m_LastStatus = std::format("Game.dll crashed while registering {} ({}) - its systems are not running; fix the module and rebuild", pWhat
+            , Code == EXCEPTION_ACCESS_VIOLATION ? "access violation" : std::format("exception {:08X}", Code));
+        LogGamePlugin(Plugin.m_LastStatus);
+        return false;
+    }
+
     // Step 3: the actual registry-mutating half - calls the candidate's own
     // XecsPlugin_RegisterComponents (the FIRST of the two-call sequence xecs_plugin_api.h's own
     // comment requires: every RegisterComponents call, host's and the plugin's, must happen before
@@ -202,7 +225,15 @@ namespace xlevel
         Plugin.m_hModule       = Candidate.m_hModule;
         Plugin.m_LoadedDllPath = Candidate.m_LoadedPath;
         Plugin.m_Token         = { .m_Slot = 1, .m_Generation = Generation };
-        pRegisterComponents(GameMgr, Plugin.m_Token);
+        Plugin.m_bCrashed      = false;
+
+        struct call { xecs_plugin_pfn_register_components* m_pFn; xecs::game_mgr::instance* m_pGameMgr; xecs::plugin::token m_Token; } Call{ pRegisterComponents, &GameMgr, Plugin.m_Token };
+        const bool bRegistered = GuardedModuleCall(Plugin, "its components", [](void* p) noexcept { auto& C = *static_cast<call*>(p); C.m_pFn(*C.m_pGameMgr, C.m_Token); }, &Call);
+        if (!bRegistered)
+        {
+            Candidate = {};         // Plugin owns the module now (the next reload unloads it)
+            return false;
+        }
 
         Plugin.m_LastStatus = std::format("Game.dll: loaded generation {} ({})", Generation, std::filesystem::path(Candidate.m_LoadedPath).filename().string());
         Candidate = {}; // ownership transferred to Plugin - Discard must never also free what Plugin now owns
@@ -222,15 +253,23 @@ namespace xlevel
     // The SECOND call of the two-call sequence - only meaningful once every RegisterComponents
     // call (host's own, done by the caller, and the plugin's, done by
     // LoadGamePluginComponents above) has already happened. Without a plugin it only loads the engine DLLs' component display info.
-    inline void RegisterGamePluginSystems( xecs::game_mgr::instance& GameMgr, game_plugin_state& Plugin ) noexcept
+    // Returns false when the module crashed while registering: GameMgr then holds whatever it half registered, and the caller must
+    // throw that world away and make a fresh one (the module is flagged crashed, so a fresh one gets none of its systems).
+    inline bool RegisterGamePluginSystems( xecs::game_mgr::instance& GameMgr, game_plugin_state& Plugin ) noexcept
     {
-        if (Plugin.isLoaded())
+        bool bOk = true;
+        if (Plugin.isLoaded() && !Plugin.m_bCrashed)
             if (auto* pRegisterSystems = reinterpret_cast<xecs_plugin_pfn_register_systems*>(GetProcAddress(Plugin.m_hModule, XECS_PLUGIN_REGISTER_SYSTEMS_NAME)))
-                pRegisterSystems(GameMgr);
+            {
+                struct call { xecs_plugin_pfn_register_systems* m_pFn; xecs::game_mgr::instance* m_pGameMgr; } Call{ pRegisterSystems, &GameMgr };
+                if (Plugin.m_bSimulateCrash) bOk = GuardedModuleCall(Plugin, "its systems", [](void*) noexcept { *static_cast<volatile int*>(nullptr) = 0; }, nullptr);
+                else                         bOk = GuardedModuleCall(Plugin, "its systems", [](void* p) noexcept { auto& C = *static_cast<call*>(p); C.m_pFn(*C.m_pGameMgr); }, &Call);
+            }
 
         // The engine DLLs' components (Transform, Physics, ...) have categories and priorities too, so this runs even when
         // there is no Game.dll (a project without script modules).
         LoadGameComponentDisplayInfo(Plugin);
+        return bOk;
     }
 
     //---------------------------------------------------------------------------
@@ -250,8 +289,9 @@ namespace xlevel
         xecs::component::mgr::UnregisterPlugin(Plugin.m_Token);
 
         FreeLibrary(Plugin.m_hModule);
-        Plugin.m_hModule = nullptr;
-        Plugin.m_Token   = {};
+        Plugin.m_hModule  = nullptr;
+        Plugin.m_Token    = {};
+        Plugin.m_bCrashed = false;
 
         // The shadow copy (see game_plugin_state's own comment for why it exists) is safe to
         // delete now that nothing has it mapped - best-effort; a leftover file here would be
@@ -267,6 +307,22 @@ namespace xlevel
             std::filesystem::remove(LoadedDll.parent_path() / L"Game.pdb", Ec);
             Plugin.m_LoadedDllPath.clear();
         }
+    }
+
+    // The GameModuleStatus / SimulateModuleCrash commands (declared in xlevel_commands_workspace.h).
+    inline std::string GameModuleStatusText() noexcept
+    {
+        if (!g_pGamePlugin) return "GameModuleStatus: no game module support in this build";
+        return std::format("Loaded={}\nCrashed={}\n{}", g_pGamePlugin->isLoaded(), g_pGamePlugin->m_bCrashed, g_pGamePlugin->m_LastStatus);
+    }
+
+    inline std::string SimulateModuleCrash( const std::string& State ) noexcept
+    {
+        if (!g_pGamePlugin)                          return "SimulateModuleCrash: no game module support in this build";
+        if (State != "on" && State != "off")         return "SimulateModuleCrash: -State on|off is required";
+        g_pGamePlugin->m_bSimulateCrash = (State == "on");
+        if (State == "off") g_pGamePlugin->m_bCrashed = false;
+        return "SimulateModuleCrash: " + State;
     }
 
 } // namespace xlevel

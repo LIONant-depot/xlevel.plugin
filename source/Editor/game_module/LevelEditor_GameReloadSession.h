@@ -143,10 +143,13 @@ namespace xlevel
     //---------------------------------------------------------------------------
     inline void ReregisterAlreadyLoadedPlugin( xecs::game_mgr::instance& GameMgr, game_plugin_state& Plugin ) noexcept
     {
-        if (!Plugin.isLoaded()) return;
+        if (!Plugin.isLoaded() || Plugin.m_bCrashed) return;
 
         if (auto* pRegisterComponents = reinterpret_cast<xecs_plugin_pfn_register_components*>(GetProcAddress(Plugin.m_hModule, XECS_PLUGIN_REGISTER_COMPONENTS_NAME)))
-            pRegisterComponents(GameMgr, Plugin.m_Token);
+        {
+            struct call { xecs_plugin_pfn_register_components* m_pFn; xecs::game_mgr::instance* m_pGameMgr; xecs::plugin::token m_Token; } Call{ pRegisterComponents, &GameMgr, Plugin.m_Token };
+            GuardedModuleCall(Plugin, "its components", [](void* p) noexcept { auto& C = *static_cast<call*>(p); C.m_pFn(*C.m_pGameMgr, C.m_Token); }, &Call);
+        }
     }
 
     //---------------------------------------------------------------------------

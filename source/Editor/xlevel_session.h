@@ -393,8 +393,7 @@ namespace xlevel
                 Svc.bReady = true;
             }
 #endif
-            RegisterHostSystems(*m_pGameMgr);
-            xlevel::RegisterGamePluginSystems(*m_pGameMgr, m_GamePlugin);
+            RegisterWorldSystems();
 
             m_pGameMgr->m_SceneMgr.m_ProjectPath  = m_ProjectPath;
             m_pGameMgr->m_LevelMgr.m_ProjectPath  = m_ProjectPath;
@@ -528,11 +527,23 @@ namespace xlevel
         bool                isLoaded()  const noexcept override { return true; }   // a Level tool is always "loaded" - it may simply have nothing open yet
 
         // ---- World lifecycle (ported from LevelEditor_AppWorld.h's app:: methods) ----
+        // The host's systems and then the game module's. A module that crashes while registering must not take the editor down: its half
+        // built world is abandoned and replaced by one with the host's systems only (the module is flagged crashed, so it is skipped).
+        void RegisterWorldSystems() noexcept
+        {
+            RegisterHostSystems(*m_pGameMgr);
+            if (xlevel::RegisterGamePluginSystems(*m_pGameMgr, m_GamePlugin)) return;
+
+            xeditor::NotifyError(m_GamePlugin.m_LastStatus);
+            m_Game.AbandonWorld();
+            m_Game.CreateWorld();
+            RegisterHostSystems(*m_pGameMgr);
+        }
+
         void CreateWorld() noexcept
         {
             m_Game.CreateWorld();
-            RegisterHostSystems(*m_pGameMgr);
-            xlevel::RegisterGamePluginSystems(*m_pGameMgr, m_GamePlugin);
+            RegisterWorldSystems();
 
             m_pGameMgr->m_SceneMgr.m_ProjectPath  = m_ProjectPath;
             m_pGameMgr->m_LevelMgr.m_ProjectPath  = m_ProjectPath;

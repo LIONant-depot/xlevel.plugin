@@ -18,6 +18,13 @@
 #include "plugins/xlevel.plugin/source/Editor/xlevel_command_context.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_system_usage.h"
 
+// Defined with the game plugin state (game_module/LevelEditor_GamePluginLoad.h), which comes after this header.
+namespace xlevel
+{
+    inline std::string GameModuleStatusText() noexcept;
+    inline std::string SimulateModuleCrash( const std::string& State ) noexcept;
+}
+
 namespace xlevel::commands
 {
     //================================================================================================
@@ -348,6 +355,38 @@ namespace xlevel::commands
             if (auto Err = World().m_SystemMgr.Save(); Err) return "SaveSystemOrder: failed to write the file";
             return "SaveSystemOrder: saved";
         }
+    };
+
+    //================================================================================================
+    // What became of the game module (Game.dll): loaded or not, and whether it crashed while registering (see GuardedModuleCall).
+    //================================================================================================
+    struct game_module_status_cmd : level_query_command
+    {
+        game_module_status_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "GameModuleStatus", pDataBase) {}
+        const char* getCommandHelp() const noexcept override { return "The state of the game module (Game.dll): Loaded, Crashed (it crashed while registering and its systems are not running) and the status line. Usage: GameModuleStatus"; }
+        void RegisterArguments() noexcept override {}
+        std::string Query() noexcept override
+        {
+            return GameModuleStatusText();
+        }
+    };
+
+    //================================================================================================
+    // Diagnostic, for the smoke tests: makes the game module's RegisterSystems crash on purpose the next time a world registers its systems
+    // (Stop, a reload, a new Level session), the way a module with a bad system does, so the recovery can be tried without a bad module.
+    // "-State off" puts everything back, including the crashed flag, so the editor can go on being used.
+    //================================================================================================
+    struct simulate_module_crash_cmd : level_query_command
+    {
+        simulate_module_crash_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "SimulateModuleCrash", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Diagnostic: make the game module crash while it registers its systems the next time a world is made (on), or stop doing so and clear the crashed flag (off). Usage: SimulateModuleCrash -State on|off"; }
+        void RegisterArguments() noexcept override { m_hState = m_Parser.addOption("State", "on or off", true, 1); }
+        std::string Query() noexcept override
+        {
+            auto A = m_Parser.getOptionArgAs<std::string>(m_hState, 0);
+            return SimulateModuleCrash(std::holds_alternative<xerr>(A) ? std::string{} : std::get<std::string>(A));
+        }
+        xcmdline::parser::handle m_hState;
     };
 }
 
