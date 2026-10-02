@@ -256,7 +256,97 @@ namespace xlevel::commands
                                    S.m_bUpdate ? std::format("update #{}", S.m_Order) : std::string("notifier"), S.m_bEnabled ? "" : ", DISABLED");
                 Out += xscene::system_usage::DescribeDeclaration(*S.m_pInfo, "    ");
             }
+            if (!Out.empty()) Out += HierarchyText(World());
             return Out.empty() ? std::string("No systems registered.") : Out;
+        }
+
+        // Who runs when: the update systems that run at the top level in order, and under each connector of a system the systems connected to it.
+        static void TreeText(xecs::game_mgr::instance& GameMgr, const std::vector<xecs::system::update_system_row>& Rows, xecs::system::type::guid Parent, int Connector, int Depth, std::string& Out) noexcept
+        {
+            for (auto& Row : Rows)
+            {
+                if (Row.m_ParentGuid != Parent || (!Parent.empty() && Row.m_ParentConnector != Connector)) continue;
+                Out += std::format("{:{}}{}{}\n", "", Depth * 2, Row.m_pName, Row.m_bEnabled ? "" : "  (DISABLED)");
+                int c = 0;
+                for (auto& C : GameMgr.m_SystemMgr.GetConnectors(Row.m_Guid))
+                {
+                    Out += std::format("{:{}}[{}] {}\n", "", Depth * 2 + 2, C.m_pName, C.m_pDescription);
+                    TreeText(GameMgr, Rows, Row.m_Guid, c, Depth + 2, Out);
+                    ++c;
+                }
+            }
+        }
+        static std::string HierarchyText(xecs::game_mgr::instance& GameMgr) noexcept
+        {
+            std::string Out = "\nHierarchy (top level in order; a connector is shown in brackets with the systems connected to it):\n";
+            TreeText(GameMgr, GameMgr.m_SystemMgr.GetUpdateSystemRows(), xecs::system::type::guid{}, -1, 1, Out);
+            return Out;
+        }
+    };
+
+    //================================================================================================
+    // SetSystemParent - connects an update system to a connector of another (or back to the top level), SaveSystemOrder writes the
+    // order and the connections to Project.config\SystemOrder.config.txt (what the System Registry's Save does). View/config state: not undoable.
+    //================================================================================================
+    struct set_system_parent_cmd : level_query_command
+    {
+        set_system_parent_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "SetSystemParent", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Connects an update system to a connector of another system, or back to the top level. Usage: SetSystemParent -System name [-Parent name -Connector name]"; }
+        void RegisterArguments() noexcept override
+        {
+            m_hSystem    = m_Parser.addOption("System",    "The system to connect (its name, as ListSystems shows it)", true,  1);
+            m_hParent    = m_Parser.addOption("Parent",    "The system that has the connector; leave out for the top level", false, 1);
+            m_hConnector = m_Parser.addOption("Connector", "The name of the connector of the parent",                        false, 1);
+        }
+        std::string Query() noexcept override
+        {
+            auto& GameMgr = World();
+            const auto Rows = GameMgr.m_SystemMgr.GetUpdateSystemRows();
+            auto Find = [&](const std::string& Name) -> const xecs::system::update_system_row*
+            {
+                for (auto& R : Rows) if (Name == R.m_pName) return &R;
+                return nullptr;
+            };
+
+            std::string Child, Parent, Connector;
+            if (!Arg(m_hSystem, Child)) return "SetSystemParent: -System is required";
+            const auto* pChild = Find(Child);
+            if (!pChild) return std::format("SetSystemParent: no update system called '{}'", Child);
+
+            if (!Arg(m_hParent, Parent))
+            {
+                GameMgr.m_SystemMgr.SetUpdateSystemParent(pChild->m_Guid, xecs::system::type::guid{}, -1);
+                return "SetSystemParent: done";
+            }
+            const auto* pParent = Find(Parent);
+            if (!pParent) return std::format("SetSystemParent: no update system called '{}'", Parent);
+            Arg(m_hConnector, Connector);
+
+            int Index = -1, c = 0;
+            for (auto& C : GameMgr.m_SystemMgr.GetConnectors(pParent->m_Guid)) { if (Connector == C.m_pName) Index = c; ++c; }
+            if (Index < 0) return std::format("SetSystemParent: '{}' has no connector called '{}'", Parent, Connector);
+            if (!GameMgr.m_SystemMgr.SetUpdateSystemParent(pChild->m_Guid, pParent->m_Guid, Index)) return "SetSystemParent: refused (a system cannot be connected under itself)";
+            return "SetSystemParent: done";
+        }
+        bool Arg(xcmdline::parser::handle Handle, std::string& Out) noexcept
+        {
+            auto A = m_Parser.getOptionArgAs<std::string>(Handle, 0);
+            if (std::holds_alternative<xerr>(A)) return false;
+            Out = std::get<std::string>(A);
+            return true;
+        }
+        xcmdline::parser::handle m_hSystem, m_hParent, m_hConnector;
+    };
+
+    struct save_system_order_cmd : level_query_command
+    {
+        save_system_order_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "SaveSystemOrder", pDataBase) {}
+        const char* getCommandHelp() const noexcept override { return "Saves the order of the update systems and what is connected to what (Project.config/SystemOrder.config.txt). Usage: SaveSystemOrder"; }
+        void RegisterArguments() noexcept override {}
+        std::string Query() noexcept override
+        {
+            if (auto Err = World().m_SystemMgr.Save(); Err) return "SaveSystemOrder: failed to write the file";
+            return "SaveSystemOrder: saved";
         }
     };
 }

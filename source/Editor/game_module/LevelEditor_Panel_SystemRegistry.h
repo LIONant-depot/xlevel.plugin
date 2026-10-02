@@ -110,7 +110,8 @@ namespace xlevel
             // the ambient value) - the gap between the checkbox and the name text is column0's own
             // trailing padding PLUS column1's own leading padding, so both matter here.
             ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(2.0f, ImGui::GetStyle().CellPadding.y));
-            if (ImGui::BeginTable("SystemRegistry", 2, ImGuiTableFlags_RowBg))
+            ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 8.0f);     // the same as the Level tree: see xlevel_panel_level_tree.h
+            if (ImGui::BeginTable("SystemRegistry", 3, ImGuiTableFlags_RowBg))
             {
                 // Just wide enough for the checkbox itself + a hair of breathing room - not an
                 // arbitrary wide column. Direct user comparison against Unity's own tightly-grouped
@@ -118,100 +119,174 @@ namespace xlevel
                 // directly, not GetFrameHeight() - the checkbox itself is drawn with FramePadding
                 // pushed to (0,0) below, so using the ambient (unpushed) FrameHeight here would size
                 // this column for a bigger box than the one actually drawn.
-                ImGui::TableSetupColumn("Enabled", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() + 1.0f);
-                ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthStretch);
+                // Only the Name column indents (the tree lives there): a table's indent is enabled for column 0 alone unless said otherwise.
+                ImGui::TableSetupColumn("##Grip",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_IndentDisable, 8.0f);
+                ImGui::TableSetupColumn("Enabled", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_IndentDisable, ImGui::GetFontSize() + 1.0f);
+                ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_IndentEnable);
 
-                for (std::size_t i = 0; i < Rows.size(); ++i)
+                // A dragged system dropped on the system Target becomes its sibling and takes its place.
+                auto DropOnSystem = [&](xecs::system::type::guid Source, const xecs::system::update_system_row& Target) noexcept
                 {
-                    auto& Row = Rows[i];
-                    ImGui::PushID(static_cast<int>(i));
-                    ImGui::TableNextRow();
+                    auto& Mgr = GameMgr.m_SystemMgr;
+                    if (Source == Target.m_Guid) return;
+                    const auto Before = Mgr.GetUpdateSystemRows();
+                    const xecs::system::update_system_row* pSrc = nullptr;
+                    for (auto& R : Before) if (R.m_Guid == Source) pSrc = &R;
+                    if (!pSrc) return;
+                    if (pSrc->m_ParentGuid != Target.m_ParentGuid || pSrc->m_ParentConnector != Target.m_ParentConnector)
+                        if (!Mgr.SetUpdateSystemParent(Source, Target.m_ParentGuid, Target.m_ParentConnector)) return;
+                    // the order among the systems of that connector (or of the top level): one step at a time toward the target
+                    for (int Guard = 0; Guard < 64; ++Guard)
+                    {
+                        const auto Now = Mgr.GetUpdateSystemRows();
+                        std::vector<xecs::system::type::guid> Siblings;
+                        for (auto& R : Now) if (R.m_ParentGuid == Target.m_ParentGuid && R.m_ParentConnector == Target.m_ParentConnector) Siblings.push_back(R.m_Guid);
+                        const auto IndexOf = [&](xecs::system::type::guid G) { return static_cast<int>(std::find(Siblings.begin(), Siblings.end(), G) - Siblings.begin()); };
+                        const int is = IndexOf(Source), it = IndexOf(Target.m_Guid);
+                        if (is == it || is >= static_cast<int>(Siblings.size()) || it >= static_cast<int>(Siblings.size())) break;
+                        Mgr.MoveUpdateSystem(Source, it > is ? 1 : -1);
+                    }
+                };
+                auto Payload = [&]() noexcept -> std::optional<xecs::system::type::guid>
+                {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LevelEditor_SYSTEM_REORDER"))
+                    {
+                        IM_ASSERT(payload->DataSize == sizeof(xecs::system::type::guid));
+                        return *reinterpret_cast<const xecs::system::type::guid*>(payload->Data);
+                    }
+                    return std::nullopt;
+                };
 
+                // The rows as a tree: the update systems that run at the top level in order; a system with connectors is a node that opens to its
+                // The icons come from the editor's icon font (Segoe MDL2 Assets), as the Level tree's do: a gear for a system, a link for a connector
+                // (where other systems link in). The colors are the theme's: nothing here picks its own.
+                auto Glyph = [](unsigned CodePoint) noexcept
+                {
+                    std::string s;
+                    s += static_cast<char>(0xE0 | (CodePoint >> 12));
+                    s += static_cast<char>(0x80 | ((CodePoint >> 6) & 0x3F));
+                    s += static_cast<char>(0x80 | (CodePoint & 0x3F));
+                    return s;
+                };
+                // The drag handle: two columns of three dots in the first cell. The whole row drags; this only says that it does.
+                auto Grip = []() noexcept
+                {
                     ImGui::TableSetColumnIndex(0);
-                    bool bEnabled = Row.m_bEnabled;
-                    // A checkbox's box is FontSize+FramePadding.y*2 square - against LevelEditor_Theme.h's
-                    // larger 17px UI font, the global FramePadding made it read as noticeably heavier/
-                    // chunkier than the row's own text (direct user feedback: "buttons disproportional
-                    // to the font" - "the button", the box itself, not just its tick). Tightened
-                    // locally rather than shrinking FramePadding globally, which would cramp every
-                    // other framed widget in the app. UnityCheckbox (not ImGui::Checkbox) for the tick
-                    // itself - its size/thickness ratio is hardcoded inside ImGui with no style-var
-                    // override, so at any box size it drew a noticeably bolder mark than Unity's own
-                    // delicate tick (direct user comparison).
-                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-                    if (level_editor::theme::UnityCheckbox("##Enabled", &bEnabled))
-                    {
-                        GameMgr.m_SystemMgr.SetUpdateSystemEnabled(Row.m_Guid, bEnabled);
-                        bChanged = true;
-                    }
-                    ImGui::PopStyleVar();
+                    const ImVec2 P = ImGui::GetCursorScreenPos();
+                    const float  H = ImGui::GetFontSize();
+                    const ImU32  Col = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                    for (int y = 0; y < 3; ++y) for (int x = 0; x < 2; ++x)
+                        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(P.x + 1.0f + x * 3.0f, P.y + H * 0.25f + y * 3.5f), ImVec2(P.x + 2.5f + x * 3.0f, P.y + H * 0.25f + y * 3.5f + 1.5f), Col);
+                };
+                constexpr unsigned kSystemIcon    = 0xE713;
+                constexpr unsigned kConnectorIcon = 0xE71B;    // Link: the same glyph the Level tree gives its Dependencies
 
-                    // ONE real, visible item serves as BOTH the drag source and the drop target -
-                    // an earlier attempt used a SEPARATE invisible full-row Selectable as the drop
-                    // target alongside a plain Dummy as the drag source, overlapping it; even with
-                    // SetNextItemAllowOverlap that didn't reliably work (confirmed live - dragging
-                    // stopped registering at all once the second item was layered on top). Simplest
-                    // fix, per this project's own established lesson
-                    // (documentation/ImGui/overlapping_invisible_buttons.md): don't have two competing
-                    // interactive items sharing the same screen space in the first place. The grip
-                    // glyph used to be a SEPARATE item drawn via ImDrawList before this Selectable -
-                    // no matter how the cursor position was juggled, that meant a drag could only ever
-                    // start with the press landing exactly over the icon's own tiny rect, not the
-                    // Selectable's (confirmed live). Folding it into the SAME label string (direct
-                    // user fix suggestion) makes the icon part of this ONE Selectable's own hit-rect,
-                    // so a drag can start from anywhere across the whole row, icon included. Plain
-                    // ASCII ":: " rather than a specific icon-font codepoint, to avoid any
-                    // tofu/unmapped-glyph risk.
-                    ImGui::TableSetColumnIndex(1);
-                    if (!bEnabled) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                    const std::string Label      = std::string(":: ") + (Row.m_pName ? Row.m_pName : "(unnamed system)");
-                    // An explicit, precomputed width - NOT the "-1 = auto-fill" sentinel, which does
-                    // not compute correctly for a Selectable inside a table cell (confirmed live: the
-                    // label rendered clipped down to a single glyph). Matches OnEntityReferenceRender's
-                    // own already-proven pattern elsewhere in this file (GetContentRegionAvail().x
-                    // computed explicitly, not -1).
-                    const float AvailWidth = ImGui::GetContentRegionAvail().x;
-                    ImGui::Selectable(Label.c_str(), false, ImGuiSelectableFlags_None, ImVec2(AvailWidth, 0.0f));
-                    if (!bEnabled) ImGui::PopStyleColor();
-                    // Rows is index-aligned with m_UpdaterSystems (see GetUpdateSystemRows).
-                    if (ImGui::IsItemHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left) && i < GameMgr.m_SystemMgr.m_UpdaterSystems.size())
-                        RenderSystemAccessTooltip(*GameMgr.m_SystemMgr.m_UpdaterSystems[i].first
-                            , std::format("{}  (runs #{})", Row.m_pName ? Row.m_pName : "(unnamed system)", i).c_str());
 
-                    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
-                    {
-                        ImGui::SetDragDropPayload("LevelEditor_SYSTEM_REORDER", &Row.m_Guid, sizeof(Row.m_Guid));
-                        ImGui::TextUnformatted(Row.m_pName ? Row.m_pName : "(unnamed system)");
-                        ImGui::EndDragDropSource();
-                    }
 
-                    if (ImGui::BeginDragDropTarget())
+                // The rows as a tree: the update systems that run at the top level in order; a system with connectors is a node that opens to its
+                // connectors (the places where other systems connect, named by the system), and a connector is a node that opens to the systems
+                // connected to it.
+                auto DrawSystems = [&](auto&& Self, xecs::system::type::guid Parent, int Connector) noexcept -> void
+                {
+                    for (std::size_t r = 0; r < Rows.size(); ++r)
                     {
-                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LevelEditor_SYSTEM_REORDER"))
+                        if (Rows[r].m_ParentGuid != Parent || (!Parent.empty() && Rows[r].m_ParentConnector != Connector)) continue;
+                        const auto  Row = Rows[r];                                  // a copy: a drop below changes the rows
+                        const auto  Connectors = GameMgr.m_SystemMgr.GetConnectors(Row.m_Guid);
+                        const std::size_t i = r;                                    // Rows is index-aligned with m_UpdaterSystems (see GetUpdateSystemRows)
+
+                        ImGui::PushID(static_cast<int>(Row.m_Guid.m_Value & 0x7FFFFFFF));
+                        ImGui::TableNextRow();
+
+                        Grip();
+                        ImGui::TableSetColumnIndex(1);
+                        bool bEnabled = Row.m_bEnabled;
+                        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
+                        if (level_editor::theme::UnityCheckbox("##Enabled", &bEnabled))
                         {
-                            IM_ASSERT(payload->DataSize == sizeof(xecs::system::type::guid));
-                            const auto SourceGuid = *reinterpret_cast<const xecs::system::type::guid*>(payload->Data);
-
-                            int SourceIndex = -1;
-                            for (std::size_t k = 0; k < Rows.size(); ++k)
-                                if (Rows[k].m_Guid == SourceGuid) { SourceIndex = static_cast<int>(k); break; }
-
-                            if (SourceIndex >= 0 && SourceIndex != static_cast<int>(i))
-                            {
-                                const int Delta = (static_cast<int>(i) > SourceIndex) ? 1 : -1;
-                                for (int Step = SourceIndex; Step != static_cast<int>(i); Step += Delta)
-                                    GameMgr.m_SystemMgr.MoveUpdateSystem(SourceGuid, Delta);
-                                bChanged = true;
-                            }
+                            GameMgr.m_SystemMgr.SetUpdateSystemEnabled(Row.m_Guid, bEnabled);
+                            bChanged = true;
                         }
-                        ImGui::EndDragDropTarget();
-                    }
+                        ImGui::PopStyleVar();
 
-                    ImGui::PopID();
-                }
+                        // ONE real, visible item is both the drag source and the drop target (two overlapping interactive items did not work: see
+                        // documentation/ImGui/overlapping_invisible_buttons.md): the node itself, which spans the row; the arrow opens it.
+                        ImGui::TableSetColumnIndex(2);
+                        if (!bEnabled) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                        const bool bOpen = ImGui::TreeNodeEx(std::format("{} {}", Glyph(kSystemIcon), Row.m_pName ? Row.m_pName : "(unnamed system)").c_str()
+                            , ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen
+                            | (Connectors.empty() ? ImGuiTreeNodeFlags_Leaf : 0));
+                        if (!bEnabled) ImGui::PopStyleColor();
+                        if (ImGui::IsItemHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left) && i < GameMgr.m_SystemMgr.m_UpdaterSystems.size())
+                            RenderSystemAccessTooltip(*GameMgr.m_SystemMgr.m_UpdaterSystems[i].first
+                                , std::format("{}  (runs #{})", Row.m_pName ? Row.m_pName : "(unnamed system)", i).c_str());
+
+                        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+                        {
+                            ImGui::SetDragDropPayload("LevelEditor_SYSTEM_REORDER", &Row.m_Guid, sizeof(Row.m_Guid));
+                            ImGui::TextUnformatted(Row.m_pName ? Row.m_pName : "(unnamed system)");
+                            ImGui::EndDragDropSource();
+                        }
+                        if (ImGui::BeginDragDropTarget())
+                        {
+                            if (auto Source = Payload()) { DropOnSystem(*Source, Row); bChanged = true; }
+                            ImGui::EndDragDropTarget();
+                        }
+
+                        if (bOpen)
+                        {
+                            for (int c = 0; c < static_cast<int>(Connectors.size()); ++c)
+                            {
+                                bool bHasChildren = false;
+                                for (auto& Other : Rows) if (Other.m_ParentGuid == Row.m_Guid && Other.m_ParentConnector == c) { bHasChildren = true; break; }
+
+                                ImGui::PushID(c);
+                                ImGui::TableNextRow();
+                                ImGui::TableSetColumnIndex(2);
+                                const bool bConnectorOpen = ImGui::TreeNodeEx(std::format("{} {}", Glyph(kConnectorIcon), Connectors[c].m_pName).c_str()
+                                    , ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen
+                                    | (bHasChildren ? 0 : ImGuiTreeNodeFlags_Leaf));
+                                if (ImGui::IsItemHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+                                {
+                                    ImGui::BeginTooltip();
+                                    ImGui::TextUnformatted(std::format("{} - {}", Row.m_pName, Connectors[c].m_pName).c_str());
+                                    ImGui::Separator();
+                                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                                    ImGui::TextUnformatted(Connectors[c].m_pDescription);
+                                    ImGui::PopTextWrapPos();
+                                    ImGui::EndTooltip();
+                                }
+                                if (ImGui::BeginDragDropTarget())                  // dropping a system on a connector connects it
+                                {
+                                    if (auto Source = Payload())
+                                        if (GameMgr.m_SystemMgr.SetUpdateSystemParent(*Source, Row.m_Guid, c)) bChanged = true;
+                                    ImGui::EndDragDropTarget();
+                                }
+                                if (bConnectorOpen)
+                                {
+                                    Self(Self, Row.m_Guid, c);
+                                    ImGui::TreePop();
+                                }
+                                ImGui::PopID();
+                            }
+                            ImGui::TreePop();
+                        }
+                        ImGui::PopID();
+                    }
+                };
+                DrawSystems(DrawSystems, xecs::system::type::guid{}, -1);
                 ImGui::EndTable();
             }
-            ImGui::PopStyleVar(); // matches the CellPadding push above BeginTable - unconditional, since BeginTable can return false
+            ImGui::PopStyleVar(2); // matches the CellPadding + IndentSpacing pushes above BeginTable - unconditional, since BeginTable can return false
+
+            // Dropping a system here runs it at the top level again (last), in the order of the frame.
+            ImGui::Selectable("(drop a system here to run it at the top level)", false, ImGuiSelectableFlags_None, ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LevelEditor_SYSTEM_REORDER"))
+                    if (GameMgr.m_SystemMgr.SetUpdateSystemParent(*reinterpret_cast<const xecs::system::type::guid*>(payload->Data), xecs::system::type::guid{}, -1)) bChanged = true;
+                ImGui::EndDragDropTarget();
+            }
 
             ImGui::EndChild();
 

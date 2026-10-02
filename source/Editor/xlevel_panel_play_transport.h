@@ -72,16 +72,21 @@ namespace xlevel
             auto& Scale = Ed.m_pGame->m_Time.m_TimeScale;
             ImGui::SameLine(std::max(0.0f, PairX - SliderW - ImGui::GetStyle().ItemSpacing.x * 2.0f));
             ImGui::SetNextItemWidth(SliderW);
-            if (ImGui::SliderFloat("##TimeScale", &Scale, Snaps.front(), Snaps.back(), "%.2fx", ImGuiSliderFlags_AlwaysClamp))
-                Scale = xlioncore::game_time::NearestScaleStep(Scale);                      // no smooth values: always one of the stops
+            // An integer slider over the stops, as the animation editor's playback speed is: the grab can only sit on a stop and the number is
+            // always that stop, never something in between.
+            constexpr int N = static_cast<int>(Snaps.size());
+            int Stop = 0;
+            for (int i = 0; i < N; ++i) if (Snaps[i] == Scale) Stop = i;
+            if (ImGui::SliderInt("##TimeScale", &Stop, 0, N - 1, std::format("{}x", Snaps[Stop]).c_str())) Scale = Snaps[Stop];
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) Scale = 1.0f;
-            if (Layout.m_bTooltips && ImGui::IsItemHovered()) xeditor::hint::Text("Speed of the game: %.2fx  (0.25 0.5 0.75 1 1.5 2 3, right-click for 1x)", Scale);
-            { // the snaps, as small marks under the slider
+            if (Layout.m_bTooltips && ImGui::IsItemHovered()) xeditor::hint::Text("Speed of the game: %gx  (0.25 0.5 0.75 1 1.5 2 3, right-click for 1x)", Scale);
+            { // a small mark for every stop, under the slider
                 const ImVec2 Min = ImGui::GetItemRectMin(), Max = ImGui::GetItemRectMax();
-                const float  Grab = ImGui::GetStyle().GrabMinSize;
-                for (float Snap : Snaps)
+                const float  Pad = ImGui::GetStyle().FramePadding.x;
+                const float  Grab = std::max((Max.x - Min.x - Pad * 2.0f) / N, ImGui::GetStyle().GrabMinSize);      // ImGui's own grab size for an integer slider
+                for (int i = 0; i < N; ++i)
                 {
-                    const float X = Min.x + Grab * 0.5f + (Max.x - Min.x - Grab) * ((Snap - Snaps.front()) / (Snaps.back() - Snaps.front()));
+                    const float X = Min.x + Pad + Grab * 0.5f + (Max.x - Min.x - Pad * 2.0f - Grab) * (static_cast<float>(i) / (N - 1));
                     ImGui::GetWindowDrawList()->AddLine(ImVec2(X, Max.y - 3.0f), ImVec2(X, Max.y), IM_COL32(200, 200, 200, 160));
                 }
             }
