@@ -415,6 +415,22 @@ namespace xlevel::commands
         xcmdline::parser::handle m_hMessage, m_hStyle;
     };
 
+    // Diagnostic, for the smoke tests: the process dies of an access violation (the crash handler writes its record, as for a real one), so the Logs' importer can be shown a confirmed crash.
+    struct simulate_crash_cmd : level_query_command
+    {
+        simulate_crash_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "SimulateCrash", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Diagnostic: crashes the process on purpose (an access violation), to test crash recovery. Usage: SimulateCrash -Confirm true"; }
+        void RegisterArguments() noexcept override { m_hConfirm = m_Parser.addOption("Confirm", "true: yes, really crash", true, 1); }
+        std::string Query() noexcept override
+        {
+            auto C = m_Parser.getOptionArgAs<std::string>(m_hConfirm, 0);
+            if (std::holds_alternative<xerr>(C) || std::get<std::string>(C) != "true") return "SimulateCrash: -Confirm true is required";
+            *static_cast<volatile int*>(nullptr) = 0;
+            return "SimulateCrash: survived";
+        }
+        xcmdline::parser::handle m_hConfirm;
+    };
+
     // Diagnostic, for the smoke tests: hands a line to the xGPU adapter exactly as xGPU's own callback would (the line is base64: Vulkan's messages have brackets and quotes),
     // so the adapter's parsing (code, title, where) is tested without needing a real validation error.
     struct simulate_gpu_message_cmd : level_query_command

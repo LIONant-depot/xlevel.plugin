@@ -455,6 +455,14 @@ namespace xlevel
             m_GamePlugin.m_Events.m_OnAfterReload.Register<&session::AfterReload>(*this);
 
             xlevel::g_pGamePlugin = &m_GamePlugin;
+            if (auto* pLogs = xlog::hub::current())          // LogVerify on a build problem: build again (an up-to-date module is answered at once; the evidence decides what it verifies)
+                pLogs->SetRecheck("game.build", [](const xlog::problem&) -> std::string
+                {
+                    if (!xlevel::g_pGamePlugin) return "this build has no game module";
+                    if (xlevel::g_pGamePlugin->m_bBuilding) return "a build is already running; its result will say";
+                    xlevel::StartGameReload(*xlevel::g_pGamePlugin);
+                    return {};
+                });
 
             // Registration: lets xlevel::TryGateLevelMutation (the write-lock gate wired as EditorHost.m_OnBeforeEdit) and the
             // commands that act on "the Level the user is working on" reach this editor. The newest real Level becomes the
