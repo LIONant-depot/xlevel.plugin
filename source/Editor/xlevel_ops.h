@@ -35,6 +35,7 @@ namespace xlevel
         }
         State.m_CurrentLevel = Guid;
         State.m_bLevelEditorOpen = true;
+        State.m_bExpandFirstScene = true;                      // the Level tree shows its first Scene expanded (once; a person may collapse it)
 
         // Every scene that's part of a Level is loaded automatically the moment the Level itself
         // opens - direct user request ("Scenes should always be loaded if they are part of the

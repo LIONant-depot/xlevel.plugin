@@ -11,6 +11,11 @@ namespace xlevel
 
         std::string m_TreeSearchString;
 
+        // The Scene rows of the Level tree that are expanded right now (kept by the tree as it draws): the first Scene of a Level
+        // opens by itself when the Level does, and a person can collapse it. ListScenes -Tree true reports it.
+        std::vector<xecs::scene::guid> m_TreeExpandedScenes;
+        bool                           m_bExpandFirstScene = false; // set by every load of a Level (xlevel::OpenLevel): the tree expands the first Scene once, when it is open
+
         // Scenes another Level editor just saved while this one has them open (read-only here, since the other one was
         // editing them): reloaded from disk at the next clean point of the frame, so this editor never works on a stale copy.
         std::vector<xecs::scene::guid> m_ScenesToReload;

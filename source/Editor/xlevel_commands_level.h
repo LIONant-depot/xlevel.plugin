@@ -193,6 +193,7 @@ namespace xlevel::commands
         void RegisterArguments() noexcept override
         {
             m_hLevel = m_Parser.addOption("Level", "Level instance guid, 16 hex digits (default: the currently open level)", false, 1);
+            m_hTree  = m_Parser.addOption("Tree", "true: also say whether the Level tree shows each Scene expanded or collapsed", false, 1);
         }
 
         std::string Query() noexcept override
@@ -209,15 +210,19 @@ namespace xlevel::commands
 
             const auto Names = BuildAssetNameMap(xecs::scene::type_guid_v);
             std::string Out;
+            const auto TreeArg = m_Parser.getOptionArgAs<std::string>(m_hTree, 0);
+            const bool bTree = !std::holds_alternative<xerr>(TreeArg) && std::get<std::string>(TreeArg) == "true";
             for (auto& SceneGuid : pLevel->m_Scenes)
             {
                 auto It = Names.find(SceneGuid.m_Instance.m_Value);
-                Out += std::format("{}  {}\n", xscene::commands::FormatSceneGuid(SceneGuid), It != Names.end() ? It->second : "(unnamed)");
+                Out += std::format("{}  {}", xscene::commands::FormatSceneGuid(SceneGuid), It != Names.end() ? It->second : "(unnamed)");
+                if (bTree) Out += std::find(State.m_TreeExpandedScenes.begin(), State.m_TreeExpandedScenes.end(), SceneGuid) != State.m_TreeExpandedScenes.end() ? "  tree=expanded" : "  tree=collapsed";
+                Out += '\n';
             }
             return Out;
         }
 
-        xcmdline::parser::handle m_hLevel;
+        xcmdline::parser::handle m_hLevel, m_hTree;
     };
 
     //================================================================================================

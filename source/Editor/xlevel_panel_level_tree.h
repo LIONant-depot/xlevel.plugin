@@ -414,6 +414,7 @@ namespace xlevel
                     // neutralizes ImGui's own indent-into-column-0 table quirk, see that helper's own
                     // comment.
                     RenderLevelTreeSourceControlBadgeColumn(xresource::full_guid{ State.m_CurrentLevel.m_Instance, State.m_CurrentLevel.m_Type });
+                    if (!bLevelOpen) State.m_TreeExpandedScenes.clear();               // its Scene rows are not drawn: none of them is showing expanded
 
                     if (bLevelOpen)
                     {
@@ -446,7 +447,23 @@ namespace xlevel
                                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.35f, 0.35f, 0.35f, 1.0f)); // ~0x59
                                 ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.40f, 0.40f, 0.40f, 1.0f)); // ~0x66
                             }
+                            // A Level opens with its first Scene expanded: the load of the Level sets the flag, and it is used up here once that Scene is open (a Scene that is
+                            // not loaded is not expanded: the row would just load it), so a person who collapses it afterwards is not argued with.
+                            if (iScene == 0 && State.m_bExpandFirstScene && bIsOpenScene)
+                            {
+                                State.m_bExpandFirstScene = false;
+                                ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+                            }
+                            // A Scene that was showing expanded and is no longer open (CloseScene, a reload) collapses: "expanded" means "open" below, so left expanded it would be loaded again at once.
+                            if (!bIsOpenScene && std::find(State.m_TreeExpandedScenes.begin(), State.m_TreeExpandedScenes.end(), SceneGuid) != State.m_TreeExpandedScenes.end())
+                                ImGui::SetNextItemOpen(false, ImGuiCond_Always);
                             const bool bSceneExpanded = ImGui::TreeNodeEx(SceneLabelWithIcon.c_str(), ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth | (bIsOpenScene ? ImGuiTreeNodeFlags_Selected : 0));
+                            {
+                                auto& Expanded = State.m_TreeExpandedScenes;
+                                const auto It = std::find(Expanded.begin(), Expanded.end(), SceneGuid);
+                                if (bSceneExpanded && It == Expanded.end()) Expanded.push_back(SceneGuid);
+                                else if (!bSceneExpanded && It != Expanded.end()) Expanded.erase(It);
+                            }
                             if (bIsOpenScene)
                                 ImGui::PopStyleColor(3);
 
