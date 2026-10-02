@@ -372,6 +372,22 @@ namespace xlevel::commands
     };
 
     //================================================================================================
+    // The modifier keys as the UI sees them (ImGui's io, which the keyboard window and every shortcut read), so a script can tell that a
+    // key press made it all the way from the window's messages through xGPU's keyboard to ImGui.
+    //================================================================================================
+    struct input_state_cmd : level_query_command
+    {
+        input_state_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "InputState", pDataBase) {}
+        const char* getCommandHelp() const noexcept override { return "The modifier keys as the UI sees them: Ctrl, Shift and Alt, each true or false. Usage: InputState"; }
+        void RegisterArguments() noexcept override {}
+        std::string Query() noexcept override
+        {
+            const auto& io = ImGui::GetIO();
+            return std::format("Ctrl={}\nShift={}\nAlt={}", io.KeyCtrl, io.KeyShift, io.KeyAlt);
+        }
+    };
+
+    //================================================================================================
     // Diagnostic, for the smoke tests: makes the game module's RegisterSystems crash on purpose the next time a world registers its systems
     // (Stop, a reload, a new Level session), the way a module with a bad system does, so the recovery can be tried without a bad module.
     // "-State off" puts everything back, including the crashed flag, so the editor can go on being used.
