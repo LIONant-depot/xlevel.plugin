@@ -148,8 +148,7 @@ namespace xlevel::commands
     // RemoveComponent already did). Reuses the exact xproperty::sprop::collector pattern already
     // proven safe with `noexcept` in phase 2/3/4's own component-snapshot code (unlike
     // dependencies/xcontainer/documentation/noexcept_lambda_trait_trap.md's own FindAsReadOnly callback, this one's fine).
-    // Property paths are shown RAW, not Base64 - trivial for a human or AI to encode when building the
-    // actual SetProperty call, and far more readable here than a wall of base64 would be.
+    // Property paths are shown as they are (a path and a value go into SetProperty in quotes, as text).
     //================================================================================================
     struct describe_entity_query_cmd : level_query_command
     {
@@ -431,15 +430,15 @@ namespace xlevel::commands
         xcmdline::parser::handle m_hConfirm;
     };
 
-    // Diagnostic, for the smoke tests: hands a line to the xGPU adapter exactly as xGPU's own callback would (the line is base64: Vulkan's messages have brackets and quotes),
+    // Diagnostic, for the smoke tests: hands a line to the xGPU adapter exactly as xGPU's own callback would (Vulkan's messages have brackets and quotes: the line goes in quotes),
     // so the adapter's parsing (code, title, where) is tested without needing a real validation error.
     struct simulate_gpu_message_cmd : level_query_command
     {
         simulate_gpu_message_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "SimulateGpuMessage", pDataBase) { RegisterArguments(); }
-        const char* getCommandHelp() const noexcept override { return "Diagnostic: gives a line to the xGPU adapter as xGPU's error or warning callback does. Usage: SimulateGpuMessage -Text base64 [-Severity error|warning]"; }
+        const char* getCommandHelp() const noexcept override { return "Diagnostic: gives a line to the xGPU adapter as xGPU's error or warning callback does. Usage: SimulateGpuMessage -Text text [-Severity error|warning]"; }
         void RegisterArguments() noexcept override
         {
-            m_hText = m_Parser.addOption("Text", "The line, base64", true, 1);
+            m_hText = m_Parser.addOption("Text", "The line", true, 1);
             m_hSeverity = m_Parser.addOption("Severity", "error (default) or warning", false, 1);
         }
         std::string Query() noexcept override
@@ -448,7 +447,7 @@ namespace xlevel::commands
             if (std::holds_alternative<xerr>(T)) return "SimulateGpuMessage: -Text is required";
             auto S = m_Parser.getOptionArgAs<std::string>(m_hSeverity, 0);
             const bool bWarning = !std::holds_alternative<xerr>(S) && std::get<std::string>(S) == "warning";
-            const std::string Line = xlog::Base64Decode(std::get<std::string>(T));
+            const std::string Line = std::get<std::string>(T);
             xeditor::LogGpuMessage(Line, bWarning ? xlog::severity::Warning : xlog::severity::Error, "xlion.simulated");        // a made-up line: its own producer, never counted as the real thing
             return "SimulateGpuMessage: given";
         }

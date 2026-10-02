@@ -127,22 +127,21 @@ namespace xlevel
     }
 
     //---------------------------------------------------------------------------
-    // Splits one flat "-Key value -Key2 value2 ..." command string (the exact shape every command in
-    // this system's own std::format calls already produces - no embedded spaces, every value here is
-    // hex or Base64) into a name->value map. A throwaway xcmdline::parser/command_base could do this
-    // too, but that machinery exists to VALIDATE input as it's typed; this is just reading text this
-    // same codebase already wrote, so a plain split is enough. Token[0] (the command name itself,
+    // Splits one "-Key value -Key2 value2 ..." command string (the shape every command in this system's own
+    // std::format calls produces: hex ids, and text in quotes - see xeditor::Quote) into a name->value map, the
+    // values as the text they stand for (the quotes are gone). A throwaway xcmdline::parser/command_base could do
+    // this too, but that machinery exists to VALIDATE input as it's typed; this is just reading text this same
+    // codebase already wrote, so the parser's own tokenizer is enough. Token[0] (the command name itself,
     // e.g. "SetProperty") is skipped - callers that need it already filtered on it before calling this.
     //---------------------------------------------------------------------------
     inline std::unordered_map<std::string, std::string> ParseFlatArgs(const std::string& CmdStr) noexcept
     {
         std::unordered_map<std::string, std::string> Out;
-        std::istringstream Stream(CmdStr);
-        const std::vector<std::string> Tokens{ std::istream_iterator<std::string>(Stream), std::istream_iterator<std::string>() };
+        const auto Tokens = xcmdline::parser::Tokenize(CmdStr);
         for (std::size_t i = 1; i + 1 < Tokens.size(); i += 2)
         {
-            if (Tokens[i].empty() || Tokens[i][0] != '-') continue;
-            Out[Tokens[i].substr(1)] = Tokens[i + 1];
+            if (Tokens[i].m_bQuoted || Tokens[i].m_Text.empty() || Tokens[i].m_Text[0] != '-') continue;
+            Out[Tokens[i].m_Text.substr(1)] = Tokens[i + 1].m_Text;
         }
         return Out;
     }
@@ -216,7 +215,7 @@ namespace xlevel
         for (auto& T : CollectPlayModePropertyTweaks(Undo, BoundaryIndex))
         {
             Out.push_back(std::format("SetProperty -Scene {} -Id {} -Component {} -Path {} -TypeGuid {} -Before {} -After {}"
-                , T.m_Scene, T.m_Id, T.m_Component, T.m_Path, T.m_TypeGuid, T.m_Before, T.m_After
+                , T.m_Scene, T.m_Id, T.m_Component, xeditor::Quote(T.m_Path), T.m_TypeGuid, xeditor::Quote(T.m_Before), xeditor::Quote(T.m_After)
                 ));
         }
         return Out;

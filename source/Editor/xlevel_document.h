@@ -213,11 +213,17 @@ namespace xlevel
 
         // Adding/removing a Scene names it but changes the Level's membership list, not the Scene.
         const bool bLevelMembershipEdit = Name == "AddScene" || Name == "RemoveScene";
-        if (const auto Pos = Cmd.find("-Scene "); !bLevelMembershipEdit && Pos != std::string_view::npos)
+        if (!bLevelMembershipEdit)
         {
-            const auto Hex   = Cmd.substr(Pos + 7, Cmd.find(' ', Pos + 7) == std::string_view::npos ? std::string_view::npos : Cmd.find(' ', Pos + 7) - (Pos + 7));
-            const auto Scene = xscene::commands::ParseSceneGuid(Hex);
-            if (!Scene.empty()) return pHost->try_acquire_write(SceneResourceGuid(Scene), pMe);
+            // the value of -Scene as the parser reads it (a "-Scene " inside some quoted text is text, not the argument)
+            const auto Tokens = xcmdline::parser::Tokenize(Cmd);
+            for (std::size_t i = 0; i + 1 < Tokens.size(); ++i)
+            {
+                if (Tokens[i].m_bQuoted || Tokens[i].m_Text != "-Scene") continue;
+                const auto Scene = xscene::commands::ParseSceneGuid(Tokens[i + 1].m_Text);
+                if (!Scene.empty()) return pHost->try_acquire_write(SceneResourceGuid(Scene), pMe);
+                break;
+            }
         }
 
         auto& State = pEd->State();

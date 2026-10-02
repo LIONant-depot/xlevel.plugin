@@ -678,7 +678,7 @@ namespace xlevel
                                                     if (!ImGui::IsKeyPressed(ImGuiKey_Escape) && NewText != EntityBaseName)
                                                     {
                                                         if (NewText.empty()) xeditor::Run(Ed.m_Undo, std::format("RenameEntity -Scene {} -Id {} -Clear 1", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id)));
-                                                        else                 xeditor::Run(Ed.m_Undo, std::format("RenameEntity -Scene {} -Id {} -Name {}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id), xeditor::Base64Encode(NewText)));
+                                                        else                 xeditor::Run(Ed.m_Undo, std::format("RenameEntity -Scene {} -Id {} -Name {}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id), xeditor::Quote(NewText)));
                                                     }
                                                     State.m_RenameId = xecs::scene::invalid_permanent_id_v;
                                                 }
