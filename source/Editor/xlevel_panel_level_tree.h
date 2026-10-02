@@ -2,6 +2,7 @@
 #define XLEVEL_PANEL_LEVEL_TREE_H
 #pragma once
 #include "dependencies/xeditor/include/xeditor/popup.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_world_check.h"
 
 // The Level tree panel: Level -> Scenes -> Folders -> Entities, with drag and drop, the source control column and the Level's
 // own edit commands. Meant to be included from xlevel_editor.h, after everything it calls.
@@ -585,8 +586,9 @@ namespace xlevel
                                         // folder walk already follows).
                                         std::function<void(xecs::component::entity)> RenderChildEntities = [&](xecs::component::entity Parent) noexcept
                                         {
-                                            auto& PDetails = GameMgr.m_ComponentMgr.getEntityDetails(Parent);
-                                            if (PDetails.m_pPool == nullptr) return;
+                                            auto* pPDetails = FindEntityDetails(GameMgr, Parent);
+                                            if (pPDetails == nullptr || pPDetails->m_pPool == nullptr) return;
+                                            auto& PDetails = *pPDetails;
                                             if (PDetails.m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::children>.m_BitID) == false) return;
 
                                             auto ChildEntities = PDetails.m_pPool->getComponent<xecs::component::children>(PDetails.m_PoolIndex).m_List;
@@ -602,8 +604,8 @@ namespace xlevel
                                             const std::string EntityBaseName = xscene::EntityDisplayName(*pScene, Id);
                                             std::string EntityLabel = EntityBaseName;
                                             bool bHasChildren = false;
-                                            if (auto& Details = GameMgr.m_ComponentMgr.getEntityDetails(Entity); Details.m_pPool)
-                                                bHasChildren = Details.m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::children>.m_BitID);
+                                            if (auto* pDetails = FindEntityDetails(GameMgr, Entity); pDetails && pDetails->m_pPool)
+                                                bHasChildren = pDetails->m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::children>.m_BitID);
                                             auto* pPI = xscene::FindPrefabInstance(GameMgr, Entity);
                                             if (pPI)
                                             {
@@ -959,8 +961,8 @@ namespace xlevel
                                                             bool bHasParent = false;
                                                             if (auto DroppedIt = pScene->m_LocalToRuntime.find(Dropped.m_Id); DroppedIt != pScene->m_LocalToRuntime.end())
                                                             {
-                                                                auto& DroppedDetails = GameMgr.m_ComponentMgr.getEntityDetails(DroppedIt->second);
-                                                                bHasParent = DroppedDetails.m_pPool && DroppedDetails.m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::parent>.m_BitID);
+                                                                auto* pDroppedDetails = FindEntityDetails(GameMgr, DroppedIt->second);
+                                                                bHasParent = pDroppedDetails && pDroppedDetails->m_pPool && pDroppedDetails->m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::parent>.m_BitID);
                                                             }
                                                             if (!bHasParent)
                                                                 xeditor::Run(Ed.m_Undo, std::format("MoveToFolder -Scene {} -Id {} -Folder {:08X}"
@@ -1106,13 +1108,30 @@ namespace xlevel
                                                 for (auto EId : F.m_Entities) FolderedEntities.insert(EId);
 
                                             std::vector<xecs::scene::permanent_id> Unfoldered;
+                                            int Unknown = 0;
                                             for (auto& Pair : pScene->m_LocalToRuntime)
                                             {
                                                 if (FolderedEntities.contains(Pair.first)) continue;
-                                                auto& Details = GameMgr.m_ComponentMgr.getEntityDetails(Pair.second);
-                                                if (Details.m_pPool && Details.m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::parent>.m_BitID))
+                                                auto* pDetails = FindEntityDetails(GameMgr, Pair.second);
+                                                if (pDetails == nullptr) { ++Unknown; continue; }
+                                                if (pDetails->m_pPool && pDetails->m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::parent>.m_BitID))
                                                     continue;
                                                 Unfoldered.push_back(Pair.first);
+                                            }
+                                            // Said once per change, not once per frame: a diagnostic of the Logs, with a stable code.
+                                            if (ImGuiStorage* pStorage = ImGui::GetStateStorage(); pStorage->GetInt(ImGui::GetID("level.tree.unknown"), 0) != Unknown)
+                                            {
+                                                pStorage->SetInt(ImGui::GetID("level.tree.unknown"), Unknown);
+                                                if (Unknown)
+                                                    if (auto* pLogs = xlog::hub::current())
+                                                    {
+                                                        xlog::event E;
+                                                        E.m_Producer = "xlion.leveltree"; E.m_Origin = { xlog::origin::type::Editor, "level", 0 };
+                                                        E.m_Severity = xlog::severity::Error; E.m_Kind = xlog::kind::Diagnostic; E.m_Channel = "level.tree";
+                                                        E.m_Code = "LEVEL.TREE.UNKNOWN_ENTITIES";
+                                                        xlog::SetMessage(E, std::format("{} entit{} of the scene are not known to the world and are not listed (the scene outlived the world that made them)", Unknown, Unknown == 1 ? "y" : "ies"));
+                                                        pLogs->Emit(std::move(E));
+                                                    }
                                             }
 
                                             for (auto Id : Unfoldered)

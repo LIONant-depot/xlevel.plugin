@@ -1,4 +1,5 @@
 #pragma once
+#include "plugins/xlevel.plugin/source/Editor/xlevel_world_check.h"
 
 // Saving the open level, its scenes and the library.
 // Split out of xlevel_editor.h; included from there at the position this code used to occupy.
@@ -77,6 +78,20 @@ namespace xlevel
                 std::printf("[SaveEverything] scene has %zu pending entity change(s)\n", pScene->m_PendingChanges.size());
                 std::fflush(stdout);
             }
+            // A scene out of step with its world would be saved from entities that are not there: refuse, and say why (the file on disk stays as it was).
+            if (auto* pScene = GameMgr.m_SceneMgr.Find(SceneGuid))
+                if (const auto Unknown = CountUnknownEntities(GameMgr, *pScene); Unknown)
+                {
+                    xeditor::NotifyError(std::format("Scene {:016X} was not saved: {} of its entities are not in the world (the scene is out of step with it). Reopen the Level.", SceneGuid.m_Instance.m_Value, Unknown));
+                    continue;
+                }
+            // A scene out of step with its world would be saved from entities that are not there: refuse, and say why (the file on disk stays as it was).
+            if (auto* pScene = GameMgr.m_SceneMgr.Find(SceneGuid))
+                if (const auto Unknown = CountUnknownEntities(GameMgr, *pScene); Unknown)
+                {
+                    xeditor::NotifyError(std::format("Scene {:016X} was not saved: {} of its entities are not in the world (the scene is out of step with it). Reopen the Level.", SceneGuid.m_Instance.m_Value, Unknown));
+                    continue;
+                }
             if (auto Err = GameMgr.m_SceneMgr.SaveScene(SceneGuid); Err)
                 xeditor::NotifyError(std::format("Failed to save Scene: {}", Err.getMessage()));
         }

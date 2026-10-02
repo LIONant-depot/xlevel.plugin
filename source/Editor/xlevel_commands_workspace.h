@@ -23,6 +23,7 @@ namespace xlevel
 {
     inline std::string GameModuleStatusText() noexcept;
     inline std::string SimulateModuleCrash( const std::string& State ) noexcept;
+    inline std::string SimulateSnapshotFailure( const std::string& State ) noexcept;
 }
 
 namespace xlevel::commands
@@ -438,6 +439,21 @@ namespace xlevel::commands
         {
             auto A = m_Parser.getOptionArgAs<std::string>(m_hState, 0);
             return SimulateModuleCrash(std::holds_alternative<xerr>(A) ? std::string{} : std::get<std::string>(A));
+        }
+        xcmdline::parser::handle m_hState;
+    };
+
+    // Diagnostic, for the smoke tests: the next Game.dll reload's snapshot restore brings no entity back (the way a snapshot that cannot be read does), which leaves the
+    // open scenes naming entities the rebuilt world does not have. The editor must notice, say so, and rebuild the world from the saved level.
+    struct simulate_snapshot_failure_cmd : level_query_command
+    {
+        simulate_snapshot_failure_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "SimulateSnapshotFailure", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Diagnostic: make the next Game.dll reload's snapshot restore bring nothing back (on), or stop doing so (off). Usage: SimulateSnapshotFailure -State on|off"; }
+        void RegisterArguments() noexcept override { m_hState = m_Parser.addOption("State", "on or off", true, 1); }
+        std::string Query() noexcept override
+        {
+            auto A = m_Parser.getOptionArgAs<std::string>(m_hState, 0);
+            return SimulateSnapshotFailure(std::holds_alternative<xerr>(A) ? std::string{} : std::get<std::string>(A));
         }
         xcmdline::parser::handle m_hState;
     };

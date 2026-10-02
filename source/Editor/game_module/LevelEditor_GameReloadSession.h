@@ -32,7 +32,9 @@ namespace xlevel
     // Game.dll reload, never touching the real saved assets and never read back by Stop.
     inline std::wstring GetReloadBridgeSnapshotPath( std::uint64_t EditorKey = 0 ) noexcept
     {
-        return (std::filesystem::temp_directory_path() / std::format(L"xGPU_LevelEditor_ReloadBridge_{:016X}.bin", EditorKey)).wstring();
+        // The process id is part of the name: two editors open on the same Level (a second launch, a test run beside the one being worked in) would otherwise write
+        // and read ONE file in the temp folder, and one of them fails with "Permission denied" - which leaves its scenes without their entities after the reload.
+        return (std::filesystem::temp_directory_path() / std::format(L"xGPU_LevelEditor_ReloadBridge_{}_{:016X}.bin", static_cast<unsigned long>(GetCurrentProcessId()), EditorKey)).wstring();
     }
 
     inline bool SaveSnapshot( xecs::game_mgr::instance& GameMgr, const std::wstring& Path ) noexcept
@@ -48,8 +50,16 @@ namespace xlevel
 
     inline bool LoadSnapshot( xecs::game_mgr::instance& GameMgr, const std::wstring& Path ) noexcept
     {
+        if (g_pGamePlugin && g_pGamePlugin->m_bSimulateSnapshotFailure)
+        {
+            LogGamePlugin("Game.dll: snapshot restore failed: simulated (SimulateSnapshotFailure)");
+            return false;
+        }
         const std::string PathA{ std::filesystem::path(Path).string() };
-        if (auto Err = GameMgr.SerializeGameState(PathA.c_str(), /*isRead*/true, /*isBinary*/true); Err)
+        auto Err = GameMgr.SerializeGameState(PathA.c_str(), /*isRead*/true, /*isBinary*/true);
+        std::error_code Ec;
+        std::filesystem::remove(Path, Ec);                      // a bridge is for one reload; it is not left behind in the temp folder
+        if (Err)
         {
             LogGamePlugin(std::format("Game.dll: snapshot restore failed: {}", Err.getMessage()));
             return false;

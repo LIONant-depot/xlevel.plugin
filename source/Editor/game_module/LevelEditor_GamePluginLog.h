@@ -3,7 +3,9 @@
 #pragma once
 
 #include "plugins/xlevel.plugin/source/Editor/xlevel_editor_tabs.h"
-#include "dependencies/xlog/source/xlog_tab.h"
+#include "dependencies/xlog/editor/xlog_tab.h"
+#include "dependencies/xeditor/include/xeditor/host.h"
+#include "dependencies/xeditor/include/xeditor/open_ref.h"
 
 // The on-screen log surface for Game.dll build/load activity (the drawer's "Log" tab), now a view over the Logs
 // (the xlog library, dependencies/xlog; documentation/Editors/DESIGN_logs.md) instead of a store of its own: the global vector and the global
@@ -44,8 +46,18 @@ namespace xlevel
         }
         if (bWindowVisible)
         {
-            // The tab is the xlog library's: the Game.dll tab lists what the game machinery says (channels game.build and game.module).
-            if (auto* pLogs = xlog::hub::current()) xlog::RenderTab(*pLogs, { .m_ChannelPrefix = "game." });
+            // The window is the xlog library's (Problems | Events over everything the editors, the tools and the game machinery recorded). Its state is
+            // the host's, so the query and the selection follow the person between editors; acknowledge and mute run as undoable commands of the host.
+            auto* pHost = xeditor::host::current();
+            if (auto* pLogs = xlog::hub::current())
+                xlog::RenderTab(*pLogs,
+                {
+                    .m_pState = pHost ? &pHost->m_LogsUi : nullptr,
+                    .m_OnOpen = [](const xlog::ref& R) { xeditor::OpenRef(R); },
+                    .m_OnForward = [] { if (auto* pH = xeditor::host::current()) pH->logs_forward(); },
+                    .m_OnBack = [] { if (auto* pH = xeditor::host::current()) pH->logs_back(); },
+                    .m_Run    = [](const std::string& Line) { if (auto* pH = xeditor::host::current()) pH->dispatch(Line); },
+                });
         }
         if (!bEmbedded)
         {

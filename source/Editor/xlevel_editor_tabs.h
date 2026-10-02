@@ -43,7 +43,7 @@ namespace xlevel::editor_tabs
             std::snprintf(m_SystemRegistry, sizeof(m_SystemRegistry), "System Registry###LevelEditor.SystemRegistry.%016llX", static_cast<unsigned long long>(Key));
         }
     };
-    inline constexpr char kGamePluginLogWindow[] = "\xEE\x9F\x83 Log###LevelEditor.GamePluginLog";
+    inline constexpr char kGamePluginLogWindow[] = "\xEE\x9F\x83 Logs###LevelEditor.GamePluginLog";
     inline constexpr char kCommandConsoleWindow[] = "\xEE\xA3\xBD Commands###LevelEditor.CommandConsole";
     inline constexpr char kSourceControlWindow[] = "Source Control###LevelEditor.SourceControl";
 

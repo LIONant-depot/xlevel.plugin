@@ -565,6 +565,28 @@ namespace xlevel
                 xlevel::ReattachOpenScenes(*m_pGameMgr, std::move(m_ReloadCapture));
                 if (!m_State.m_CurrentLevel.empty())
                     m_pGameMgr->m_LevelMgr.Load(m_State.m_CurrentLevel);
+
+                // The bridge trusts the snapshot to bring every entity back at the same slot. When it did not, the scenes name entities the new world never made:
+                // everything that walks them would read nothing. Say so and rebuild the world from the saved level instead (what was unsaved is lost, the editor is not).
+                if (const auto Unknown = xlevel::CountUnknownOpenEntities(*m_pGameMgr, m_State.m_OpenScenes); Unknown)
+                {
+                    if (auto* pLogs = xlog::hub::current())
+                    {
+                        xlog::event E;
+                        E.m_Producer = "xlion.reload"; E.m_Origin = { xlog::origin::type::Editor, "level", 0 };
+                        E.m_Severity = xlog::severity::Error; E.m_Kind = xlog::kind::Diagnostic; E.m_Channel = "game.module";
+                        E.m_Code = "GAME.MODULE.RELOAD_STATE_LOST";
+                        xlog::SetMessage(E, std::format("The reload did not bring {} entities of the open scene(s) back; the Level was reopened from its last save", Unknown));
+                        pLogs->Emit(std::move(E));
+                    }
+                    LogGamePlugin(std::format("Game.dll: the reload did not bring {} entities back - reopening the Level from its last save", Unknown));
+                    const auto Level = m_State.m_CurrentLevel;
+                    m_Game.DestroyWorld();
+                    CreateWorld();
+                    m_pGameMgr->EnableBuilders(m_State.isPlaying());
+                    if (!Level.empty())
+                        xlevel::OpenLevel(*m_pGameMgr, m_State, xresource::full_guid{ Level.m_Instance, Level.m_Type });
+                }
             }
             else if (!m_State.m_CurrentLevel.empty())
             {

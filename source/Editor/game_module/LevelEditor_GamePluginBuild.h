@@ -77,6 +77,7 @@ namespace xlevel
         // none of its systems run, until the next reload swaps or unloads it.
         bool                    m_bCrashed         = false;
         bool                    m_bSimulateCrash   = false;      // diagnostic (SimulateModuleCrash): RegisterSystems of the module crashes on purpose
+        bool                    m_bSimulateSnapshotFailure = false;   // diagnostic (SimulateSnapshotFailure): a reload's snapshot restore brings nothing back
 
         bool isLoaded(void) const noexcept { return m_hModule != nullptr; }
     };

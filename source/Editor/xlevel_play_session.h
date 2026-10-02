@@ -6,6 +6,7 @@
 // Play: the transport state machine (Play, Pause, Step, Stop) and what Stop does with the property edits made while playing.
 // The build the game code needs before Play starts is reached through play_gate.
 #include "plugins/xlevel.plugin/source/Editor/xlevel_command_context.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_world_check.h"
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -34,6 +35,16 @@ namespace xlevel
     // FinishEnterPlaying), since tearing the world down mid-frame corrupts ImGui's window stack.
     inline void EnterPlaying( level_context& Ed ) noexcept
     {
+        // Play saves the open scenes first (what Stop returns to). A scene out of step with its world cannot be saved: say so and do not start, rather than play
+        // on a world the saved level does not match.
+        if (const auto Unknown = CountUnknownOpenEntities(Ed.World(), Ed.State().m_OpenScenes); Unknown)
+        {
+            Ed.State().m_bPlayRequested = false;
+            Ed.State().m_bStepOneFrame  = false;
+            if (auto* pHost = xeditor::host::current()) pHost->end_play(&Ed.State());
+            xeditor::NotifyError(std::format("Play cancelled: {} entities of the open scene(s) are not in the world (the scene is out of step with it). Reopen the Level.", Unknown));
+            return;
+        }
         SaveEverything(Ed.World(), Ed.State());
         Ed.State().m_PlayHistoryBoundary        = Ed.m_Undo.GetUndoIndex();
         Ed.State().m_bPlayWorldRebuildRequested = true;

@@ -316,6 +316,14 @@ namespace xlevel
         return std::format("Loaded={}\nCrashed={}\n{}", g_pGamePlugin->isLoaded(), g_pGamePlugin->m_bCrashed, g_pGamePlugin->m_LastStatus);
     }
 
+    inline std::string SimulateSnapshotFailure( const std::string& State ) noexcept
+    {
+        if (!g_pGamePlugin)                          return "SimulateSnapshotFailure: no game module support in this build";
+        if (State != "on" && State != "off")         return "SimulateSnapshotFailure: -State on|off is required";
+        g_pGamePlugin->m_bSimulateSnapshotFailure = (State == "on");
+        return "SimulateSnapshotFailure: " + State;
+    }
+
     inline std::string SimulateModuleCrash( const std::string& State ) noexcept
     {
         if (!g_pGamePlugin)                          return "SimulateModuleCrash: no game module support in this build";
