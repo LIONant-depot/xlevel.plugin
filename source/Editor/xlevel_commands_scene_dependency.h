@@ -1,6 +1,7 @@
 #ifndef XLEVEL_COMMANDS_SCENE_DEPENDENCY_H
 #define XLEVEL_COMMANDS_SCENE_DEPENDENCY_H
 #pragma once
+#include "dependencies/xeditor/include/xeditor/popup.h"
 
 // AddSceneDependency / RemoveSceneDependency - explicit scene ParentScenes authoring.
 // Dependencies are NOT derived from entity references: the Level Tree "Dependencies" folder is the
@@ -305,7 +306,7 @@ namespace xlevel
         }
 
         ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
-        if (ImGui::BeginPopupModal("Clear dependency refs?##LevelClearDependencyRefs", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+        if (xeditor::BeginModal("Clear dependency refs?##LevelClearDependencyRefs"))
         {
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f);
             ImGui::TextUnformatted(std::format(

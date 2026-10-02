@@ -1,6 +1,7 @@
 #ifndef XLEVEL_PLAY_SESSION_H
 #define XLEVEL_PLAY_SESSION_H
 #pragma once
+#include "dependencies/xeditor/include/xeditor/popup.h"
 
 // Play: the transport state machine (Play, Pause, Step, Stop) and what Stop does with the property edits made while playing.
 // The build the game code needs before Play starts is reached through play_gate.
@@ -299,7 +300,7 @@ namespace xlevel
         if (State.m_bAwaitingKeepTweaksAnswer)
             ImGui::OpenPopup("Keep Play Mode Changes?");
 
-        if (ImGui::BeginPopupModal("Keep Play Mode Changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+        if (xeditor::BeginModal("Keep Play Mode Changes?"))
         {
             const auto Count = State.m_PendingKeepTweaksCommands.size();
             ImGui::Text("You changed %zu propert%s while Playing.", Count, Count == 1 ? "y" : "ies");

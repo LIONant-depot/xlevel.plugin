@@ -1,6 +1,7 @@
 #ifndef XLEVEL_DOCUMENT_SESSION_H
 #define XLEVEL_DOCUMENT_SESSION_H
 #pragma once
+#include "dependencies/xeditor/include/xeditor/popup.h"
 
 // Level document session: dirty tracking (undo watermark), File>Save enable, Close, and
 // save-before-open when double-clicking / dropping another Level. Included from the kit umbrella
@@ -121,7 +122,7 @@ namespace xlevel
         if (State.m_bAwaitingSaveBeforeClose)
             ImGui::OpenPopup("Save changes?##LevelDocument");
 
-        if (ImGui::BeginPopupModal("Save changes?##LevelDocument", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+        if (xeditor::BeginModal("Save changes?##LevelDocument"))
         {
             const bool bOpeningOther = !State.m_PendingOpenLevelAfterClose.empty();
             ImGui::TextUnformatted(State.m_CurrentLevel.empty()

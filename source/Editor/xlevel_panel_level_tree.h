@@ -1,6 +1,7 @@
 #ifndef XLEVEL_PANEL_LEVEL_TREE_H
 #define XLEVEL_PANEL_LEVEL_TREE_H
 #pragma once
+#include "dependencies/xeditor/include/xeditor/popup.h"
 
 // The Level tree panel: Level -> Scenes -> Folders -> Entities, with drag and drop, the source control column and the Level's
 // own edit commands. Meant to be included from xlevel_editor.h, after everything it calls.
@@ -219,7 +220,7 @@ namespace xlevel
             ImGui::OpenPopup("SC Revert##LevelTreeConfirm");
             Req.m_bPending = false;
         }
-        if (ImGui::BeginPopupModal("SC Revert##LevelTreeConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+        if (xeditor::BeginModal("SC Revert##LevelTreeConfirm"))
         {
             ImGui::TextUnformatted(Req.m_WarningText.c_str());
             ImGui::Separator();

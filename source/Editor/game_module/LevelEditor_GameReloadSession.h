@@ -1,6 +1,7 @@
 #ifndef XLVL_NEW_LevelEditor_GAME_RELOAD_SESSION_H
 #define XLVL_NEW_LevelEditor_GAME_RELOAD_SESSION_H
 #pragma once
+#include "dependencies/xeditor/include/xeditor/popup.h"
 
 // What the editor does around a Game.dll reload: the raw snapshot bridge (Vn) that keeps gameplay continuous across the
 // destroy/recreate, carrying the open scenes across it, the recompile-check Play and window focus start, the confirm
@@ -287,7 +288,7 @@ namespace xlevel
         if (g_PendingReloadCompatibility.has_value())
             ImGui::OpenPopup("Game.dll Reload - Missing Components");
 
-        if (ImGui::BeginPopupModal("Game.dll Reload - Missing Components", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+        if (xeditor::BeginModal("Game.dll Reload - Missing Components"))
         {
             if (g_PendingReloadCompatibility.has_value())
             {

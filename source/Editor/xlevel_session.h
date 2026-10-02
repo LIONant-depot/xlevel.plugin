@@ -1,6 +1,7 @@
 #ifndef XLEVEL_SESSION_H
 #define XLEVEL_SESSION_H
 #pragma once
+#include "dependencies/xeditor/include/xeditor/popup.h"
 
 // The Level editor as a real xeditor::resource_editor: the ECS world, Game.dll scripting, Play/Pause/Stop,
 // the Level Tree / Entity Properties / System Registry panels and their dockspace - everything
@@ -1224,7 +1225,6 @@ namespace xlevel
 
             if (bParentEditorVisible)
             {
-                if (pHost) pHost->m_Notifier.render();
                 xlevel::RenderKeepTweaksModal(m_CmdContext);
                 // NOTE: the original (LevelEditor_AppFrame.h) passed the shell's separate workspace xundo::system
                 // (LevelEditorUndo) here, not the Level session's own - a pre-existing mismatch against how
@@ -1274,7 +1274,7 @@ namespace xlevel
                     ImGui::OpenPopup("##PlayBusy");
                     m_State.m_bPlayBusyPopup = false;
                 }
-                if (ImGui::BeginPopupModal("##PlayBusy", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+                if (xeditor::BeginModal("##PlayBusy"))
                 {
                     ImGui::Text("Play is already active in another Level editor.");
                     ImGui::Text("Stop that Play first, then try again.");

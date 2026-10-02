@@ -388,6 +388,43 @@ namespace xlevel::commands
     };
 
     //================================================================================================
+    // Diagnostic, for the smoke tests: raises the error popup (as any command that fails in the UI does) and says where the popup is, so the
+    // tests can check that a modal opens in the middle of the editor it belongs to.
+    //================================================================================================
+    struct raise_error_cmd : level_query_command
+    {
+        raise_error_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "RaiseError", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Diagnostic: shows the error popup with a message, centered on the editor that has the focus. Usage: RaiseError -Message text"; }
+        void RegisterArguments() noexcept override { m_hMessage = m_Parser.addOption("Message", "The text of the error", true, 1); }
+        std::string Query() noexcept override
+        {
+            auto A = m_Parser.getOptionArgAs<std::string>(m_hMessage, 0);
+            if (std::holds_alternative<xerr>(A)) return "RaiseError: -Message is required";
+            xeditor::NotifyError(std::get<std::string>(A));
+            return "RaiseError: raised";
+        }
+        xcmdline::parser::handle m_hMessage;
+    };
+
+    struct modal_state_cmd : level_query_command
+    {
+        modal_state_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "ModalState", pDataBase) {}
+        const char* getCommandHelp() const noexcept override { return "Diagnostic: Open (is a modal window open), PopupCenter (where it is), Anchor (where the error popup was asked to open), EditorCenter (the middle of the editor that has the focus) and ViewportCenter (the middle of the application window). Usage: ModalState"; }
+        void RegisterArguments() noexcept override {}
+        std::string Query() noexcept override
+        {
+            auto* pHost = xeditor::host::current();
+            const ImGuiWindow* pModal  = ImGui::GetTopMostPopupModal();
+            const ImVec2       Popup   = pModal ? ImVec2(pModal->Pos.x + pModal->Size.x * 0.5f, pModal->Pos.y + pModal->Size.y * 0.5f) : ImVec2(0, 0);
+            const ImVec2       Editor  = xeditor::EditorRect(true).GetCenter();
+            const ImVec2       Anchor  = pHost ? pHost->m_Notifier.m_Anchor : ImVec2(0, 0);
+            const ImVec2       Viewport= ImGui::GetMainViewport()->GetCenter();
+            return std::format("Open={}\nPopupCenter={:.0f},{:.0f}\nAnchor={:.0f},{:.0f}\nEditorCenter={:.0f},{:.0f}\nViewportCenter={:.0f},{:.0f}"
+                , pModal != nullptr, Popup.x, Popup.y, Anchor.x, Anchor.y, Editor.x, Editor.y, Viewport.x, Viewport.y);
+        }
+    };
+
+    //================================================================================================
     // Diagnostic, for the smoke tests: makes the game module's RegisterSystems crash on purpose the next time a world registers its systems
     // (Stop, a reload, a new Level session), the way a module with a bad system does, so the recovery can be tried without a bad module.
     // "-State off" puts everything back, including the crashed flag, so the editor can go on being used.
