@@ -156,10 +156,9 @@ namespace xlevel
 
     // Where a component (or a system) is defined: the module and the file when the loaded Game.dll says, built in when it is not in it, unknown when no Game.dll is loaded or it is
     // older than the registrations.
-    inline xscene::type_source ResolveTypeSource( bool bSystem, std::uint64_t Guid ) noexcept
+    inline xscene::type_source ResolveTypeSource( game_plugin_state* pPlugin, bool bSystem, std::uint64_t Guid ) noexcept
     {
         xscene::type_source S;
-        auto* pPlugin = g_pGamePlugin;
         if (!pPlugin) return S;
         if (pPlugin->isLoaded() && !pPlugin->m_bHasRegistrations) return S;               // a Game.dll that does not tell
         S.m_bKnown = true;
@@ -180,8 +179,11 @@ namespace xlevel
         return S;
     }
 
-    // The hook the panels use. Registered when the program starts: it has to be there before any panel draws, and nothing else owns it.
-    inline const bool g_TypeSourceRegistered = (xscene::g_SourceOfType = &ResolveTypeSource, true);
+    // The hook the panels of a Level use (its context's component_display): it answers from the game module of that Level.
+    inline std::function<xscene::type_source(bool, std::uint64_t)> TypeSourceOf( game_plugin_state& Plugin ) noexcept
+    {
+        return [pPlugin = &Plugin](bool bSystem, std::uint64_t Guid) { return ResolveTypeSource(pPlugin, bSystem, Guid); };
+    }
 
     // What a Game lacks, one line per module: its name and asset guid, the components that need it, and the scenes that use them - the message every check says the same way.
     inline std::string DescribeMissingModules( const std::vector<std::pair<std::uint64_t, module_need>>& Missing ) noexcept

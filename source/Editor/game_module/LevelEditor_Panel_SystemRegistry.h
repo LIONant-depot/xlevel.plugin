@@ -20,13 +20,13 @@ namespace xlevel
     // none of / if present) and how it's accessed - tagging builder components, which exist only
     // while an entity is being created (doc/xecs_builder_components.md).
     //---------------------------------------------------------------------------
-    inline void RenderSystemAccessTooltip(xlioncore::xECSEditor& Ecs, const xecs::system::type::info& Info, const char* pHeader) noexcept
+    inline void RenderSystemAccessTooltip(xlioncore::xECSEditor& Ecs, const xscene::component_display& Display, const xecs::system::type::info& Info, const char* pHeader) noexcept
     {
         xeditor::hint::PlaceAwayFromEdges(16.0f, ImVec2(380.0f, 220.0f));
         if (!ImGui::BeginTooltip()) return;
         ImGui::TextUnformatted(pHeader);
         // where the system is defined: the module and the file
-        if (const auto From = xscene::DescribeSource(xscene::SourceOfType(true, Info.m_Guid.m_Value)); !From.empty())
+        if (const auto From = xscene::DescribeSource(Display.SourceOf(true, Info.m_Guid.m_Value)); !From.empty())
             ImGui::TextDisabled("%s", From.c_str());
         ImGui::Separator();
 
@@ -74,7 +74,7 @@ namespace xlevel
     // RestoreFromSnapshot() on the way out - this panel just surfaces that distinction with a note so
     // it isn't a silent surprise later.
     //---------------------------------------------------------------------------
-    void RenderSystemRegistryPanel(xecs::game_mgr::instance& GameMgr, xlevel::level_state& State, const char* pWindowName) noexcept
+    void RenderSystemRegistryPanel(xecs::game_mgr::instance& GameMgr, xlevel::level_state& State, const xscene::component_display& Display, const char* pWindowName) noexcept
     {
         // Stacked below the Entity Properties panel (18,18 / 480x500) rather than at the Level
         // Editor panel's own (915,18) spot, so the two don't land on top of each other on a
@@ -184,9 +184,9 @@ namespace xlevel
                 };
                 // Where the system comes from: the module that defines it, as a quiet tag at the right of the row; the right-click menu opens its file.
                 // Drawn with the draw list over the row (it is no item, so it takes nothing from the drag and the drop of the row).
-                auto DrawSourceTag = [](bool bSystem, std::uint64_t Guid) noexcept
+                auto DrawSourceTag = [&Display](bool bSystem, std::uint64_t Guid) noexcept
                 {
-                    const auto Source = xscene::SourceOfType(bSystem, Guid);
+                    const auto Source = Display.SourceOf(bSystem, Guid);
                     if (Source.m_bKnown && Source.m_Module != 0 && !Source.m_ModuleName.empty())
                     {
                         const ImVec2 Min = ImGui::GetItemRectMin(), Max = ImGui::GetItemRectMax();
@@ -242,7 +242,7 @@ namespace xlevel
                         if (!bEnabled) ImGui::PopStyleColor();
                         DrawSourceTag(true, Row.m_Guid.m_Value);
                         if (ImGui::IsItemHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left) && i < GameMgr.m_SystemMgr.m_UpdaterSystems.size())
-                            RenderSystemAccessTooltip(xlioncore::Ecs(GameMgr), *GameMgr.m_SystemMgr.m_UpdaterSystems[i].first
+                            RenderSystemAccessTooltip(xlioncore::Ecs(GameMgr), Display, *GameMgr.m_SystemMgr.m_UpdaterSystems[i].first
                                 , std::format("{}  (runs #{})", Row.m_pName ? Row.m_pName : "(unnamed system)", i).c_str());
 
                         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
@@ -336,8 +336,8 @@ namespace xlevel
                     for (auto& Builder : GameMgr.m_SystemMgr.m_BuilderSystems)
                     {
                         ImGui::Selectable(Builder.first->m_pName);
-                        if (ImGui::IsItemHovered()) RenderSystemAccessTooltip(xlioncore::Ecs(GameMgr), *Builder.first, Builder.first->m_pName);
-                        if (const auto Source = xscene::SourceOfType(true, Builder.first->m_Guid.m_Value); Source.m_bKnown && !Source.m_bBuiltIn && !Source.m_Path.empty() && ImGui::BeginPopupContextItem("##typesource"))
+                        if (ImGui::IsItemHovered()) RenderSystemAccessTooltip(xlioncore::Ecs(GameMgr), Display, *Builder.first, Builder.first->m_pName);
+                        if (const auto Source = Display.SourceOf(true, Builder.first->m_Guid.m_Value); Source.m_bKnown && !Source.m_bBuiltIn && !Source.m_Path.empty() && ImGui::BeginPopupContextItem("##typesource"))
                         {
                             if (ImGui::MenuItem(std::format("Open {}", Source.m_File.empty() ? Source.m_Path : Source.m_File).c_str(), nullptr, false, static_cast<bool>(xscene::g_OpenTypeSource)))
                                 xscene::g_OpenTypeSource(Source);

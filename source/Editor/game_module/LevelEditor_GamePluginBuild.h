@@ -64,6 +64,7 @@ namespace xlevel
         std::uint64_t  m_Game         = 0;          // the Game (resource instance) this plugin state builds and loads; 0 = none: no module, no component, no system
         ecs_editor_ptr m_pRegistry;
         xlioncore::xECSEditor& Registry() noexcept { if (!m_pRegistry) m_pRegistry = CreateEcsEditor(m_CoreModule.c_str()); return *m_pRegistry; }
+        xscene::component_display m_Display;               // what the editor of this Level shows about the types of its game: the categories and where each comes from (filled when a module loads)
         std::vector<game_registration> m_Registrations;     // what the loaded Game.dll defines, with its modules (empty when it is not loaded)
         bool                   m_bHasRegistrations = false; // the loaded Game.dll has the XScript_GetRegistrations export (one built before it existed has not: its modules are unknown)
         std::unordered_map<std::uint64_t, std::string> m_ModuleNames;   // the names of the script modules, for the hints (refreshed now and then: a module can be renamed)

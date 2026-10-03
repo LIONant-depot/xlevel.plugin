@@ -19,8 +19,8 @@ namespace xlevel
     // be forgotten at some future new reload trigger. GetProcAddress returning null (an
     // older-generation DLL built before this export existed) just means an empty map - every
     // component then falls back to "uncategorized", exactly like it already does today.
-    // Merge one DLL's XScript_GetComponentDisplayInfo into g_ComponentDisplayInfo (overwrites by name).
-    inline void MergeComponentDisplayInfoFromModule( HMODULE hModule ) noexcept
+    // Merge one DLL's XScript_GetComponentDisplayInfo into a display set (overwrites by name).
+    inline void MergeComponentDisplayInfoFromModule( HMODULE hModule, xscene::component_display& Display ) noexcept
     {
         if (!hModule) return;
         auto* pGetInfo = reinterpret_cast<xscript::pfn_get_component_display_info>(GetProcAddress(hModule, xscript::kGetComponentDisplayInfoName));
@@ -29,17 +29,17 @@ namespace xlevel
         {
             auto& Map = *reinterpret_cast<std::unordered_map<std::string, xscene::component_display_info>*>(pUserData);
             Map[pName] = { pCategory, Priority };
-        }, &xscene::g_ComponentDisplayInfo);
+        }, &Display.m_Categories);
     }
 
     inline void LoadGameComponentDisplayInfo( game_plugin_state& Plugin ) noexcept
     {
-        xscene::g_ComponentDisplayInfo.clear();
+        Plugin.m_Display.m_Categories.clear();
         // Engine DLLs first (Transform / Physics / Primitive categories), then Game.dll overlays.
-        MergeComponentDisplayInfoFromModule(GetModuleHandleW(Plugin.m_CoreModule.c_str()));
-        MergeComponentDisplayInfoFromModule(GetModuleHandleW(Plugin.m_RenderModule.c_str()));
+        MergeComponentDisplayInfoFromModule(GetModuleHandleW(Plugin.m_CoreModule.c_str()), Plugin.m_Display);
+        MergeComponentDisplayInfoFromModule(GetModuleHandleW(Plugin.m_RenderModule.c_str()), Plugin.m_Display);
         if (Plugin.isLoaded())
-            MergeComponentDisplayInfoFromModule(Plugin.m_hModule);
+            MergeComponentDisplayInfoFromModule(Plugin.m_hModule, Plugin.m_Display);
     }
 
     //---------------------------------------------------------------------------
@@ -347,7 +347,7 @@ namespace xlevel
     {
         if (!Plugin.isLoaded()) return;
 
-        xscene::g_ComponentDisplayInfo.clear();
+        Plugin.m_Display.m_Categories.clear();
 
         if (auto* pUnregister = reinterpret_cast<xecs_plugin_pfn_unregister*>(GetProcAddress(Plugin.m_hModule, XECS_PLUGIN_UNREGISTER_NAME)))
             pUnregister(Plugin.m_Token);

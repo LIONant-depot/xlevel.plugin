@@ -532,6 +532,8 @@ namespace xlevel
             m_GamePlugin.m_Events.m_OnAfterReload.Register<&session::AfterReload>(*this);
 
             m_CmdContext.m_pGamePlugin = &m_GamePlugin;
+            m_GamePlugin.m_Display.m_SourceOf = xlevel::TypeSourceOf(m_GamePlugin);
+            m_CmdContext.m_pDisplay    = &m_GamePlugin.m_Display;
             if (auto* pLogs = xlog::hub::current())          // LogVerify on a build problem: build again (an up-to-date module is answered at once; the evidence decides what it verifies)
                 pLogs->SetRecheck("game.build", [](const xlog::problem&) -> std::string
                 {
@@ -1448,7 +1450,7 @@ namespace xlevel
                 else                                                            xscene::RenderEntityPropertiesPanel(m_CmdContext, m_Names.m_Inspector, m_EntityInspector, m_InspectorBridge, bSelectedLocked, ReadOnlyReason.c_str());
 
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
-                xlevel::RenderSystemRegistryPanel(*m_pGameMgr, m_State, m_Names.m_SystemRegistry);
+                xlevel::RenderSystemRegistryPanel(*m_pGameMgr, m_State, m_GamePlugin.m_Display, m_Names.m_SystemRegistry);
 
                 ImGui::SetNextWindowPos(ImVec2(250.0f, 90.0f), ImGuiCond_FirstUseEver);
                 ImGui::SetNextWindowSize(ImVec2(1050.0f, 480.0f), ImGuiCond_FirstUseEver);
