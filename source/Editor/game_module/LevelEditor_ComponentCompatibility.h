@@ -204,14 +204,13 @@ namespace xlevel
         return Out;
     }
 
-    // The names of the Games of the project that list a script module (the project's Game first).
+    // The names of the Games of the project that list a script module.
     inline std::vector<std::string> GamesListingModule( std::uint64_t Module ) noexcept
     {
         std::vector<std::string> Names;
         auto Games = commands::BuildAssetNameMap(xgame::type_guid_v);
         std::vector<std::pair<std::uint64_t, std::string>> Sorted(Games.begin(), Games.end());
         std::ranges::sort(Sorted, [](const auto& A, const auto& B) { return A.second < B.second; });
-        std::ranges::stable_partition(Sorted, [](const auto& G) { return G.first == ProjectGameValue(); });
         for (const auto& [Game, Name] : Sorted)
         {
             const auto Modules = ReadGame(Game).m_Modules;

@@ -25,7 +25,6 @@
 // review's own framing. Included here, in the same order they used to appear inline in this file,
 // so this remains the one header LevelEditor_Main.cpp includes - no external-facing change.
 // Mechanical move only - no behavior change; see each file's own top comment.
-#include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_ProjectScriptConfig.h"
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GamePluginLog.h"
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GamePluginBuild.h"
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GamePluginLoad.h"

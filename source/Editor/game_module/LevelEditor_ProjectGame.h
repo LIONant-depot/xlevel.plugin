@@ -5,8 +5,8 @@
 // The project's Game resource (xgame.plugin): which script modules the project's code is made of, read from the resource's own Descriptor.txt, and what the thread that builds
 // Game.dll needs to know about the resource pipeline making the CMake project of the game (it waits on files, never on the library manager).
 //
-// Everything here finds the Game from the project path and its guid (Script.config.txt names it), so it works before the library manager has scanned the project.
-#include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_ProjectScriptConfig.h"
+// Everything here finds the Game from the project path and its guid (a Level names its Game), so it works before the library manager has scanned the project.
+#include "plugins/xgame.plugin/source/Module/xgame_descriptor.h"
 #include "plugins/xscript_module.plugin/source/Module/xscript_module_files.h"
 
 #include <chrono>
@@ -28,13 +28,10 @@ namespace xlevel
     // A Level names its Game by the same guid type: one definition each, so a change of either is caught here.
     static_assert(xecs::level::game_type_guid_v == xgame::type_guid_v, "the Level's Game reference and the Game resource must have the same type guid");
 
-    inline std::uint64_t ProjectGameValue() noexcept { return g_ScriptConfig.m_Game.m_Instance.m_Value; }
-
-    // A Game resource by its guid; 0 is the project's own Game (the one Script.config.txt names).
+    // A Game resource by its guid (0: none: no Game, no modules). The project has no Game of its own: every Level names the one it runs under.
     inline project_game ReadGame( std::uint64_t Game ) noexcept
     {
         project_game G;
-        if (Game == 0) Game = ProjectGameValue();
         if (Game == 0) return G;
         G.m_Folder = xgame::FindGameFolder(ProjectRoot(), xgame::game_ref{ xresource::instance_guid{ Game } });
         if (G.m_Folder.empty()) return G;
@@ -46,16 +43,12 @@ namespace xlevel
         return G;
     }
 
-    inline project_game ReadProjectGame() noexcept { return ReadGame(0); }
-
-    inline std::vector<xscript::module::module_ref> ProjectModules() noexcept { return ReadProjectGame().m_Modules; }
-
-    // Reads a Game's descriptor (0: the project's), lets Fn change it (it returns "" or why not), and writes it back. Returns "" or why it did not happen.
+    // Reads a Game's descriptor, lets Fn change it (it returns "" or why not), and writes it back. Returns "" or why it did not happen.
     template<typename T_FN>
     inline std::string EditGame( std::uint64_t Game, T_FN&& Fn ) noexcept
     {
         auto G = ReadGame(Game);
-        if (!G.HasGame())       return Game ? "the Game is not in the project" : "the project has no Game resource: create one in the Asset Browser (type Game) and set it in Project Settings > Scripting (or run SetProjectGame)";
+        if (!G.HasGame())       return Game ? "the Game is not in the project" : "no Game given (create one in the Asset Browser, type Game)";
         if (!G.m_Error.empty()) return "the descriptor of the Game cannot be read: " + G.m_Error;
         xgame::descriptor D;
         D.m_Modules = G.m_Modules;
@@ -64,9 +57,6 @@ namespace xlevel
         if (!xgame::Write(G.m_Folder, D, &Error)) return "the Game could not be saved: " + Error;
         return {};
     }
-
-    template<typename T_FN>
-    inline std::string EditProjectGame( T_FN&& Fn ) noexcept { return EditGame(0, std::forward<T_FN>(Fn)); }
 
     // The Game a Level runs under, as its Descriptor.txt says (0: it names none). The guid of the Game resource; read from disk, which is where SetLevelGame writes at once.
     inline std::uint64_t ReadLevelGame( const std::wstring& Project, std::uint64_t Level ) noexcept
@@ -78,36 +68,8 @@ namespace xlevel
         return D.m_Game.m_Instance.m_Value;
     }
 
-    // The Game a Level runs under: the one it names. A Level has to name one (0: it does not, and does not know what to run); the project's Game only says which Game the editor builds.
+    // The Game a Level runs under: the one it names. A Level has to name one (0: it does not, and does not know what to run).
     inline std::uint64_t GameOfLevel( std::uint64_t Level ) noexcept { return ReadLevelGame(ProjectRoot().wstring(), Level); }
-
-    // Makes sure the project has a Game resource: when it has none, one is created in the project's own library (named "Game") from what Script.config.txt listed before the
-    // Game resource existed (nothing, for a new project), and Script.config.txt names it from then on. Returns "" or why not.
-    inline std::string EnsureProjectGame() noexcept
-    {
-        if (ReadProjectGame().HasGame()) return {};
-        auto& LibMgr = xresource_editor::g_LibMgr;
-        const xresource::full_guid Root{ LibMgr.m_ProjectGUID.m_Instance, xresource_editor::folder::type_guid_v };
-        const auto Guid = LibMgr.NewAsset(LibMgr.m_ProjectGUID, xresource::full_guid{ {}, xgame::type_guid_v }, Root, "Game");
-        const xgame::game_ref Ref{ Guid.m_Instance };
-        const auto Folder = xgame::FindGameFolder(ProjectRoot(), Ref);
-        if (Folder.empty()) return "the Game resource could not be created";
-        xgame::descriptor D;
-        for (const auto& Old : g_ScriptConfig.m_ModuleRefs) D.m_Modules.push_back(xscript::module::module_ref{ Old.m_Instance });
-        // The config names the Game first and the descriptor comes second: the descriptor is what makes the resource pipeline compile the Game.
-        g_ScriptConfig.m_Game = Ref;
-        g_ScriptConfig.m_ModuleRefs.clear();
-        if (auto Err = SaveScriptConfig(xresource_editor::g_LibMgr.m_ProjectPath, g_ScriptConfig); Err) return std::format("Script.config.txt could not be saved: {}", Err.getMessage());
-        std::string Error;
-        if (!xgame::Write(Folder, D, &Error)) return "the Game could not be saved: " + Error;
-        return {};
-    }
-
-    // A project that was made before the Game resource: its module list becomes a Game resource, once.
-    inline void MigrateScriptConfig() noexcept
-    {
-        if (g_ScriptConfig.m_Game.empty() && !g_ScriptConfig.m_ModuleRefs.empty()) (void)EnsureProjectGame();
-    }
 
     //------------------------------------------------------------------------------------------------
     // What the thread that builds Game.dll needs to know about the Game project, as files. The Game resource and each of its modules are compiled by the resource pipeline

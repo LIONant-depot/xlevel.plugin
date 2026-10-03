@@ -425,9 +425,6 @@ namespace xlevel
                 m_GamePlugin.m_Paths = xlevel::MakeScriptProjectPaths();
                 if (!Svc.bReady)
                 {
-                    if (auto Err = xlevel::LoadScriptConfig(m_GamePlugin.m_Paths.m_Project.wstring(), xlevel::g_ScriptConfig); Err)
-                        xlevel::LogGamePlugin(std::format("Game.dll: failed to read Script.config.txt: {}", Err.getMessage()));
-                    xlevel::MigrateScriptConfig();                               // a project from before the Game resource gets one, from its old module list
                     Svc.Gate.m_IsBuilding = [](const level_context& Ed) noexcept { return Ed.m_pGamePlugin && Ed.m_pGamePlugin->m_bBuilding; };           // of the Level that wants to play
                     Svc.Gate.m_StartBuild = [](level_context& Ed) noexcept { if (Ed.m_pGamePlugin) xlevel::StartGameReload(*Ed.m_pGamePlugin); };
                     Svc.Gate.m_WhyNotPlay = [](const level_state& State) -> std::string
