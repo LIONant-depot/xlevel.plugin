@@ -55,6 +55,7 @@
 #include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_box.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_shapes.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_panel_level_properties.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_engine_copies.h"
 
 #include <memory>
 #include <limits>
@@ -67,6 +68,7 @@ namespace xlevel
     struct level_services
     {
         game_plugin_state Plugin;
+        engine::manager   Engines;      // makes the copies of the engine DLLs that each Level runs on (xlevel_engine_copies.h)
         play_gate         Gate;
         bool              bReady = false;
 
