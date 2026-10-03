@@ -428,8 +428,8 @@ namespace xlevel
                     if (auto Err = xlevel::LoadScriptConfig(m_GamePlugin.m_Paths.m_Project.wstring(), xlevel::g_ScriptConfig); Err)
                         xlevel::LogGamePlugin(std::format("Game.dll: failed to read Script.config.txt: {}", Err.getMessage()));
                     xlevel::MigrateScriptConfig();                               // a project from before the Game resource gets one, from its old module list
-                    Svc.Gate.m_IsBuilding = []() noexcept { return g_pGamePlugin && g_pGamePlugin->m_bBuilding; };           // of the Level the user is working on
-                    Svc.Gate.m_StartBuild = []() noexcept { if (g_pGamePlugin) xlevel::StartGameReload(*g_pGamePlugin); };
+                    Svc.Gate.m_IsBuilding = [](const level_context& Ed) noexcept { return Ed.m_pGamePlugin && Ed.m_pGamePlugin->m_bBuilding; };           // of the Level that wants to play
+                    Svc.Gate.m_StartBuild = [](level_context& Ed) noexcept { if (Ed.m_pGamePlugin) xlevel::StartGameReload(*Ed.m_pGamePlugin); };
                     Svc.Gate.m_WhyNotPlay = [](const level_state& State) -> std::string
                     {
                         std::vector<std::uint64_t> Scenes;
@@ -584,11 +584,10 @@ namespace xlevel
         {
             m_ShellCommands.reset();   // the commands registered on m_Undo go first
 
-            // A closing editor gives back whatever it held: the Play slot and its Scene/Level write locks.
+            // A closing editor gives back whatever it held: its Scene/Level write locks.
             if (auto* pHost = xeditor::host::current())
             {
                 pHost->m_IdleWork.m_OnRun.RemoveDelegates(&m_SceneScanner);
-                pHost->end_play(&m_State);
                 if (auto* pMe = xlevel::FindHostSession(m_Undo))
                     std::erase_if(pHost->m_WriteLocks, [&](const xeditor::host::write_lock& L) noexcept { return L.pWriter == pMe; });
             }
@@ -756,7 +755,6 @@ namespace xlevel
             }
 
             m_State.m_PlayState = xlevel::level_state::play_state::Stopped;
-            if (auto* pHost = xeditor::host::current()) pHost->end_play(&m_State);
         }
 
         // The host's action context (keys, hints), if it provides one.
@@ -1419,19 +1417,6 @@ namespace xlevel
 
             if (bParentEditorVisible)
             {
-                if (m_State.m_bPlayBusyPopup)
-                {
-                    ImGui::OpenPopup("##PlayBusy");
-                    m_State.m_bPlayBusyPopup = false;
-                }
-                if (xeditor::BeginModal("##PlayBusy", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings, ModalCenter()))
-                {
-                    ImGui::Text("Play is already active in another Level editor.");
-                    ImGui::Text("Stop that Play first, then try again.");
-                    if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
-                    ImGui::EndPopup();
-                }
-
                 // Read-only is per Scene: the selected entity's Scene may be owned by another Level editor (see
                 // TryGateLevelMutation). The Level Tree marks every such Scene itself.
                 const bool bSelectedLocked = xlevel::IsSceneLockedByOther(m_CmdContext, m_State.m_SelectedEntityScene);
@@ -1532,8 +1517,7 @@ namespace xlevel
         using play_state = level_state::play_state;
         if (S().m_State.m_PlayState == play_state::Playing) return "already playing";
         auto* pHost = xeditor::host::current();
-        if (const auto* pGate = pHost ? pHost->find<play_gate>() : nullptr; pGate && pGate->m_IsBuilding()) return "Game.dll is building";
-        if (pHost && pHost->is_play_active() && pHost->m_pPlayOwner != &S().m_State) return "another Level is playing";
+        if (const auto* pGate = pHost ? pHost->find<play_gate>() : nullptr; pGate && pGate->m_IsBuilding(S().m_CmdContext)) return "Game.dll is building";
         return nullptr;
     }
     inline void session_actions::Play() noexcept { (void)RequestPlay(S().m_CmdContext); }

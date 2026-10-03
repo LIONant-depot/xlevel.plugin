@@ -15,19 +15,17 @@ namespace xlevel
 {
     // What Play needs from whatever builds the game's code: whether a build is running, and a way to start the
     // recompile-check that Play waits for. The game module provides one to the host; an editor without one enters Playing
-    // right away.
+    // right away. Every Level has its own game module, so both are asked of the Level that wants to play.
     struct play_gate
     {
-        std::function<bool()> m_IsBuilding;
-        std::function<void()> m_StartBuild;
+        std::function<bool(const level_context&)> m_IsBuilding;
+        std::function<void(level_context&)>       m_StartBuild;
         std::function<std::string(const level_state&)> m_WhyNotPlay;    // "" when the Level can run (its Game lists the modules its scenes need), else why not
     };
 
     //---------------------------------------------------------------------------
     // The transport state machine. The menu-bar transport, the editor toolbar and the CLI commands all go
-    // through these, so they cannot drift apart. The process-wide single-Play lock (xeditor::host) is
-    // taken by RequestPlay and released only where a play session really ends: StopPlaySession, or
-    // CancelPlayRequest when the build a pending Play was waiting for fails.
+    // through these, so they cannot drift apart. There is no Play lock: every Level runs on its own copy of the engine, so any number of Levels can play at the same time.
     //---------------------------------------------------------------------------
 
     // Stopped -> Playing, first half. Writes V1 (the real disk save Stop restores from - it must be disk, not the
@@ -42,7 +40,6 @@ namespace xlevel
         {
             Ed.State().m_bPlayRequested = false;
             Ed.State().m_bStepOneFrame  = false;
-            if (auto* pHost = xeditor::host::current()) pHost->end_play(&Ed.State());
             xeditor::NotifyToast(std::format("Play cancelled: {} entities of the open scene(s) are not in the world (the scene is out of step with it). Reopen the Level.", Unknown));
             return;
         }
@@ -62,13 +59,12 @@ namespace xlevel
                 Ed.World().m_SceneMgr.m_OnSceneReady.NotifyAll(*pScene);
     }
 
-    // A pending Play that will never start (its build failed): drop it and release the Play lock it took.
+    // A pending Play that will never start (its build failed): drop it.
     inline void CancelPlayRequest( level_state& State ) noexcept
     {
         if (!State.m_bPlayRequested) return;
         State.m_bPlayRequested = false;
         State.m_bStepOneFrame  = false;
-        xeditor::host::current()->end_play(&State);
     }
 
     inline void RequestResume( level_state& State ) noexcept
@@ -85,7 +81,7 @@ namespace xlevel
         if (State.m_PlayState == play_state::Playing) return "Play: already playing";
         if (State.m_bPlayWorldRebuildRequested)       return "Play: starting";
         auto* pGate = xeditor::host::current()->find<play_gate>();
-        if (pGate && pGate->m_IsBuilding())          return "Play: a build is already in flight";
+        if (pGate && pGate->m_IsBuilding(Ed))        return "Play: a build is already in flight";
         if (State.m_PlayState == play_state::Paused)  { RequestResume(State); return "Resumed"; }
 
         // A Level whose Game does not list the modules its scenes need (or that names none) has nothing to run them with: an error, not a play session of half a world
@@ -96,17 +92,10 @@ namespace xlevel
                 return "Play: refused - " + Why;
             }
 
-        auto& Host = *xeditor::host::current();
-        if (!Host.try_begin_play(&State))
-        {
-            xeditor::diagnostics::Log("Play refused: another Play session is already active");
-            State.m_bPlayBusyPopup = true;
-            return "Play: another Play session is already active";
-        }
         if (pGate)
         {
             State.m_bPlayRequested = true;
-            pGate->m_StartBuild();
+            pGate->m_StartBuild(Ed);
             return "Play requested (recompile-check in progress)";
         }
         EnterPlaying(Ed);

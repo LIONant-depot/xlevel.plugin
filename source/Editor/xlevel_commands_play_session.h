@@ -127,7 +127,7 @@ namespace xlevel::commands
         {
             auto& State = get<level_context>().State();
             const auto* pGate = xeditor::host::current()->find<play_gate>();
-            const bool  bBuilding = pGate && pGate->m_IsBuilding();
+            const bool  bBuilding = pGate && pGate->m_IsBuilding(get<level_context>());
             return std::format("PlayState={} Building={} PlayRequested={} StopRequested={}"
                 , PlayStateName(State.m_PlayState), bBuilding, State.m_bPlayRequested, State.m_bStopRequested);
         }

@@ -25,10 +25,7 @@ namespace xlevel
     {
         auto& State = Ed.State();
         const auto* pGate = xeditor::host::current()->find<play_gate>();
-        const bool bBuilding = pGate && pGate->m_IsBuilding();
-        // Another Level editor is playing: this one can neither Play nor Step until it stops.
-        auto* pHost = xeditor::host::current();
-        const bool bOtherPlaying = pHost && pHost->is_play_active() && pHost->m_pPlayOwner != &State;
+        const bool bBuilding = pGate && pGate->m_IsBuilding(Ed);
         using play_state = level_state::play_state;
         constexpr const char* PlayIcon  = "\xEE\x9D\xA8";
         constexpr const char* PauseIcon = "\xEE\x9D\xA9";
@@ -96,13 +93,12 @@ namespace xlevel
 
         // A Level with an error (its Game lacks what its scenes need) cannot be played: it would run without the systems and components its scenes use
         const bool bBlocked = bStopped && !State.m_WhyNotPlay.empty();
-        Slot(bStopped ? PlayIcon : StopIcon, bBuilding || (bStopped && bOtherPlaying) || bBlocked, false, [&]
+        Slot(bStopped ? PlayIcon : StopIcon, bBuilding || bBlocked, false, [&]
         {
             if (bStopped) RequestPlay(Ed);
             else          RequestStop(Ed, std::nullopt);
         });
-        if (bStopped && bOtherPlaying) { if (Layout.m_bTooltips && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) xeditor::hint::Text("Another Level is playing - stop it first"); }
-        else if (bBlocked) { if (Layout.m_bTooltips && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) xeditor::hint::Text("Cannot play: %s", State.m_WhyNotPlay.c_str()); }
+        if (bBlocked) { if (Layout.m_bTooltips && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) xeditor::hint::Text("Cannot play: %s", State.m_WhyNotPlay.c_str()); }
         else Tip(bStopped ? "Play" : "Stop", bStopped ? "Start playback" : "Stop playback");
 
         Next();
@@ -113,7 +109,7 @@ namespace xlevel
         }
         else
         {
-            Slot(StepIcon, bBuilding || (bStopped && bOtherPlaying) || bBlocked, false, [&] { RequestStep(Ed); });
+            Slot(StepIcon, bBuilding || bBlocked, false, [&] { RequestStep(Ed); });
             Tip("Step", "Run one frame");
         }
 

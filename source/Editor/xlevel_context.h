@@ -51,7 +51,6 @@ namespace xlevel
         std::string m_WhyNotPlay;
 
         bool m_bLevelEditorOpen = true;   // peer Level root tab (Texture-shaped close)
-        bool m_bPlayBusyPopup   = false;  // shown when another Play session is already active
         // Set by Play (Stopped -> Playing only; Paused -> Playing is a plain resume) and consumed by PollGameReload once the
         // recompile-check it starts resolves: Play must never tick against a DLL that might still be rebuilding.
         bool m_bPlayRequested = false;
