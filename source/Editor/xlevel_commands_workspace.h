@@ -174,13 +174,12 @@ namespace xlevel::commands
             if (It == pScene->m_LocalToRuntime.end()) return "DescribeEntity: entity not found";
             auto Entity = It->second;
 
-            auto& Details = World().m_ComponentMgr.getEntityDetails(Entity);
-            if (!Details.m_pPool) return "DescribeEntity: entity has no components";
+            if (!xlioncore::Ecs(World()).IsAlive(Entity)) return "DescribeEntity: entity has no components";
 
             // Internal bookkeeping components (entity self-identity, parent/children, prefab plumbing)
             // are excluded - not addable/settable via AddComponent/SetProperty, same filter as
             // ListComponentTypes.
-            const auto Components = xscene::UserComponents(*Details.m_pPool->m_pArchetype);
+            const auto Components = xscene::UserComponents(xlioncore::Ecs(World()), Entity);
 
             std::string Out;
             for (auto pInfo : Components)
@@ -205,7 +204,7 @@ namespace xlevel::commands
                     Out += std::format("    {} = {}  (TypeGuid {:08X})\n", pPropertyName, ValueStr, TypeGuid);
                 });
             }
-            Out += "\n" + xscene::system_usage::DescribeEntitySystems(World(), Details.m_pPool->m_pArchetype->getComponentBits(), Components);
+            Out += "\n" + xscene::system_usage::DescribeEntitySystems(World(), xscene::system_usage::SetOf(World(), Entity), Components);
             return Out;
         }
 
@@ -228,9 +227,10 @@ namespace xlevel::commands
         {
             const auto  Systems = xscene::system_usage::AllSystems(World());
             std::string Out;
-            for (auto& Pair : xecs::component::mgr::s_Registry.m_ComponentInfoMap)
+            std::vector<const xecs::component::type::info*> Registered;
+            xlioncore::Ecs(World()).ListComponentTypes(Registered);
+            for (auto* pInfo : Registered)
             {
-                auto* pInfo = Pair.second;
                 // Same set the Add Component popup offers (DATA, SHARE and TAG).
                 const char* pKind = pInfo->m_TypeID == xecs::component::type::id::DATA  ? "data"
                                   : pInfo->m_TypeID == xecs::component::type::id::SHARE ? "share"

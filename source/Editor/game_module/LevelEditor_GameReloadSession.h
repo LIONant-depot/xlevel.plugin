@@ -284,14 +284,12 @@ namespace xlevel
                 const auto Id     = Pair.first;
                 auto&      Entity = Pair.second;
 
-                auto& EDetails = pWorld->m_ComponentMgr.getEntityDetails(Entity);
-                if (!EDetails.m_pPool || !EDetails.m_pPool->m_pArchetype) continue;
-                auto& Bits = EDetails.m_pPool->m_pArchetype->getComponentBits();
+                auto& Ecs = xlioncore::Ecs(*pWorld);
+                if (!Ecs.IsAlive(Entity)) continue;
 
                 for (auto& Dep : MissingDeps)
                 {
-                    auto* pInfo = pWorld->m_ComponentMgr.findComponentTypeInfo(Dep.m_Guid);
-                    if (!pInfo || !Bits.getBit(pInfo->m_BitID)) continue;
+                    if (!Ecs.HasComponent(Entity, Dep.m_Guid)) continue;
 
                     xeditor::Run(*pDocUndo, std::format("RemoveComponent -Scene {} -Id {} -Component {:016X}"
                         , xscene::commands::FormatSceneGuid(SceneGuid)

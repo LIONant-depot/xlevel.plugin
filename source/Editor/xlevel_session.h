@@ -305,24 +305,9 @@ namespace xlevel
             // device/window to draw with, so its render SYSTEM never runs there.
             if (m_pDevice) RegisterEngineDLLSystems(GameMgr, L"LIONRender.dll");
 
-            // xscene.plugin/xlevel.plugin (compiled directly into THIS binary, xLION.exe) name
-            // xlioncore::static_tag/transform directly for the static-demotion-while-Playing feature -
-            // real types, actually registered by xLIONCore.dll's own XecsPlugin_RegisterSystems just
-            // above (which already syncs ITS OWN local info_v copies via the same SyncLocalBitIDs<>()).
-            // That sync only fixes xLIONCore.dll's copies, though - info_v<T> is a per-BINARY
-            // singleton (see info::m_BitID's own comment in xecs_component_type.h), so xLION.exe gets
-            // its own separate, otherwise-never-synced copies of these same two types. This is the
-            // exact scenario SyncLocalBitIDs<>() itself documents ("types some OTHER binary
-            // registered that this one queries/creates", e.g. LIONRender using LIONCore's rigid_body) -
-            // mirroring xLIONCore.dll's own call above, just for this binary's copies instead. Without
-            // this, any exe-side code reading xlioncore::static_tag/transform's raw .m_BitID directly
-            // gets a garbage/default value (confirmed live: asserted "Bit >= 0 && Bit < max" the one
-            // time this was missed) - must run after Lock (already done, inside LIONCore.dll's own
-            // RegisterSystems above) and before any host-compiled system/command touches these types.
-            // The poison run (XLION_POISON_EXE_BITIDS=1, see documentation/Editors/ecs_link_gate.md): the editor's own copies of the bit ids stay UNSET, so every place that still reads them (instead of asking
-            // the xECSEditor) fails loudly in the tests. That is the definition of done for talking to a copy of the core that is not the one this binary imported.
-            if (!std::getenv("XLION_POISON_EXE_BITIDS"))
-            xecs::component::mgr::SyncLocalBitIDs<xlioncore::static_tag, xlioncore::transform, xecs::editor::prefab_instance, xecs::component::entity_reference>();      // the editor's own copies: prefab instances and entity references are registered by the core now
+            // The editor does not sync its own copies of the bit ids (info_v<T>.m_BitID of the types it names: static_tag, transform, prefab_instance, entity_reference): they are per-BINARY, and with
+            // several copies of the core in one process none of them would be the right one. Whatever the editor needs of a component it asks the xECSEditor of the Level's copy of the core (HasComponent,
+            // ComponentOf, ChangeComponents...); the ECS gates (documentation/Editors/ecs_link_gate.md) keep it that way.
         }
 
         session(xresource::full_guid Guid, xresource_editor::library::guid /*LibraryGuid*/, xgpu::device* pDevice) noexcept
