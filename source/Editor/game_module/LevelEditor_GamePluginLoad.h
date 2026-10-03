@@ -377,27 +377,27 @@ namespace xlevel
         }
     }
 
-    // The GameModuleStatus / SimulateModuleCrash commands (declared in xlevel_commands_workspace.h).
-    inline std::string GameModuleStatusText() noexcept
+    // The GameModuleStatus / SimulateModuleCrash commands (declared in xlevel_commands_workspace.h): each acts on the game module of the Level it is addressed to.
+    inline std::string GameModuleStatusText( const game_plugin_state* pPlugin ) noexcept
     {
-        if (!g_pGamePlugin) return "GameModuleStatus: no game module support in this build";
-        return std::format("Loaded={}\nCrashed={}\n{}", g_pGamePlugin->isLoaded(), g_pGamePlugin->m_bCrashed, g_pGamePlugin->m_LastStatus);
+        if (!pPlugin) return "GameModuleStatus: no game module support in this build";
+        return std::format("Loaded={}\nCrashed={}\n{}", pPlugin->isLoaded(), pPlugin->m_bCrashed, pPlugin->m_LastStatus);
     }
 
-    inline std::string SimulateSnapshotFailure( const std::string& State ) noexcept
+    inline std::string SimulateSnapshotFailure( game_plugin_state* pPlugin, const std::string& State ) noexcept
     {
-        if (!g_pGamePlugin)                          return "SimulateSnapshotFailure: no game module support in this build";
+        if (!pPlugin)                                return "SimulateSnapshotFailure: no game module support in this build";
         if (State != "on" && State != "off")         return "SimulateSnapshotFailure: -State on|off is required";
-        g_pGamePlugin->m_bSimulateSnapshotFailure = (State == "on");
+        pPlugin->m_bSimulateSnapshotFailure = (State == "on");
         return "SimulateSnapshotFailure: " + State;
     }
 
-    inline std::string SimulateModuleCrash( const std::string& State ) noexcept
+    inline std::string SimulateModuleCrash( game_plugin_state* pPlugin, const std::string& State ) noexcept
     {
-        if (!g_pGamePlugin)                          return "SimulateModuleCrash: no game module support in this build";
+        if (!pPlugin)                                return "SimulateModuleCrash: no game module support in this build";
         if (State != "on" && State != "off")         return "SimulateModuleCrash: -State on|off is required";
-        g_pGamePlugin->m_bSimulateCrash = (State == "on");
-        if (State == "off") g_pGamePlugin->m_bCrashed = false;
+        pPlugin->m_bSimulateCrash = (State == "on");
+        if (State == "off") pPlugin->m_bCrashed = false;
         return "SimulateModuleCrash: " + State;
     }
 

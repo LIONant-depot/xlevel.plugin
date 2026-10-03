@@ -58,7 +58,26 @@ namespace xlevel
 
         // The xECSEditor this plugin state uses for what belongs to the registry of ITS copy of the core and to no world (reset it, unregister the Game, a short-lived world to register through).
         // The copy of the core this plugin state's Game.dll runs on (and the render DLL of the same copy): the module names of the set the Level made (xlevel_engine_copies.h), the originals when there is none.
+        // A reload that was refused because the open scenes of THIS Level need components the new build lacks: what is missing, until the person says Strip and Continue or Cancel (RenderReloadCompatibilityModal).
+        std::vector<xecs::scene::component_dependency> m_PendingMissing;
+        bool           m_bPendingMissing = false;
         std::shared_ptr<engine::engine_set> m_pCoreSet;      // the copies (when it runs on some): alive for as long as the Game.dll that is bound to them
+        // Every process a Game.dll build of this plugin state starts (cmake, MSBuild, the compiler) runs in this job. Closing the editor, or the Level, kills the job with it - a build left running
+        // would keep the precompiled header and the PDB locked and break the next build - and CancelBuild stops a build on purpose. Made by the thread that starts the build (StartGameReload).
+        HANDLE         m_hBuildJob    = nullptr;
+        HANDLE BuildJob() noexcept
+        {
+            if (!m_hBuildJob)
+            {
+                m_hBuildJob = CreateJobObjectW(nullptr, nullptr);
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION Info{};
+                Info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                if (m_hBuildJob) SetInformationJobObject(m_hBuildJob, JobObjectExtendedLimitInformation, &Info, sizeof(Info));
+            }
+            return m_hBuildJob;
+        }
+        // Kills whatever the running build of THIS plugin state started (the builds of the other Levels go on); the build then reports Failed.
+        void CancelBuild() noexcept { if (m_hBuildJob) TerminateJobObject(m_hBuildJob, 1); }
         std::wstring   m_CoreModule   = engine::kCoreNameW;
         std::wstring   m_RenderModule = engine::kRenderNameW;
         std::uint64_t  m_Game         = 0;          // the Game (resource instance) this plugin state builds and loads; 0 = none: no module, no component, no system
@@ -74,7 +93,7 @@ namespace xlevel
         script_project_paths    m_Paths;
         game_inputs             m_GameInputs;               // what the build waits for the resource pipeline to have made (captured on the main thread, see CaptureGameInputs)
         std::atomic<bool>       m_bCancelWait{ false };     // the editor is closing: stop waiting for the pipeline
-        ~game_plugin_state() noexcept { m_bCancelWait = true; }
+        ~game_plugin_state() noexcept { m_bCancelWait = true; if (m_hBuildJob) CloseHandle(m_hBuildJob); }
         std::wstring            m_LoadedDllPath;
 
         // Human-readable outcome of the most recent build/load attempt - printf's own log lines are
@@ -148,31 +167,9 @@ namespace xlevel
     // reconfigure, then the actual build - see its own comment on why) without duplicating this
     // pipe-capture machinery, and without the fragile nested-quoting a single `cmd /c "A && B"` string
     // would need for two already-quoted `cmake` invocations.
-    // Every process a Game.dll build starts (cmake, MSBuild, the compiler) runs in this job. Closing the editor kills the
-    // job with it - a build left running would keep the precompiled header and the PDB locked and break the next build - and
-    // CancelGameBuild stops a build on purpose.
-    inline HANDLE GameBuildJob() noexcept
-    {
-        static HANDLE s_hJob = []() noexcept
-        {
-            HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION Info{};
-            Info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if (hJob) SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &Info, sizeof(Info));
-            return hJob;
-        }();
-        return s_hJob;
-    }
-
-    // Kills whatever the running build started; the build then reports Failed.
-    inline void CancelGameBuild() noexcept
-    {
-        if (auto hJob = GameBuildJob()) TerminateJobObject(hJob, 1);
-    }
-
     // pAdapter, when there is one, turns the output into structured diagnostics (a diagnostic with the lines that belong to it is one event); the raw line
     // is still printed, as it always was. Without an adapter (no host) the line is just logged.
-    inline int RunCmakeCommand( std::wstring CmdLine, const std::filesystem::path& WorkingDir, xlog::build_output_adapter* pAdapter = nullptr ) noexcept
+    inline int RunCmakeCommand( std::wstring CmdLine, const std::filesystem::path& WorkingDir, HANDLE hJob, xlog::build_output_adapter* pAdapter = nullptr ) noexcept
     {
         SECURITY_ATTRIBUTES PipeSa{ .nLength = sizeof(PipeSa), .bInheritHandle = TRUE };
         HANDLE ReadPipe = nullptr, WritePipe = nullptr;
@@ -200,7 +197,7 @@ namespace xlevel
             return -1;
         }
         // In the job before it runs a single instruction, so everything it starts is in it too.
-        if (auto hJob = GameBuildJob()) AssignProcessToJobObject(hJob, Pi.hProcess);
+        if (hJob) AssignProcessToJobObject(hJob, Pi.hProcess);
         ResumeThread(Pi.hThread);
 
         // This process's own handle to the write end must close BEFORE reading, or ReadFile below
@@ -300,9 +297,17 @@ namespace xlevel
 
     inline build_result BuildGamePluginIfStale( game_plugin_state& Plugin, std::filesystem::file_time_type ModuleSourceTime ) noexcept
     {
-        // One build at a time in the process: Levels of the same Game share its build folder, and the second one then finds the DLL up to date.
-        static std::mutex s_BuildMutex;
-        std::lock_guard   BuildLock(s_BuildMutex);
+        // One build at a time per build folder: Levels of the same Game share it, and the second one then finds the DLL up to date. Builds of different Games go on side by side.
+        static std::mutex s_MapMutex;
+        static std::unordered_map<std::wstring, std::unique_ptr<std::mutex>> s_BuildMutexes;
+        std::mutex* pBuildMutex = nullptr;
+        {
+            std::lock_guard MapLock(s_MapMutex);
+            auto& pSlot = s_BuildMutexes[Plugin.m_Paths.m_BuildDir.wstring()];
+            if (!pSlot) pSlot = std::make_unique<std::mutex>();
+            pBuildMutex = pSlot.get();
+        }
+        std::lock_guard BuildLock(*pBuildMutex);
 
         std::error_code Ec;
         const auto& P = Plugin.m_Paths;
@@ -386,7 +391,7 @@ namespace xlevel
         {
             std::wstring Configure = std::format(L"cmake -S \"{}\" -B \"{}\"", P.m_Root.wstring(), P.m_BuildDir.wstring()) + EngineArgs;
             if (!bCacheExists) Configure += ScriptProjectGeneratorArgs(P);
-            if (const auto ConfigureExit = RunCmakeCommand(Configure, P.m_Root, pAdapter); ConfigureExit != 0)
+            if (const auto ConfigureExit = RunCmakeCommand(Configure, P.m_Root, Plugin.m_hBuildJob, pAdapter); ConfigureExit != 0)
             {
                 Plugin.m_LastStatus = std::format("Game.dll: cmake reconfigure FAILED (exit={}) - see the Logs (LogProblems -Operation {})", ConfigureExit, Op.Id());
                 LogGamePlugin(Plugin.m_LastStatus);
@@ -402,7 +407,7 @@ namespace xlevel
                 std::filesystem::last_write_time(PchFile, std::filesystem::file_time_type::clock::now(), Ec);
         }
 
-        const auto BuildExit = RunCmakeCommand(std::format(L"cmake --build \"{}\" --target Game --config {} -- /nodeReuse:false", P.m_BuildDir.wstring(), P.m_Config), P.m_Root, pAdapter);
+        const auto BuildExit = RunCmakeCommand(std::format(L"cmake --build \"{}\" --target Game --config {} -- /nodeReuse:false", P.m_BuildDir.wstring(), P.m_Config), P.m_Root, Plugin.m_hBuildJob, pAdapter);
         if (BuildExit != 0)
         {
             Plugin.m_LastStatus = std::format("Game.dll: BUILD FAILED (exit={}) - see the Logs (LogProblems -Operation {})", BuildExit, Op.Id());

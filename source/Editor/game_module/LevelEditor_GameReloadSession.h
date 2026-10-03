@@ -51,9 +51,9 @@ namespace xlevel
         return true;
     }
 
-    inline bool LoadSnapshot( xecs::game_mgr::instance& GameMgr, const std::wstring& Path ) noexcept
+    inline bool LoadSnapshot( xecs::game_mgr::instance& GameMgr, const std::wstring& Path, const game_plugin_state* pPlugin = nullptr ) noexcept
     {
-        if (g_pGamePlugin && g_pGamePlugin->m_bSimulateSnapshotFailure)
+        if (pPlugin && pPlugin->m_bSimulateSnapshotFailure)
         {
             LogGamePlugin("Game.dll: snapshot restore failed: simulated (SimulateSnapshotFailure)");
             return false;
@@ -198,6 +198,7 @@ namespace xlevel
         }
 
         Plugin.m_bBuilding  = true;
+        Plugin.BuildJob();                                   // made here, on the thread that starts the build: CancelBuild reads it from another one
         Plugin.m_GameInputs = CaptureGameInputs(Game);      // what the build waits for the resource pipeline to have made: read here for the same reason
         // A Game whose compile is current but whose game project is not there (a cache that was cleared, or a project made before each Game had its own folder): the pipeline would
         // not run it again, so ask for it.
@@ -302,20 +303,21 @@ namespace xlevel
     }
 
     //---------------------------------------------------------------------------
-    // Called once per frame from the main loop. Reads/writes the single-instance globals (g_PendingReloadCompatibility,
-    // g_pGamePlugin) and strips the components from the editor's own scenes.
+    // Called once per frame by the Level's editor. Reads/writes the pending state of the Level's game module and strips the components from the Level's own scenes.
     //---------------------------------------------------------------------------
     inline void RenderReloadCompatibilityModal(xlevel::level_context& Ed, const ImVec2* pCenter = nullptr) noexcept
     {
-        if (g_PendingReloadCompatibility.has_value())
+        auto* pPlugin = Ed.m_pGamePlugin;
+        if (!pPlugin) return;
+        if (pPlugin->m_bPendingMissing)
             ImGui::OpenPopup("Game.dll Reload - Missing Components");
 
         if (xeditor::BeginModal("Game.dll Reload - Missing Components", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings, pCenter))
         {
-            if (g_PendingReloadCompatibility.has_value())
+            if (pPlugin->m_bPendingMissing)
             {
-                ImGui::Text("The new Game.dll build no longer has %zu component type(s)\nthat currently-open scenes use:", g_PendingReloadCompatibility->m_Missing.size());
-                for (auto& Dep : g_PendingReloadCompatibility->m_Missing)
+                ImGui::Text("The new Game.dll build no longer has %zu component type(s)\nthat currently-open scenes use:", pPlugin->m_PendingMissing.size());
+                for (auto& Dep : pPlugin->m_PendingMissing)
                     ImGui::BulletText("%s", Dep.m_Name.c_str());
                 ImGui::Separator();
                 ImGui::TextWrapped(
@@ -327,16 +329,18 @@ namespace xlevel
 
                 if (ImGui::Button("Strip and Continue", ImVec2(160, 0)))
                 {
-                    for (auto* pCtx : g_LevelContexts) StripMissingComponentsFromOpenScenes(*pCtx, g_PendingReloadCompatibility->m_Missing);
-                    g_PendingReloadCompatibility.reset();
+                    StripMissingComponentsFromOpenScenes(Ed, pPlugin->m_PendingMissing);
+                    pPlugin->m_bPendingMissing = false;
+                    pPlugin->m_PendingMissing.clear();
                     ImGui::CloseCurrentPopup();
-                    if (g_pGamePlugin) StartGameReload(*g_pGamePlugin);
+                    StartGameReload(*pPlugin);
                 }
                 ImGui::SetItemDefaultFocus();
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel", ImVec2(120, 0)))
                 {
-                    g_PendingReloadCompatibility.reset();
+                    pPlugin->m_bPendingMissing = false;
+                    pPlugin->m_PendingMissing.clear();
                     ImGui::CloseCurrentPopup();
                 }
             }

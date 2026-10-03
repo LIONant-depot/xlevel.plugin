@@ -145,12 +145,9 @@ namespace xlevel
         if (auto* pHost = xeditor::host::current()) pHost->withdraw<play_gate>();
 
         // A first build still running is stopped rather than waited for.
-        if (!Svc.FirstBuilds.empty())
-        {
-            xlevel::CancelGameBuild();
-            for (auto& B : Svc.FirstBuilds) if (B.m_pBuilder->m_BuildFuture.valid()) B.m_pBuilder->m_BuildFuture.wait();
-            Svc.FirstBuilds.clear();
-        }
+        for (auto& B : Svc.FirstBuilds) B.m_pBuilder->CancelBuild();
+        for (auto& B : Svc.FirstBuilds) if (B.m_pBuilder->m_BuildFuture.valid()) B.m_pBuilder->m_BuildFuture.wait();
+        Svc.FirstBuilds.clear();
 #endif
         Svc.bReady = false;
     }
@@ -609,7 +606,7 @@ namespace xlevel
             // The game module goes after the world (its systems live in it) and before the copy of the core it is bound to. A build still running is stopped rather than waited for.
             if (m_GamePlugin.m_bBuilding)
             {
-                xlevel::CancelGameBuild();
+                m_GamePlugin.CancelBuild();                       // only this Level's build: the others go on
                 if (m_GamePlugin.m_BuildFuture.valid()) m_GamePlugin.m_BuildFuture.wait();
                 m_GamePlugin.m_bBuilding = false;
             }
@@ -656,7 +653,7 @@ namespace xlevel
 
             if (PersistMode == xlevel::persist_mode::RawSnapshotBridge)
             {
-                xlevel::LoadSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath(m_LevelGuid.m_Instance.m_Value));
+                xlevel::LoadSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath(m_LevelGuid.m_Instance.m_Value), &m_GamePlugin);
                 xlevel::ReattachOpenScenes(*m_pGameMgr, std::move(m_ReloadCapture));
                 if (!m_State.m_CurrentLevel.empty())
                     xlioncore::Ecs(*m_pGameMgr).LoadLevel(m_State.m_CurrentLevel);

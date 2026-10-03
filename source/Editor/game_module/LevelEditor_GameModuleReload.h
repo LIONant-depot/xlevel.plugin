@@ -2,25 +2,12 @@
 
 namespace xlevel
 {
-    //---------------------------------------------------------------------------
-    // Pending reload-compatibility confirmation (component-registry compatibility plan, Phase 3) -
-    // set by ReloadGameModule's own pre-flight gate below when a candidate DLL doesn't cover every
-    // component type the currently-open scenes' own ComponentDeps.txt manifests declare they need.
-    // Rendered by RenderReloadCompatibilityModal (called once per frame from the main loop, same
-    // shape as RenderGamePluginLogPanel) - Cancel just clears this (the old generation was never
-    // touched, kept running exactly as it was); "Strip and Continue" removes the missing components
-    // from every affected entity in the open scenes via the normal, undo-tracked RemoveComponent
-    // command, then re-requests a reload - the retry finds nothing missing this time, since the
-    // components are already gone before the next candidate probe even runs.
-    //---------------------------------------------------------------------------
-    struct pending_reload_compatibility
-    {
-        std::vector<xecs::scene::component_dependency> m_Missing;
-    };
-    inline std::optional<pending_reload_compatibility> g_PendingReloadCompatibility;
+    // A reload whose candidate lacks components the open scenes need is refused (game_plugin_state::m_PendingMissing, see ReloadGameModule's own comment below): the old generation was
+    // never touched, kept running exactly as it was; RenderReloadCompatibilityModal asks the person. "Strip and Continue" removes the missing components from every affected entity in the
+    // open scenes of that Level via the normal, undo-tracked RemoveComponent command, then re-requests a reload - the retry finds nothing missing this time.
 
-    // Reloads Game.dll for the whole host: refuse if the open scenes need components the new module lacks; have every
-    // editor snapshot and destroy its world; swap the module and register its components; have every editor recreate its
+    // Reloads the Game.dll of a Level: refuse if its open scenes need components the new module lacks; have the Level
+    // snapshot and destroy its world; swap the module and register its components; have every editor recreate its
     // world. Returns whether the new module loaded. Nothing is touched if it is refused.
     template< typename T_REGISTER_HOST_COMPONENTS_FN >
     bool ReloadGameModule( game_plugin_state& Plugin, T_REGISTER_HOST_COMPONENTS_FN&& RegisterHostComponents ) noexcept
@@ -84,7 +71,8 @@ namespace xlevel
                 {
                     LogGamePlugin(std::format("Game.dll: reload blocked - {} component type(s) referenced by open scenes are missing from the new build", Missing.size()));
                     DiscardGamePluginCandidate(Candidate);
-                    g_PendingReloadCompatibility = pending_reload_compatibility{ std::move(Missing) };
+                    Plugin.m_PendingMissing  = std::move(Missing);
+                    Plugin.m_bPendingMissing = true;
                     return false;
                 }
             }

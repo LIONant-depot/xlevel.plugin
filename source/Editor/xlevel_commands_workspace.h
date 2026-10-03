@@ -22,9 +22,9 @@
 // Defined with the game plugin state (game_module/LevelEditor_GamePluginLoad.h), which comes after this header.
 namespace xlevel
 {
-    inline std::string GameModuleStatusText() noexcept;
-    inline std::string SimulateModuleCrash( const std::string& State ) noexcept;
-    inline std::string SimulateSnapshotFailure( const std::string& State ) noexcept;
+    inline std::string GameModuleStatusText( const game_plugin_state* pPlugin ) noexcept;
+    inline std::string SimulateModuleCrash( game_plugin_state* pPlugin, const std::string& State ) noexcept;
+    inline std::string SimulateSnapshotFailure( game_plugin_state* pPlugin, const std::string& State ) noexcept;
 }
 
 namespace xlevel::commands
@@ -368,7 +368,7 @@ namespace xlevel::commands
         void RegisterArguments() noexcept override {}
         std::string Query() noexcept override
         {
-            return GameModuleStatusText();
+            return GameModuleStatusText(LevelContext().m_pGamePlugin);
         }
     };
 
@@ -487,7 +487,7 @@ namespace xlevel::commands
         std::string Query() noexcept override
         {
             auto A = m_Parser.getOptionArgAs<std::string>(m_hState, 0);
-            return SimulateModuleCrash(std::holds_alternative<xerr>(A) ? std::string{} : std::get<std::string>(A));
+            return SimulateModuleCrash(LevelContext().m_pGamePlugin, std::holds_alternative<xerr>(A) ? std::string{} : std::get<std::string>(A));
         }
         xcmdline::parser::handle m_hState;
     };
@@ -502,7 +502,7 @@ namespace xlevel::commands
         std::string Query() noexcept override
         {
             auto A = m_Parser.getOptionArgAs<std::string>(m_hState, 0);
-            return SimulateSnapshotFailure(std::holds_alternative<xerr>(A) ? std::string{} : std::get<std::string>(A));
+            return SimulateSnapshotFailure(LevelContext().m_pGamePlugin, std::holds_alternative<xerr>(A) ? std::string{} : std::get<std::string>(A));
         }
         xcmdline::parser::handle m_hState;
     };
