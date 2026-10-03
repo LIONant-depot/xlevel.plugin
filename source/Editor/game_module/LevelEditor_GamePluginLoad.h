@@ -213,7 +213,7 @@ namespace xlevel
     inline void ReportRegistrations( const game_plugin_state& Plugin ) noexcept
     {
         if (!Plugin.m_bHasRegistrations) return;
-        const auto Listed = ProjectModules();
+        const auto Listed = ReadGame(Plugin.m_Paths.m_Game).m_Modules;      // the modules of the Game that is loaded
         std::vector<std::uint64_t> NotListed;
         int nOutside = 0;
         std::string Example;

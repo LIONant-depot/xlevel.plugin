@@ -366,6 +366,8 @@ namespace xlevel
                 if (auto Err = xlevel::LoadScriptConfig(m_GamePlugin.m_Paths.m_Project.wstring(), xlevel::g_ScriptConfig); Err)
                     xlevel::LogGamePlugin(std::format("Game.dll: failed to read Script.config.txt: {}", Err.getMessage()));
                 xlevel::MigrateScriptConfig();                               // a project from before the Game resource gets one, from its old module list
+                m_GamePlugin.m_Paths = xlevel::ForGame(m_GamePlugin.m_Paths, xlevel::ProjectGameValue());     // the Game the editor starts with: its own game project, build and DLL
+                xlevel::RemoveLegacyScriptFolder(m_GamePlugin.m_Paths);
 
                 if (xlevel::ProjectModules().empty())
                 {

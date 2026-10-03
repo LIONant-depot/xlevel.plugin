@@ -94,8 +94,7 @@ namespace xlevel
         if (Folder.empty()) return "the Game resource could not be created";
         xgame::descriptor D;
         for (const auto& Old : g_ScriptConfig.m_ModuleRefs) D.m_Modules.push_back(xscript::module::module_ref{ Old.m_Instance });
-        // The config names the Game first and the descriptor comes second: the descriptor is what makes the resource pipeline compile the Game, and the compile reads the config
-        // to know that it is the project's Game (only that one writes the project).
+        // The config names the Game first and the descriptor comes second: the descriptor is what makes the resource pipeline compile the Game.
         g_ScriptConfig.m_Game = Ref;
         g_ScriptConfig.m_ModuleRefs.clear();
         if (auto Err = SaveScriptConfig(xresource_editor::g_LibMgr.m_ProjectPath, g_ScriptConfig); Err) return std::format("Script.config.txt could not be saved: {}", Err.getMessage());
@@ -112,7 +111,7 @@ namespace xlevel
 
     //------------------------------------------------------------------------------------------------
     // What the thread that builds Game.dll needs to know about the Game project, as files. The Game resource and each of its modules are compiled by the resource pipeline
-    // (the modules first, then the Game, which writes <project>/Cache/Script/CMakeLists.txt); the build waits for that to be over, and has to be able to tell a compile that has
+    // (the modules first, then the Game, which writes <project>/Cache/Script/<Game guid>/CMakeLists.txt); the build waits for that to be over, and has to be able to tell a compile that has
     // not run yet from one that failed.
     //------------------------------------------------------------------------------------------------
     struct game_inputs
@@ -120,22 +119,25 @@ namespace xlevel
         std::filesystem::path               m_Descriptor;       // the Game's Descriptor.txt
         std::filesystem::path               m_Stamp;            // the Game's compiled resource: written by a compile that succeeded, stamped with the time that compile began
         std::filesystem::path               m_Log;              // the Game's Log.txt: written by every compile, successful or not
+        std::filesystem::path               m_CMakeLists;       // the game project the compile writes (<project>/Cache/Script/<guid>/CMakeLists.txt): a stamp without it is a project that is not there (a cleared cache, an older layout)
         std::vector<std::filesystem::path>  m_ModuleLogs;       // the Log.txt of each module's compile: the last thing a compile of the module writes
         bool                                m_bHasGame = false;
     };
 
-    inline game_inputs CaptureGameInputs() noexcept
+    // What the build of a Game waits for (Game: the instance guid of the Game resource; the Game resource has to exist).
+    inline game_inputs CaptureGameInputs(std::uint64_t Game) noexcept
     {
         game_inputs In;
-        const auto G = ReadProjectGame();
-        if (!G.HasGame()) return In;
+        const auto G = ReadGame(Game);
+        if (!Game || !G.HasGame()) return In;
         const auto Project = ProjectRoot();
-        const std::uint64_t V = g_ScriptConfig.m_Game.m_Instance.m_Value;
+        const std::uint64_t V = Game;
         const std::string Rest = std::format("Game/{:02X}/{:02X}/{:X}", V & 0xFF, (V >> 8) & 0xFF, V);
         In.m_bHasGame  = true;
         In.m_Descriptor = xgame::DescriptorFile(G.m_Folder);
         In.m_Stamp     = Project / "Cache" / "Resources" / "Platforms" / "WINDOWS" / Rest;
         In.m_Log       = Project / "Cache" / "Resources" / "Logs" / (Rest + ".log") / "Log.txt";
+        In.m_CMakeLists = Project / xgame::ScriptFolderRelative(xgame::game_ref{ xresource::instance_guid{ Game } }) / "CMakeLists.txt";
         for (const auto& Module : G.m_Modules) In.m_ModuleLogs.push_back(Project / xgame::ModuleLogRelative(Module));
         return In;
     }
@@ -160,7 +162,7 @@ namespace xlevel
         for (const auto& Log : In.m_ModuleLogs) Consider(Log);
 
         const auto Made = std::filesystem::last_write_time(In.m_Stamp, Ec);
-        if (!Ec && Made >= Newest) return game_project_state::Current;
+        if (!Ec && Made >= Newest && std::filesystem::exists(In.m_CMakeLists, Ec)) return game_project_state::Current;
 
         // Not made since the last change: a compile that has not run yet, or one that ran and failed (it writes its log and not the stamp).
         const auto Ran = std::filesystem::last_write_time(In.m_Log, Ec);
