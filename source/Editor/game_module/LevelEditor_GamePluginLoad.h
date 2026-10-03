@@ -346,7 +346,7 @@ namespace xlevel
         if (auto* pUnregister = reinterpret_cast<xecs_plugin_pfn_unregister*>(GetProcAddress(Plugin.m_hModule, XECS_PLUGIN_UNREGISTER_NAME)))
             pUnregister(Plugin.m_Token);
 
-        xecs::component::mgr::UnregisterPlugin(Plugin.m_Token);
+        Plugin.Registry().UnregisterPlugin(Plugin.m_Token);
 
         FreeLibrary(Plugin.m_hModule);
         Plugin.m_hModule  = nullptr;

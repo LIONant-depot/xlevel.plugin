@@ -8,6 +8,7 @@
 // (BuildGamePluginIfStale), which builds the generated script project (LevelEditor_GameModuleSources.h). Meant to be included via the umbrella (LevelEditor_GamePlugin.h) only, after
 // LevelEditor_GamePluginLog.h (LogGamePlugin).
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GameModuleSources.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_plugin_dlls.h"
 #include "dependencies/xlog/source/xlog_build.h"
 #include <chrono>
 #include <optional>
@@ -52,6 +53,11 @@ namespace xlevel
     struct game_plugin_state
     {
         game_module_events m_Events;      // the editors that take part in a reload subscribe here
+
+        // The xECSEditor this plugin state uses for what belongs to the registry of ITS copy of the core and to no world (reset it, unregister the Game, a short-lived world to register through).
+        // One copy of the core for now (the process's LIONCore.dll); a set of DLLs made for one Level will have its own.
+        ecs_editor_ptr m_pRegistry;
+        xlioncore::xECSEditor& Registry() noexcept { if (!m_pRegistry) m_pRegistry = CreateEcsEditor(); return *m_pRegistry; }
         std::vector<game_registration> m_Registrations;     // what the loaded Game.dll defines, with its modules (empty when it is not loaded)
         bool                   m_bHasRegistrations = false; // the loaded Game.dll has the XScript_GetRegistrations export (one built before it existed has not: its modules are unknown)
         std::unordered_map<std::uint64_t, std::string> m_ModuleNames;   // the names of the script modules, for the hints (refreshed now and then: a module can be renamed)

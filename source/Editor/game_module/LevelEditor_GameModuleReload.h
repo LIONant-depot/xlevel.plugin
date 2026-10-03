@@ -94,15 +94,16 @@ namespace xlevel
 
         // Every world is gone, so the shared component registry can be reset (see UnregisterPlugin's own comment).
         if (Plugin.isLoaded()) UnloadGamePlugin(Plugin);
-        else                   xecs::component::mgr::resetRegistrations();
+        else                   Plugin.Registry().ResetRegistrations();
 
         // Components are registered through an instance of the game manager, though the registry they land in is the
         // process's own; a short-lived one does it, and every editor's fresh world then finds them already registered.
         bool bLoaded = false;
         {
-            auto Registrar = std::make_unique<xecs::game_mgr::instance>();
-            RegisterHostComponents(*Registrar);
-            bLoaded = CommitGamePluginCandidate(*Registrar, Plugin, Candidate, NextGeneration);
+            auto pRegistrar = CreateEcsEditor();                          // made by the core: a world that knows its copy of it
+            auto& Registrar = pRegistrar->CreateWorld();
+            RegisterHostComponents(Registrar);
+            bLoaded = CommitGamePluginCandidate(Registrar, Plugin, Candidate, NextGeneration);
         }
 
         Plugin.m_Events.m_OnAfterReload.NotifyAll();

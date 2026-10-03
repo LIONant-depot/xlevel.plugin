@@ -34,7 +34,6 @@
 #include "dependencies/xLIONCore/src/game/xlioncore_game.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_editor.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_editor_tabs.h"
-#include "plugins/xlevel.plugin/source/Editor/xlevel_demo_content.h"
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GamePlugin.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_scene_sanity_scan.h"
 #include "source/Tools/Editor/xeditor_resource_editor.h"
@@ -290,8 +289,7 @@ namespace xlevel
         // matching what construction does.
         static void RegisterHostComponents(xecs::game_mgr::instance& GameMgr) noexcept
         {
-            GameMgr.RegisterComponents<xecs::editor::prefab_instance, xecs::component::entity_reference>();
-            RegisterEngineDLLComponents(GameMgr, L"LIONCore.dll");
+            if (auto* pEcs = xlioncore::EditorOf(GameMgr)) pEcs->RegisterHostComponents();       // the editor's components and the core's own, inside the copy of the core the world belongs to
             RegisterEngineDLLComponents(GameMgr, L"LIONRender.dll");
         }
 
@@ -299,8 +297,7 @@ namespace xlevel
         // PollGameReload) - needs m_pDevice to know whether to register LIONRender's own system.
         void RegisterHostSystems(xecs::game_mgr::instance& GameMgr) noexcept
         {
-            GameMgr.RegisterSystems<xlevel::tick_logger_a, xlevel::tick_logger_b>();
-            RegisterEngineDLLSystems(GameMgr, L"LIONCore.dll");
+            if (auto* pEcs = xlioncore::EditorOf(GameMgr)) pEcs->RegisterHostSystems();           // the systems of the core (the demo ones and the physics): locks the component types
 
             // LIONRender's component (Primitive) is registered unconditionally above
             // (RegisterHostComponents) so headless scenes still carry the data - but headless has no
@@ -321,7 +318,7 @@ namespace xlevel
             // gets a garbage/default value (confirmed live: asserted "Bit >= 0 && Bit < max" the one
             // time this was missed) - must run after Lock (already done, inside LIONCore.dll's own
             // RegisterSystems above) and before any host-compiled system/command touches these types.
-            xecs::component::mgr::SyncLocalBitIDs<xlioncore::static_tag, xlioncore::transform>();
+            xecs::component::mgr::SyncLocalBitIDs<xlioncore::static_tag, xlioncore::transform, xecs::editor::prefab_instance, xecs::component::entity_reference>();      // the editor's own copies: prefab instances and entity references are registered by the core now
         }
 
         session(xresource::full_guid Guid, xresource_editor::library::guid /*LibraryGuid*/, xgpu::device* pDevice) noexcept
