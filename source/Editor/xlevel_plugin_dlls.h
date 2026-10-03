@@ -16,6 +16,14 @@
 
 namespace xlevel
 {
+    // The module of an engine DLL, loaded when nothing loaded it yet: the editor no longer imports these DLLs (it calls their interfaces, found by name), so the linker leaves the import out and the
+    // loader does not bring them in. A copy of the core made for one Level is loaded by its own name the same way.
+    inline HMODULE LoadEngineModule(const wchar_t* pName) noexcept
+    {
+        HMODULE hModule = GetModuleHandleW(pName);
+        return hModule ? hModule : LoadLibraryW(pName);
+    }
+
     // The xECSEditor of a copy of the core (see xlioncore_editor.h): the editor does not run xECS code itself, it asks the copy it was given for this interface and calls it. The copy is found by the
     // name of its module for now (the one LIONCore.dll); a manager that makes copies per Level will pass the name of the copy it made. Null when that module has no editor interface (or another version).
     struct ecs_editor_release { void operator()(xlioncore::xECSEditor* p) const noexcept { if (p) p->Release(); } };
@@ -23,7 +31,7 @@ namespace xlevel
 
     inline ecs_editor_ptr CreateEcsEditor(const wchar_t* pCoreModule = L"LIONCore.dll") noexcept
     {
-        HMODULE hModule = GetModuleHandleW(pCoreModule);
+        HMODULE hModule = LoadEngineModule(pCoreModule);
         auto* pCreate = hModule ? reinterpret_cast<xlioncore::pfn_create_editor>(GetProcAddress(hModule, xlioncore::kCreateEditorName)) : nullptr;
         if (!pCreate) { OutputDebugStringA("xECSEditor: the core module has no editor interface\n"); return {}; }
         ecs_editor_ptr pEditor(pCreate());
@@ -37,7 +45,7 @@ namespace xlevel
 
     inline render_editor_ptr CreateRenderEditor(const wchar_t* pRenderModule = L"LIONRender.dll") noexcept
     {
-        HMODULE hModule = GetModuleHandleW(pRenderModule);
+        HMODULE hModule = LoadEngineModule(pRenderModule);
         auto* pCreate = hModule ? reinterpret_cast<xlionrender::pfn_create_editor>(GetProcAddress(hModule, xlionrender::kCreateEditorName)) : nullptr;
         if (!pCreate) { OutputDebugStringA("xRenderEditor: the render module has no editor interface\n"); return {}; }
         render_editor_ptr pEditor(pCreate());
