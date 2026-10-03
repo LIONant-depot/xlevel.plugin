@@ -122,6 +122,19 @@ namespace xlevel::engine
         return bOk;
     }
 
+    // LoadLibrary of a file that was just written: a scanner can hold it for a moment (a sharing violation), so it is tried again for a short while.
+    inline HMODULE LoadCopy(const std::filesystem::path& Path, DWORD& Error) noexcept
+    {
+        for (int Try = 0; Try < 40; ++Try)
+        {
+            if (HMODULE hModule = LoadLibraryExW(Path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH)) return hModule;
+            Error = GetLastError();
+            if (Error != ERROR_SHARING_VIOLATION && Error != ERROR_ACCESS_DENIED) break;
+            Sleep(25);
+        }
+        return nullptr;
+    }
+
     inline std::vector<std::uint8_t> ReadFile(const std::filesystem::path& Path) noexcept
     {
         std::ifstream In(Path, std::ios::binary | std::ios::ate);
@@ -243,15 +256,16 @@ namespace xlevel::engine
             pSet->m_RenderPath = m_CopiesDir / pSet->m_Render;
 
             if (!PatchedCopy(OriginalCore, pSet->m_CorePath)) { Why = "the core could not be copied"; pSet->m_CorePath.clear(); pSet->m_RenderPath.clear(); return {}; }
-            pSet->m_hCore = LoadLibraryExW(pSet->m_CorePath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-            if (!pSet->m_hCore) { Why = std::format("the core copy did not load (error {})", GetLastError()); pSet->m_RenderPath.clear(); return {}; }
+            DWORD Error = 0;
+            pSet->m_hCore = LoadCopy(pSet->m_CorePath, Error);
+            if (!pSet->m_hCore) { Why = std::format("the core copy did not load (error {})", Error); pSet->m_RenderPath.clear(); return {}; }
 
             const auto OriginalRender = m_OriginalsDir / kRenderNameW;
             if (std::filesystem::exists(OriginalRender, Ec))
             {
                 if (!PatchedCopy(OriginalRender, pSet->m_RenderPath, kCoreName, pSet->CoreName())) { Why = "the render DLL could not be copied and patched"; pSet->m_RenderPath.clear(); return {}; }
-                pSet->m_hRender = LoadLibraryExW(pSet->m_RenderPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-                if (!pSet->m_hRender) { Why = std::format("the render copy did not load (error {})", GetLastError()); return {}; }
+                pSet->m_hRender = LoadCopy(pSet->m_RenderPath, Error);
+                if (!pSet->m_hRender) { Why = std::format("the render copy did not load (error {})", Error); return {}; }
             }
             else
             {

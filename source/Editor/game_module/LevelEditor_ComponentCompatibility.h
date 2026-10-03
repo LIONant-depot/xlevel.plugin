@@ -236,11 +236,6 @@ namespace xlevel
         const auto Names = commands::BuildAssetNameMap(xgame::type_guid_v);
         auto Label = [&](std::uint64_t Game) { const auto It = Names.find(Game); return It == Names.end() ? std::format("{:X}", Game) : It->second; };
         S.m_Name = S.m_bNamed ? Label(S.m_Game) : "(no Game)";
-        if (S.m_bNamed && S.m_Game != ProjectGameValue())
-        {
-            S.m_Issue = std::format("This Level runs under the Game '{}', but this editor runs the project's Game '{}' (one Game at a time), so it cannot open.", S.m_Name, Label(ProjectGameValue()));
-            return S;
-        }
         // What the scenes need must be in the Game: without a Game nothing is, so the Level has no scripts, components or systems of any module
         scene_module_needs Needs;
         for (const auto Scene : Scenes) AddSceneModuleNeeds(Needs, Project, Scene, /*bTransitive*/ true);

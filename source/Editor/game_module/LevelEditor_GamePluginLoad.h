@@ -36,8 +36,8 @@ namespace xlevel
     {
         xscene::g_ComponentDisplayInfo.clear();
         // Engine DLLs first (Transform / Physics / Primitive categories), then Game.dll overlays.
-        MergeComponentDisplayInfoFromModule(GetModuleHandleW(L"LIONCore.dll"));
-        MergeComponentDisplayInfoFromModule(GetModuleHandleW(L"LIONRender.dll"));
+        MergeComponentDisplayInfoFromModule(GetModuleHandleW(Plugin.m_CoreModule.c_str()));
+        MergeComponentDisplayInfoFromModule(GetModuleHandleW(Plugin.m_RenderModule.c_str()));
         if (Plugin.isLoaded())
             MergeComponentDisplayInfoFromModule(Plugin.m_hModule);
     }
@@ -51,7 +51,10 @@ namespace xlevel
     // deleted the previous one anyway (safe then: nothing still has it mapped). Returns the new
     // copy's path, or empty on failure (nothing compiled yet, or the copy itself failed).
     //---------------------------------------------------------------------------
-    inline std::wstring CopyGamePluginForLoad( const script_project_paths& P, std::uint32_t Generation ) noexcept
+    //
+    // The copy imports the core by its name: when the plugin state runs on a copy of the core (a set made for a Level), the import is renamed to it, so that this Game.dll binds to THAT registry and no
+    // other. The copy is named after the core it is bound to as well (two Levels of the same Game load two copies of it).
+    inline std::wstring CopyGamePluginForLoad( const script_project_paths& P, std::uint32_t Generation, const std::wstring& CoreModule = engine::kCoreNameW ) noexcept
     {
         std::error_code Ec;
         if (!std::filesystem::exists(P.m_Dll, Ec))
@@ -64,11 +67,13 @@ namespace xlevel
         // /PDBALTPATH set to its bare name, so the debugger looks for it next to the module it loaded: NewPdb is therefore
         // always the same bare name, not generation-suffixed like the DLL.
         std::filesystem::create_directories(P.m_LoadedDir, Ec);
-        const auto NewDll = P.m_LoadedDir / std::format(L"Game_loaded_{}.dll", Generation);
+        const bool bOriginalCore = _wcsicmp(CoreModule.c_str(), engine::kCoreNameW) == 0;
+        const auto NewDll = P.m_LoadedDir / (bOriginalCore ? std::format(L"Game_loaded_{}.dll", Generation) : std::format(L"Game_loaded_{}_{}.dll", std::filesystem::path(CoreModule).stem().wstring(), Generation));
         const auto SrcPdb = P.m_PdbDir / L"Game.pdb";
         const auto NewPdb = P.m_LoadedDir / L"Game.pdb";
 
-        std::filesystem::copy_file(P.m_Dll, NewDll, std::filesystem::copy_options::overwrite_existing, Ec);
+        if (bOriginalCore) std::filesystem::copy_file(P.m_Dll, NewDll, std::filesystem::copy_options::overwrite_existing, Ec);
+        else if (!engine::PatchedCopy(P.m_Dll, NewDll, engine::kCoreName, std::filesystem::path(CoreModule).string())) Ec = std::make_error_code(std::errc::io_error);
         if (Ec)
         {
             LogGamePlugin(std::format("Game.dll: failed to copy {} -> {}", P.m_Dll.string(), NewDll.string()));
@@ -118,11 +123,11 @@ namespace xlevel
     // and LoadLibrary it - no registry mutation at all, safe to call while an OLD generation is still
     // fully loaded and running. Returns an invalid candidate (m_hModule==nullptr) on any failure -
     // nothing was allocated, nothing to Discard.
-    inline game_plugin_candidate PrepareGamePluginCandidate( const script_project_paths& Paths, std::uint32_t Generation ) noexcept
+    inline game_plugin_candidate PrepareGamePluginCandidate( const game_plugin_state& Plugin, std::uint32_t Generation ) noexcept
     {
         game_plugin_candidate Candidate;
 
-        const std::wstring LoadedPath = CopyGamePluginForLoad(Paths, Generation);
+        const std::wstring LoadedPath = CopyGamePluginForLoad(Plugin.m_Paths, Generation, Plugin.m_CoreModule);
         if (LoadedPath.empty())
         {
             LogGamePlugin("Game.dll: nothing to load");
@@ -138,7 +143,8 @@ namespace xlevel
         // window-stack bookkeeping. A missing/failed-to-load Game.dll is an expected, benign
         // condition anyway (nothing has been built yet on a fresh checkout) - a plain log line is
         // the right amount of ceremony for it, not a modal.
-        HMODULE hModule = LoadLibraryExW(LoadedPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);       // the DLL's own folder is searched for the DLLs it needs (the libraries' runtime files)
+        DWORD LoadError = 0;
+        HMODULE hModule = engine::LoadCopy(LoadedPath, LoadError);       // the DLL's own folder is searched for the DLLs it needs (the libraries' runtime files)
         if (hModule == nullptr)
         {
             LogGamePlugin(std::format("Game.dll: LoadLibrary failed for {}", std::filesystem::path(LoadedPath).filename().string()));
@@ -306,7 +312,7 @@ namespace xlevel
     // had.
     inline bool LoadGamePluginComponents( xecs::game_mgr::instance& GameMgr, game_plugin_state& Plugin, std::uint32_t Generation ) noexcept
     {
-        auto Candidate = PrepareGamePluginCandidate(Plugin.m_Paths, Generation);
+        auto Candidate = PrepareGamePluginCandidate(Plugin, Generation);
         return CommitGamePluginCandidate(GameMgr, Plugin, Candidate, Generation);
     }
 

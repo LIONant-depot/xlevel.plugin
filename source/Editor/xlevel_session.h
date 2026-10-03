@@ -63,22 +63,78 @@
 
 namespace xlevel
 {
-    // What every open Level shares: the game module (Game.dll - the scripts are a resource of their own, not part of any
-    // Level) and the gate Play waits on for its build. Created by the first editor, unloaded by the shell at shutdown.
+    // The first build of a Game's DLL (a Game that has none this editor can load), made before a Level of the Game opens: a Level opened without the components of its scripts would silently drop them from
+    // every entity that has one. The builder is a plugin state of its own that only builds (it is not any Level's).
+    struct first_build
+    {
+        std::uint64_t                     m_Game = 0;
+        std::unique_ptr<game_plugin_state> m_pBuilder;
+    };
+
+    // What the app shares between the Levels that are open: the maker of the copies of the engine DLLs and the gate Play waits on for its build. Every Level has its own game module (Game.dll, the Game it names,
+    // loaded on its own copy of the core), its own core and its own render DLL: nothing of the engine is shared between Levels.
     struct level_services
     {
-        game_plugin_state Plugin;
         engine::manager   Engines;      // makes the copies of the engine DLLs that each Level runs on (xlevel_engine_copies.h)
         play_gate         Gate;
         bool              bReady = false;
 
-        // True while the editor started without a usable Game.dll and is building its first one in the background. The
-        // editor is up and responsive meanwhile, but opening a Level (and the command pipe) waits for it: a Level opened
-        // without its script components would silently drop them from every entity that has one.
-        bool              bInitialBuild = false;
+        // The Games whose first Game.dll is being built in the background. The editor is up and responsive meanwhile, but opening a Level of one of them (and the command pipe) waits for it.
+        std::vector<first_build>      FirstBuilds;
+        std::vector<std::uint64_t>    FailedFirstBuilds;        // their build failed: their Levels open anyway (without the module), and try the build again themselves
+        bool              InitialBuild() const noexcept { return !FirstBuilds.empty(); }
     };
 
     inline level_services& Services() noexcept { static level_services s_Services; return s_Services; }
+
+#if defined(XECS_BUILD_SHARED)
+    // Whether the Game has script modules and no DLL this editor can load yet (and its first build has not failed): a Level of it waits for the build.
+    inline bool GameNeedsFirstBuild(std::uint64_t Game) noexcept
+    {
+        if (!Game || ReadGame(Game).m_Modules.empty()) return false;
+        const auto& Failed = Services().FailedFirstBuilds;
+        if (std::find(Failed.begin(), Failed.end(), Game) != Failed.end()) return false;
+        return !IsGamePluginUsable(ForGame(MakeScriptProjectPaths(), Game));
+    }
+
+    inline bool FirstBuildRunning(std::uint64_t Game) noexcept
+    {
+        const auto& Builds = Services().FirstBuilds;
+        return std::any_of(Builds.begin(), Builds.end(), [&](const first_build& B) noexcept { return B.m_Game == Game; });
+    }
+
+    inline void StartFirstBuild(std::uint64_t Game) noexcept
+    {
+        if (FirstBuildRunning(Game)) return;
+        auto pBuilder = std::make_unique<game_plugin_state>();
+        pBuilder->m_Game  = Game;
+        pBuilder->m_Paths = ForGame(MakeScriptProjectPaths(), Game);
+        LogGamePlugin("Game.dll: no usable build - building in the background, the Levels of this Game open when it is ready");
+        StartGameReload(*pBuilder);
+        if (pBuilder->m_bBuilding) Services().FirstBuilds.push_back({ Game, std::move(pBuilder) });
+    }
+
+    // Once a frame: the builds that finished are taken (a failed one is remembered, so that its Levels do not wait for it for ever).
+    inline void PumpFirstBuilds() noexcept
+    {
+        auto& Builds = Services().FirstBuilds;
+        for (auto It = Builds.begin(); It != Builds.end(); )
+        {
+            auto& Builder = *It->m_pBuilder;
+            if (Builder.m_BuildFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready) { ++It; continue; }
+            const auto Result = Builder.m_BuildFuture.get();
+            Builder.m_bBuilding = false;
+            if (Result == build_result::Failed) Services().FailedFirstBuilds.push_back(It->m_Game);
+            It = Builds.erase(It);
+        }
+    }
+
+    // Blocks until the Game's first build is over (a command that opens a Level of it: the reply says what the Level has).
+    inline void WaitFirstBuild(std::uint64_t Game) noexcept
+    {
+        while (FirstBuildRunning(Game)) { PumpFirstBuilds(); Sleep(20); }
+    }
+#endif
 
     // Called once by the shell, after every editor is gone and before the process ends.
     inline void ShutdownLevelServices() noexcept
@@ -88,15 +144,14 @@ namespace xlevel
 #if defined(XECS_BUILD_SHARED)
         if (auto* pHost = xeditor::host::current()) pHost->withdraw<play_gate>();
 
-        // A build still running is stopped rather than waited for.
-        if (Svc.Plugin.m_bBuilding)
+        // A first build still running is stopped rather than waited for.
+        if (!Svc.FirstBuilds.empty())
         {
             xlevel::CancelGameBuild();
-            if (Svc.Plugin.m_BuildFuture.valid()) Svc.Plugin.m_BuildFuture.wait();
-            Svc.Plugin.m_bBuilding = false;
+            for (auto& B : Svc.FirstBuilds) if (B.m_pBuilder->m_BuildFuture.valid()) B.m_pBuilder->m_BuildFuture.wait();
+            Svc.FirstBuilds.clear();
         }
 #endif
-        xlevel::UnloadGamePlugin(Svc.Plugin);
         Svc.bReady = false;
     }
 
@@ -213,15 +268,28 @@ namespace xlevel
         LevelDocument                              m_Document;
         xundo::system                              m_Undo;
         level_state                                m_State;
+        // The copies of the engine DLLs this Level runs on (xlevel_engine_copies.h): its own core and its own render DLL, so that nothing of the engine is shared with another Level. Null when they could not be
+        // made: the Level then runs on the originals (LIONCore.dll, LIONRender.dll), like before there were copies.
+        std::shared_ptr<engine::engine_set>        m_pSet = MakeEngineSet();
+        const wchar_t* CoreModule()   const noexcept { return m_pSet ? m_pSet->m_Core.c_str() : engine::kCoreNameW; }
+        const wchar_t* RenderModule() const noexcept { return m_pSet && !m_pSet->m_Render.empty() ? m_pSet->m_Render.c_str() : engine::kRenderNameW; }
+        static std::shared_ptr<engine::engine_set> MakeEngineSet() noexcept
+        {
+            std::string Why;
+            auto pSet = Services().Engines.Make(Why);
+            if (!pSet) LogGamePlugin(std::format("Engine copies: {} - this Level runs on the original DLLs", Why));
+            return pSet;
+        }
+
         // The ECS of this Level: the editor interface of the core (what runs xECS code), its game (the game manager - the ECS instance the Level is loaded into - and the time, which the speed slider sets).
-        ecs_editor_ptr                             m_pEcs = CreateEcsEditor();
+        ecs_editor_ptr                             m_pEcs = CreateEcsEditor(CoreModule());
         xlioncore::game&                           m_Game = m_pEcs->Game();
-        render_editor_ptr                          m_pRender = CreateRenderEditor();      // draws and picks this world (the render DLL of the same copy of the core)
+        render_editor_ptr                          m_pRender = CreateRenderEditor(RenderModule());      // draws and picks this world (the render DLL of the same copy of the core)
         std::unique_ptr<xecs::game_mgr::instance>& m_pGameMgr = m_Game.m_pGameMgr;
         std::wstring                               m_ProjectPath;
         xgpu::device*                              m_pDevice = nullptr;   // null in headless builds - see resource_editor's own comment on m_pDevice
 
-        game_plugin_state&                         m_GamePlugin = Services().Plugin;   // shared by every open Level
+        game_plugin_state                          m_GamePlugin;                       // the game module of THIS Level: its Game's Game.dll, on its own copy of the core
         xresource::full_guid                       m_LevelGuid;                        // the Level this editor is for (empty: the stand-in editor that is used when no Level is open)
         editor_tabs::window_names                  m_Names;                            // this editor's own window ids
         std::uint32_t                              m_SeenBuildSeq = 0;                 // the last finished Game.dll build this editor reacted to
@@ -290,10 +358,10 @@ namespace xlevel
         // Registers this session's own demo content - kept as a plain static function (not inlined at each of
         // the two call sites below) so PollGameReload can re-run the exact same registration after a reload,
         // matching what construction does.
-        static void RegisterHostComponents(xecs::game_mgr::instance& GameMgr) noexcept
+        void RegisterHostComponents(xecs::game_mgr::instance& GameMgr) noexcept
         {
             if (auto* pEcs = xlioncore::EditorOf(GameMgr)) pEcs->RegisterHostComponents();       // the editor's components and the core's own, inside the copy of the core the world belongs to
-            RegisterEngineDLLComponents(GameMgr, L"LIONRender.dll");
+            RegisterEngineDLLComponents(GameMgr, RenderModule());
         }
 
         // Not static (unlike RegisterHostComponents, passed around as a bare function pointer by
@@ -305,7 +373,7 @@ namespace xlevel
             // LIONRender's component (Primitive) is registered unconditionally above
             // (RegisterHostComponents) so headless scenes still carry the data - but headless has no
             // device/window to draw with, so its render SYSTEM never runs there.
-            if (m_pDevice) RegisterEngineDLLSystems(GameMgr, L"LIONRender.dll");
+            if (m_pDevice) RegisterEngineDLLSystems(GameMgr, RenderModule());
 
             // The editor does not sync its own copies of the bit ids (info_v<T>.m_BitID of the types it names: static_tag, transform, prefab_instance, entity_reference): they are per-BINARY, and with
             // several copies of the core in one process none of them would be the right one. Whatever the editor needs of a component it asks the xECSEditor of the Level's copy of the core (HasComponent,
@@ -341,26 +409,42 @@ namespace xlevel
             }
             if (!RepoRoot.empty()) m_ProjectPath = xresource_editor::g_LibMgr.m_ProjectPath;   // the shell has already opened the project by the time Open() can run
 
+            // The game module of THIS Level: the Game the Level names, built and loaded on this Level's own copy of the core (no Level, or a Level that names no Game, has none: no scripts, no components of
+            // any module, no systems of one). Never blocks startup on a build:
+            //  - a Game with no script modules has nothing to build or load at all;
+            //  - a usable Game.dll (built by this configuration) is loaded right away, even if its sources changed -
+            //    the rebuild then runs in the background and swaps it in like any other reload;
+            //  - no usable Game.dll: the first one was built before this Level opened (GameNeedsFirstBuild, see the app frame); a build that failed is tried again here.
+            m_GamePlugin.m_CoreModule   = CoreModule();
+            m_GamePlugin.m_RenderModule = RenderModule();
+            m_GamePlugin.m_pCoreSet     = m_pSet;                                           // keeps the copies alive for as long as the Game.dll bound to them
+            m_GamePlugin.m_Game         = m_LevelGuid.m_Instance.empty() ? 0 : xlevel::GameOfLevel(m_LevelGuid.m_Instance.m_Value);
 #if defined(XECS_BUILD_SHARED)
-            // The first editor brings the game module up; every other one just uses it (its components are already in the
-            // process-wide registry, each editor only registers the systems into its own world).
-            if (auto& Svc = Services(); !Svc.bReady)
             {
-                // Never blocks startup on a build:
-                //  - no script modules in the project: there is nothing to build or load at all;
-                //  - a usable Game.dll (built by this configuration) is loaded right away, even if its sources changed -
-                //    the rebuild then runs in the background and swaps it in like any other reload;
-                //  - no usable Game.dll: the first one is built in the background (bInitialBuild) and Levels open when it is.
+                auto& Svc = Services();
                 m_GamePlugin.m_Paths = xlevel::MakeScriptProjectPaths();
-                if (auto Err = xlevel::LoadScriptConfig(m_GamePlugin.m_Paths.m_Project.wstring(), xlevel::g_ScriptConfig); Err)
-                    xlevel::LogGamePlugin(std::format("Game.dll: failed to read Script.config.txt: {}", Err.getMessage()));
-                xlevel::MigrateScriptConfig();                               // a project from before the Game resource gets one, from its old module list
-                m_GamePlugin.m_Paths = xlevel::ForGame(m_GamePlugin.m_Paths, xlevel::ProjectGameValue());     // the Game the editor starts with: its own game project, build and DLL
+                if (!Svc.bReady)
+                {
+                    if (auto Err = xlevel::LoadScriptConfig(m_GamePlugin.m_Paths.m_Project.wstring(), xlevel::g_ScriptConfig); Err)
+                        xlevel::LogGamePlugin(std::format("Game.dll: failed to read Script.config.txt: {}", Err.getMessage()));
+                    xlevel::MigrateScriptConfig();                               // a project from before the Game resource gets one, from its old module list
+                    Svc.Gate.m_IsBuilding = []() noexcept { return g_pGamePlugin && g_pGamePlugin->m_bBuilding; };           // of the Level the user is working on
+                    Svc.Gate.m_StartBuild = []() noexcept { if (g_pGamePlugin) xlevel::StartGameReload(*g_pGamePlugin); };
+                    Svc.Gate.m_WhyNotPlay = [](const level_state& State) -> std::string
+                    {
+                        std::vector<std::uint64_t> Scenes;
+                        for (auto& S : State.m_OpenScenes) Scenes.push_back(S.m_Instance.m_Value);
+                        return xlevel::StatusOfLevelGame(State.m_CurrentLevel.m_Instance.m_Value, Scenes).m_Issue;
+                    };
+                    if (auto* pHost = xeditor::host::current()) pHost->provide(Svc.Gate);
+                    Svc.bReady = true;
+                }
+                m_GamePlugin.m_Paths = xlevel::ForGame(m_GamePlugin.m_Paths, m_GamePlugin.m_Game);     // its own game project, build and DLL
                 xlevel::RemoveLegacyScriptFolder(m_GamePlugin.m_Paths);
 
-                if (xlevel::ProjectModules().empty())
+                if (!m_GamePlugin.m_Game || xlevel::ReadGame(m_GamePlugin.m_Game).m_Modules.empty())
                 {
-                    m_GamePlugin.m_LastStatus = "Game.dll: the project has no script modules - nothing to build or load";
+                    m_GamePlugin.m_LastStatus = m_GamePlugin.m_Game ? "Game.dll: the Game has no script modules - nothing to build or load" : "Game.dll: no Game - nothing to build or load";
                     xlevel::LogGamePlugin(m_GamePlugin.m_LastStatus);
                 }
                 else
@@ -374,20 +458,8 @@ namespace xlevel
                             ? "Game.dll: sources changed - rebuilding in the background, the current build stays loaded until then"
                             : "Game.dll: no usable build - building in the background, Levels open when it is ready");
                         xlevel::StartGameReload(m_GamePlugin);
-                        Svc.bInitialBuild = !m_GamePlugin.isLoaded();
                     }
                 }
-
-                Svc.Gate.m_IsBuilding = []() noexcept { return Services().Plugin.m_bBuilding; };
-                Svc.Gate.m_StartBuild = []() noexcept { xlevel::StartGameReload(Services().Plugin); };
-                Svc.Gate.m_WhyNotPlay = [](const level_state& State) -> std::string
-                {
-                    std::vector<std::uint64_t> Scenes;
-                    for (auto& S : State.m_OpenScenes) Scenes.push_back(S.m_Instance.m_Value);
-                    return xlevel::StatusOfLevelGame(State.m_CurrentLevel.m_Instance.m_Value, Scenes).m_Issue;
-                };
-                if (auto* pHost = xeditor::host::current()) pHost->provide(Svc.Gate);
-                Svc.bReady = true;
             }
             m_SeenBuildSeq = m_GamePlugin.m_ResultSeq;
 #else
@@ -401,6 +473,7 @@ namespace xlevel
 
             m_pGameMgr->m_SceneMgr.m_ProjectPath  = m_ProjectPath;
             m_pGameMgr->m_SceneMgr.m_pModuleOfComponent = &xlevel::ResolveComponentModule;      // a scene's ComponentDeps.txt names the module of each component
+            m_pGameMgr->m_SceneMgr.m_pModuleOfComponentUser = &m_GamePlugin;                    // of this Level's game module
             m_pGameMgr->m_LevelMgr.m_ProjectPath  = m_ProjectPath;
             m_pGameMgr->m_PrefabMgr.m_ProjectPath = m_ProjectPath;
             m_pGameMgr->m_SystemMgr.m_ProjectPath = m_ProjectPath;
@@ -458,7 +531,7 @@ namespace xlevel
             m_GamePlugin.m_Events.m_OnBeforeReload.Register<&session::BeforeReload>(*this);
             m_GamePlugin.m_Events.m_OnAfterReload.Register<&session::AfterReload>(*this);
 
-            xlevel::g_pGamePlugin = &m_GamePlugin;
+            m_CmdContext.m_pGamePlugin = &m_GamePlugin;
             if (auto* pLogs = xlog::hub::current())          // LogVerify on a build problem: build again (an up-to-date module is answered at once; the evidence decides what it verifies)
                 pLogs->SetRecheck("game.build", [](const xlog::problem&) -> std::string
                 {
@@ -475,7 +548,7 @@ namespace xlevel
             m_CmdContext.m_pGame       = &m_Game;
             g_LevelContexts.push_back(&m_CmdContext);
             if (g_pActiveLevelContext == nullptr || !m_LevelGuid.m_Instance.empty())
-                g_pActiveLevelContext = &m_CmdContext;
+                SetActiveLevelContext(&m_CmdContext);
             if (auto* pHost = xeditor::host::current())
                 pHost->m_IdleWork.m_OnRun.Register<&xlevel::scene_sanity_scanner::Run>(m_SceneScanner);
 
@@ -525,14 +598,24 @@ namespace xlevel
             std::erase(g_LevelContexts, &m_CmdContext);
             if (g_pActiveLevelContext == &m_CmdContext)
             {
-                g_pActiveLevelContext = nullptr;
-                for (auto* pCtx : g_LevelContexts) g_pActiveLevelContext = pCtx;   // the newest one left (the stand-in if that is all there is)
+                level_context* pNewest = nullptr;
+                for (auto* pCtx : g_LevelContexts) pNewest = pCtx;   // the newest one left (the stand-in if that is all there is)
+                SetActiveLevelContext(pNewest);
             }
 
             if (m_bToolbarHandler && ImGui::GetCurrentContext()) ImGui::RemoveSettingsHandler(m_ToolbarHandlerName);
 
             m_pEcs->DestroyWorld();
             m_Grid.Release();
+
+            // The game module goes after the world (its systems live in it) and before the copy of the core it is bound to. A build still running is stopped rather than waited for.
+            if (m_GamePlugin.m_bBuilding)
+            {
+                xlevel::CancelGameBuild();
+                if (m_GamePlugin.m_BuildFuture.valid()) m_GamePlugin.m_BuildFuture.wait();
+                m_GamePlugin.m_bBuilding = false;
+            }
+            xlevel::UnloadGamePlugin(m_GamePlugin);
         }
 
         xeditor::IDocument& getDocument() noexcept override { return m_Document; }
@@ -560,6 +643,7 @@ namespace xlevel
 
             m_pGameMgr->m_SceneMgr.m_ProjectPath  = m_ProjectPath;
             m_pGameMgr->m_SceneMgr.m_pModuleOfComponent = &xlevel::ResolveComponentModule;      // a scene's ComponentDeps.txt names the module of each component
+            m_pGameMgr->m_SceneMgr.m_pModuleOfComponentUser = &m_GamePlugin;                    // of this Level's game module
             m_pGameMgr->m_LevelMgr.m_ProjectPath  = m_ProjectPath;
             m_pGameMgr->m_PrefabMgr.m_ProjectPath = m_ProjectPath;
             m_pGameMgr->m_SystemMgr.m_ProjectPath = m_ProjectPath;
@@ -1171,8 +1255,7 @@ namespace xlevel
         // PollGameReload/deferred-Stop calls always ran.
         void PumpBeforeFrame() noexcept
         {
-            xlevel::PollGameReload(m_CmdContext, m_GamePlugin, &session::RegisterHostComponents, m_SeenBuildSeq);
-            if (Services().bInitialBuild && !m_GamePlugin.m_bBuilding) Services().bInitialBuild = false;   // first build done (or failed)
+            xlevel::PollGameReload(m_CmdContext, m_GamePlugin, [this](xecs::game_mgr::instance& GameMgr) noexcept { RegisterHostComponents(GameMgr); }, m_SeenBuildSeq);
 
             // Scenes another Level editor saved while this one had them open (read-only here): reload them from disk.
             if (!m_State.m_ScenesToReload.empty() && !m_State.isPlaying())
@@ -1235,7 +1318,7 @@ namespace xlevel
             auto* pHost = xeditor::host::current();
 
             // Whichever editor the user last touched is the one the commands that name no Level act on.
-            if (IsOneOfMyWindowsFocused()) g_pActiveLevelContext = &m_CmdContext;
+            if (IsOneOfMyWindowsFocused()) SetActiveLevelContext(&m_CmdContext);
 
             // Make this editor's actions live in its windows (the viewport window also makes Level/Viewport/... live).
             if (auto* pCtx = ActionContext())

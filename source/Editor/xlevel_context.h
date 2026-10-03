@@ -93,6 +93,8 @@ namespace xlevel
         bool                 m_bPendingStartGameReloadAfterOpen = false;
     };
 
+    struct game_plugin_state;
+
     // A Level editor's context: the scene context plus access to its Level state. The scene code only ever sees the base.
     struct level_context : xscene::scene_context
     {
@@ -104,6 +106,7 @@ namespace xlevel
         xlioncore::game* m_pGame = nullptr;   // this editor's game (the game manager and the time), set by its session
 
         void* m_pToolEditor = nullptr;   // this editor's viewport_tools::editor (the "Edit Collider" tools), set by its session
+        game_plugin_state* m_pGamePlugin = nullptr;   // the game module of this editor's Level (its own: every Level loads the one of its Game), set by its session
     };
 
     // Every Level editor that is open right now (one per Level, plus the session that stands in when none is), and the one the
@@ -112,4 +115,12 @@ namespace xlevel
     inline level_context*              g_pActiveLevelContext = nullptr;
 
     inline level_context* FindLevelContext() noexcept { return g_pActiveLevelContext; }
+
+    // The game module of the active Level (null when there is none): what the commands that name no Level, and the Play gate, act on. Set with the active context.
+    inline game_plugin_state* g_pGamePlugin = nullptr;
+    inline void SetActiveLevelContext(level_context* pContext) noexcept
+    {
+        g_pActiveLevelContext = pContext;
+        g_pGamePlugin         = pContext ? pContext->m_pGamePlugin : nullptr;
+    }
 }

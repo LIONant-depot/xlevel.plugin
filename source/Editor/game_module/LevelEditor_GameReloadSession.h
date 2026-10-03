@@ -185,8 +185,8 @@ namespace xlevel
 
         // A project with no script modules has nothing to put in Game.dll: no cmake, no build, no DLL - the check is answered
         // right away (the editors waiting on it, e.g. for Play, see "up to date" at their next frame).
-        // The Game the editor builds and loads: the project's (Script.config.txt). Each Game has its own game project, DLL and build markers (script_project_paths::ForGame).
-        const auto Game = ProjectGameValue();
+        // The Game this plugin state (a Level) builds and loads. Each Game has its own game project, DLL and build markers (script_project_paths::ForGame).
+        const auto Game = Plugin.m_Game;
         Plugin.m_Paths = ForGame(Plugin.m_Paths, Game);
 
         if ((!Game || ReadGame(Game).m_Modules.empty()) && !Plugin.isLoaded())

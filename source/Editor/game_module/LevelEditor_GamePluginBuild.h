@@ -9,8 +9,10 @@
 // LevelEditor_GamePluginLog.h (LogGamePlugin).
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GameModuleSources.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_plugin_dlls.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_engine_copies.h"
 #include "dependencies/xlog/source/xlog_build.h"
 #include <chrono>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GameModuleEvents.h"
@@ -55,9 +57,13 @@ namespace xlevel
         game_module_events m_Events;      // the editors that take part in a reload subscribe here
 
         // The xECSEditor this plugin state uses for what belongs to the registry of ITS copy of the core and to no world (reset it, unregister the Game, a short-lived world to register through).
-        // One copy of the core for now (the process's LIONCore.dll); a set of DLLs made for one Level will have its own.
+        // The copy of the core this plugin state's Game.dll runs on (and the render DLL of the same copy): the module names of the set the Level made (xlevel_engine_copies.h), the originals when there is none.
+        std::shared_ptr<engine::engine_set> m_pCoreSet;      // the copies (when it runs on some): alive for as long as the Game.dll that is bound to them
+        std::wstring   m_CoreModule   = engine::kCoreNameW;
+        std::wstring   m_RenderModule = engine::kRenderNameW;
+        std::uint64_t  m_Game         = 0;          // the Game (resource instance) this plugin state builds and loads; 0 = none: no module, no component, no system
         ecs_editor_ptr m_pRegistry;
-        xlioncore::xECSEditor& Registry() noexcept { if (!m_pRegistry) m_pRegistry = CreateEcsEditor(); return *m_pRegistry; }
+        xlioncore::xECSEditor& Registry() noexcept { if (!m_pRegistry) m_pRegistry = CreateEcsEditor(m_CoreModule.c_str()); return *m_pRegistry; }
         std::vector<game_registration> m_Registrations;     // what the loaded Game.dll defines, with its modules (empty when it is not loaded)
         bool                   m_bHasRegistrations = false; // the loaded Game.dll has the XScript_GetRegistrations export (one built before it existed has not: its modules are unknown)
         std::unordered_map<std::uint64_t, std::string> m_ModuleNames;   // the names of the script modules, for the hints (refreshed now and then: a module can be renamed)
@@ -107,12 +113,6 @@ namespace xlevel
         bool isLoaded(void) const noexcept { return m_hModule != nullptr; }
     };
 
-    // Set once at startup (like the editor state and world services), so a CLI/Console-driven command
-    // (LevelEditor_Commands_PlaySession.h) can trigger the same Play/Pause/Stop transitions the menu-bar
-    // buttons do without needing synthetic mouse input - same "one instance per process" assumption
-    // those two globals already make.
-    inline game_plugin_state* g_pGamePlugin = nullptr;
-
     // The script module that defines a component: the guid of its ScriptModule resource, 0 for a component that no module defines (the engine's or the editor's: it is not in the Game.dll's
     // registrations, or the file it is defined in is outside every module), xecs::scene::unknown_module_v when nobody can say (the loaded Game.dll was built before modules were tracked).
     inline std::uint64_t ModuleOfComponent( const game_plugin_state& Plugin, std::uint64_t ComponentGuid ) noexcept
@@ -123,10 +123,10 @@ namespace xlevel
             if (R.m_Kind == 0 && R.m_Guid == ComponentGuid) return R.m_Module;
         return 0;
     }
-    // The form xecs::scene::mgr::m_pModuleOfComponent takes: the editor's one game module.
-    inline std::uint64_t ResolveComponentModule( xecs::component::type::guid Guid ) noexcept
+    // The form xecs::scene::mgr::m_pModuleOfComponent takes: the game module of the world that asks (pPlugin is the game_plugin_state the scene manager was given).
+    inline std::uint64_t ResolveComponentModule( void* pPlugin, xecs::component::type::guid Guid ) noexcept
     {
-        return g_pGamePlugin ? ModuleOfComponent(*g_pGamePlugin, Guid.m_Value) : xecs::scene::unknown_module_v;
+        return pPlugin ? ModuleOfComponent(*static_cast<const game_plugin_state*>(pPlugin), Guid.m_Value) : xecs::scene::unknown_module_v;
     }
 
     //---------------------------------------------------------------------------
@@ -299,6 +299,10 @@ namespace xlevel
 
     inline build_result BuildGamePluginIfStale( game_plugin_state& Plugin, std::filesystem::file_time_type ModuleSourceTime ) noexcept
     {
+        // One build at a time in the process: Levels of the same Game share its build folder, and the second one then finds the DLL up to date.
+        static std::mutex s_BuildMutex;
+        std::lock_guard   BuildLock(s_BuildMutex);
+
         std::error_code Ec;
         const auto& P = Plugin.m_Paths;
 

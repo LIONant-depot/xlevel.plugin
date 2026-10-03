@@ -44,7 +44,7 @@ namespace xlevel
         // more obviously correct behavior, not a deliberate design change in its own right.
         const std::uint32_t NextGeneration = Plugin.m_Token.m_Generation + 1;
         game_plugin_candidate Candidate;
-        Candidate = PrepareGamePluginCandidate(Plugin.m_Paths, NextGeneration);
+        Candidate = PrepareGamePluginCandidate(Plugin, NextGeneration);
         if (Candidate.m_hModule)
         {
             const auto CandidateManifest = ProbeCandidateComponents(Candidate);
@@ -100,7 +100,7 @@ namespace xlevel
         // process's own; a short-lived one does it, and every editor's fresh world then finds them already registered.
         bool bLoaded = false;
         {
-            auto pRegistrar = CreateEcsEditor();                          // made by the core: a world that knows its copy of it
+            auto pRegistrar = CreateEcsEditor(Plugin.m_CoreModule.c_str());   // made by the core of this plugin state: a world that knows its copy of it
             auto& Registrar = pRegistrar->CreateWorld();
             RegisterHostComponents(Registrar);
             bLoaded = CommitGamePluginCandidate(Registrar, Plugin, Candidate, NextGeneration);
