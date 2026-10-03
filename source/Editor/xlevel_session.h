@@ -214,6 +214,7 @@ namespace xlevel
         // The ECS of this Level: the editor interface of the core (what runs xECS code), its game (the game manager - the ECS instance the Level is loaded into - and the time, which the speed slider sets).
         ecs_editor_ptr                             m_pEcs = CreateEcsEditor();
         xlioncore::game&                           m_Game = m_pEcs->Game();
+        render_editor_ptr                          m_pRender = CreateRenderEditor();      // draws and picks this world (the render DLL of the same copy of the core)
         std::unique_ptr<xecs::game_mgr::instance>& m_pGameMgr = m_Game.m_pGameMgr;
         std::wstring                               m_ProjectPath;
         xgpu::device*                              m_pDevice = nullptr;   // null in headless builds - see resource_editor's own comment on m_pDevice
@@ -860,7 +861,7 @@ namespace xlevel
                 m_Camera.m_Angles   = xmath::radian3(-30_xdeg, 45_xdeg, 0_xdeg);
                 m_Camera.m_Target   = { 0, 0, 0 };
 
-                xlionrender::Init(*m_pDevice);
+                if (m_pRender) m_pRender->Init(*m_pDevice);
             }
 
             const ImVec2 Avail = ImGui::GetContentRegionAvail();
@@ -954,8 +955,9 @@ namespace xlevel
             {
                 // Read at render time, so the click-to-pick further down this frame is already in. Every open Level draws its
                 // own world, with its own selection outlined.
-                xlionrender::SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
-                xlionrender::Draw(m_pGameMgr.get(), CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y);
+                if (!m_pRender) return;
+                m_pRender->SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
+                m_pRender->Draw(m_pGameMgr.get(), CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y);
             });
 
             // Gizmo (Move/Rotate/Scale tools, m_SceneTool 1/2/3) - drives the primary selection's
@@ -1129,7 +1131,7 @@ namespace xlevel
                             const float GroundT = -Origin.m_Y / Dir.m_Y;
                             if (GroundT > 1.0e-6f) MaxT = GroundT;
                         }
-                        const auto Hit = xlionrender::Pick(m_pGameMgr.get(), Origin, Dir, MaxT);
+                        const auto Hit = m_pRender ? m_pRender->Pick(m_pGameMgr.get(), Origin, Dir, MaxT) : xecs::component::entity::invalid_entity_v;
 
                         xecs::scene::guid          HitScene{};
                         xecs::scene::permanent_id  HitId = xecs::scene::invalid_permanent_id_v;

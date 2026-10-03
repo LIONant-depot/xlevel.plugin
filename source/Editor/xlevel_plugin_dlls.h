@@ -10,6 +10,7 @@
 // module names, mirroring LevelEditor_GamePluginLoad.h's own resolve-and-call shape for Game.dll.
 #include "dependencies/xECSV2/src/xecs_plugin_api.h"
 #include "dependencies/xLIONCore/src/game/xlioncore_editor.h"
+#include "dependencies/xLIONRender/src/xlionrender_api.h"
 #include <Windows.h>
 #include <memory>
 
@@ -27,6 +28,20 @@ namespace xlevel
         if (!pCreate) { OutputDebugStringA("xECSEditor: the core module has no editor interface\n"); return {}; }
         ecs_editor_ptr pEditor(pCreate());
         if (pEditor && pEditor->Version() != xlioncore::xECSEditor::kVersion) { OutputDebugStringA("xECSEditor: the core module has another version of the interface\n"); pEditor.reset(); }
+        return pEditor;
+    }
+
+    // The same for the render DLL: its xRenderEditor (xlionrender_api.h) draws and picks the worlds of the copy of the core it is bound to. Null when the module is not there (a build without it).
+    struct render_editor_release { void operator()(xlionrender::xRenderEditor* p) const noexcept { if (p) p->Release(); } };
+    using render_editor_ptr = std::unique_ptr<xlionrender::xRenderEditor, render_editor_release>;
+
+    inline render_editor_ptr CreateRenderEditor(const wchar_t* pRenderModule = L"LIONRender.dll") noexcept
+    {
+        HMODULE hModule = GetModuleHandleW(pRenderModule);
+        auto* pCreate = hModule ? reinterpret_cast<xlionrender::pfn_create_editor>(GetProcAddress(hModule, xlionrender::kCreateEditorName)) : nullptr;
+        if (!pCreate) { OutputDebugStringA("xRenderEditor: the render module has no editor interface\n"); return {}; }
+        render_editor_ptr pEditor(pCreate());
+        if (pEditor && pEditor->Version() != xlionrender::xRenderEditor::kVersion) { OutputDebugStringA("xRenderEditor: the render module has another version of the interface\n"); pEditor.reset(); }
         return pEditor;
     }
 
