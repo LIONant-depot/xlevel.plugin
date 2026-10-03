@@ -17,6 +17,8 @@
 // xeditor::Run pattern as ApplyOverrides / CreateEntity.
 #include "plugins/xlevel.plugin/source/Editor/xlevel_command_context.h"
 
+#include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_ProjectGame.h"
+
 namespace xlevel::commands
 {
     //================================================================================================
@@ -169,16 +171,30 @@ namespace xlevel::commands
     struct list_levels_query_cmd : level_query_command
     {
         list_levels_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "ListLevels", pDataBase) { RegisterArguments(); }
-        const char* getCommandHelp() const noexcept override { return "Lists every Level asset (guid + name). Usage: ListLevels"; }
-        void RegisterArguments() noexcept override {}
+        const char* getCommandHelp() const noexcept override { return "Lists every Level asset (guid + name); with -Game, only the Levels that run under that Game (a Level that names none runs under the project's). Usage: ListLevels [-Game assetguid]"; }
+        void RegisterArguments() noexcept override
+        {
+            m_hGame = m_Parser.addOption("Game", "Game asset guid, 32 hex digits: only the Levels that run under it", false, 1);
+        }
 
         std::string Query() noexcept override
         {
+            std::uint64_t OnlyGame = 0;
+            if (auto Arg = m_Parser.getOptionArgAs<std::string>(m_hGame, 0); !std::holds_alternative<xerr>(Arg))
+            {
+                const auto Game = xresource_editor::commands::ParseAssetGuid(std::get<std::string>(Arg));
+                if (Game.m_Type != xgame::type_guid_v || Game.m_Instance.empty()) return "ListLevels: not a Game asset guid";
+                OnlyGame = Game.m_Instance.m_Value;
+            }
             std::string Out;
             for (auto& [Guid, Name] : BuildAssetNameMap(xecs::level::type_guid_v))
+            {
+                if (OnlyGame && EffectiveGameOf(Guid) != OnlyGame) continue;                // the Levels that run under that Game (the ones that name none run under the project's)
                 Out += std::format("{:016X}  {}\n", Guid, Name);
+            }
             return Out;
         }
+        xcmdline::parser::handle m_hGame;
     };
 
     //================================================================================================

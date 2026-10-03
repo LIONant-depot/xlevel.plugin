@@ -373,6 +373,19 @@ namespace xlevel
                     // The Level row had no context menu at all before this.
                     if (ImGui::BeginPopupContextItem())
                     {
+                        // The Game this Level runs under: the project's, or one of the project's Games (SetLevelGame: refused when the Game lacks a module the scenes need).
+                        if (ImGui::BeginMenu("Game"))
+                        {
+                            const auto LevelValue = State.m_CurrentLevel.m_Instance.m_Value;
+                            const auto Named      = xlevel::ReadLevelGame(xlevel::ProjectRoot().wstring(), LevelValue);
+                            if (ImGui::MenuItem("Project's Game (default)", nullptr, Named == 0, !State.isPlaying()))
+                                xeditor::Run(Undo, std::format("SetLevelGame -Level {:016X}", LevelValue));
+                            for (const auto& [Game, Name] : xlevel::commands::BuildAssetNameMap(xgame::type_guid_v))
+                                if (ImGui::MenuItem(Name.c_str(), nullptr, Named == Game, !State.isPlaying()))
+                                    xeditor::Run(Undo, std::format("SetLevelGame -Level {:016X} -Game {:016X}{:016X}", LevelValue, Game, xgame::type_guid_v.m_Value));
+                            ImGui::EndMenu();
+                        }
+                        ImGui::Separator();
                         RenderLevelTreeSCRevertMenuItem(Undo, xresource::full_guid{ State.m_CurrentLevel.m_Instance, State.m_CurrentLevel.m_Type }
                             , /*bWholeFolder*/ true
                             , "Discard ALL local changes in this Level resource's folder (info.txt, Descriptor.txt, dependencies.txt)?\nThis cannot be undone.");

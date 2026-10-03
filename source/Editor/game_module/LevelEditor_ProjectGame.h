@@ -25,11 +25,18 @@ namespace xlevel
         bool HasGame() const noexcept { return !m_Folder.empty(); }
     };
 
-    inline project_game ReadProjectGame() noexcept
+    // A Level names its Game by the same guid type: one definition each, so a change of either is caught here.
+    static_assert(xecs::level::game_type_guid_v == xgame::type_guid_v, "the Level's Game reference and the Game resource must have the same type guid");
+
+    inline std::uint64_t ProjectGameValue() noexcept { return g_ScriptConfig.m_Game.m_Instance.m_Value; }
+
+    // A Game resource by its guid; 0 is the project's own Game (the one Script.config.txt names).
+    inline project_game ReadGame( std::uint64_t Game ) noexcept
     {
         project_game G;
-        if (g_ScriptConfig.m_Game.empty()) return G;
-        G.m_Folder = xgame::FindGameFolder(ProjectRoot(), g_ScriptConfig.m_Game);
+        if (Game == 0) Game = ProjectGameValue();
+        if (Game == 0) return G;
+        G.m_Folder = xgame::FindGameFolder(ProjectRoot(), xgame::game_ref{ xresource::instance_guid{ Game } });
         if (G.m_Folder.empty()) return G;
         xgame::descriptor D;
         std::string Error;
@@ -39,14 +46,16 @@ namespace xlevel
         return G;
     }
 
+    inline project_game ReadProjectGame() noexcept { return ReadGame(0); }
+
     inline std::vector<xscript::module::module_ref> ProjectModules() noexcept { return ReadProjectGame().m_Modules; }
 
-    // Reads the Game's descriptor, lets Fn change it (it returns "" or why not), and writes it back. Returns "" or why it did not happen.
+    // Reads a Game's descriptor (0: the project's), lets Fn change it (it returns "" or why not), and writes it back. Returns "" or why it did not happen.
     template<typename T_FN>
-    inline std::string EditProjectGame(T_FN&& Fn) noexcept
+    inline std::string EditGame( std::uint64_t Game, T_FN&& Fn ) noexcept
     {
-        auto G = ReadProjectGame();
-        if (!G.HasGame())       return "the project has no Game resource: create one in the Asset Browser (type Game) and set it in Project Settings > Scripting (or run SetProjectGame)";
+        auto G = ReadGame(Game);
+        if (!G.HasGame())       return Game ? "the Game is not in the project" : "the project has no Game resource: create one in the Asset Browser (type Game) and set it in Project Settings > Scripting (or run SetProjectGame)";
         if (!G.m_Error.empty()) return "the descriptor of the Game cannot be read: " + G.m_Error;
         xgame::descriptor D;
         D.m_Modules = G.m_Modules;
@@ -54,6 +63,26 @@ namespace xlevel
         std::string Error;
         if (!xgame::Write(G.m_Folder, D, &Error)) return "the Game could not be saved: " + Error;
         return {};
+    }
+
+    template<typename T_FN>
+    inline std::string EditProjectGame( T_FN&& Fn ) noexcept { return EditGame(0, std::forward<T_FN>(Fn)); }
+
+    // The Game a Level runs under, as its Descriptor.txt says (0: it names none). The guid of the Game resource; read from disk, which is where SetLevelGame writes at once.
+    inline std::uint64_t ReadLevelGame( const std::wstring& Project, std::uint64_t Level ) noexcept
+    {
+        xecs::level::descriptor D;
+        xproperty::settings::context Context{};
+        const std::wstring Path = std::format(L"{}/Descriptors/Level/{:02X}/{:02X}/{:X}.desc/Descriptor.txt", Project, Level & 0xFF, (Level >> 8) & 0xFF, Level);
+        if (auto Err = D.Serialize(true, Path, Context); Err) return 0;
+        return D.m_Game.m_Instance.m_Value;
+    }
+
+    // The Game a Level really runs under: the one it names, or else the project's.
+    inline std::uint64_t EffectiveGameOf( std::uint64_t Level ) noexcept
+    {
+        const auto Named = ReadLevelGame(ProjectRoot().wstring(), Level);
+        return Named ? Named : ProjectGameValue();
     }
 
     // Makes sure the project has a Game resource: when it has none, one is created in the project's own library (named "Game") from what Script.config.txt listed before the

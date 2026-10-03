@@ -183,6 +183,79 @@ namespace xlevel
     // The hook the panels use. Registered when the program starts: it has to be there before any panel draws, and nothing else owns it.
     inline const bool g_TypeSourceRegistered = (xscene::g_SourceOfType = &ResolveTypeSource, true);
 
+    // What a Game lacks, one line per module: its name and asset guid, the components that need it, and the scenes that use them - the message every check says the same way.
+    inline std::string DescribeMissingModules( const std::vector<std::pair<std::uint64_t, module_need>>& Missing ) noexcept
+    {
+        const auto Modules    = xlevel::commands::BuildAssetNameMap(xscript::module::type_guid_v);
+        const auto SceneNames = xlevel::commands::BuildAssetNameMap(xecs::scene::type_guid_v);
+        auto Label = [](const std::unordered_map<std::uint64_t, std::string>& Names, std::uint64_t Value) { const auto It = Names.find(Value); return It == Names.end() ? std::format("{:X}", Value) : It->second; };
+        auto Join  = [](const std::vector<std::string>& Items) { std::string Out; for (const auto& I : Items) Out += (Out.empty() ? "" : ", ") + I; return Out; };
+
+        std::string Out;
+        for (const auto& [Module, Need] : Missing)
+        {
+            std::vector<std::string> SceneLabels;
+            for (const auto S : Need.m_Scenes) SceneLabels.push_back(std::format("{:016X} ({})", S, Label(SceneNames, S)));
+            Out += std::format("  needs module {} ({}) for {}; used by scene {}. Add the module to the Game, or run the level with another Game.\n", Label(Modules, Module)
+                , xresource_editor::commands::FormatAssetGuid(xresource::full_guid{ xresource::instance_guid{ Module }, xscript::module::type_guid_v }), Join(Need.m_Components), Join(SceneLabels));
+        }
+        return Out;
+    }
+
+    // The names of the Games of the project that list a script module (the project's Game first).
+    inline std::vector<std::string> GamesListingModule( std::uint64_t Module ) noexcept
+    {
+        std::vector<std::string> Names;
+        auto Games = commands::BuildAssetNameMap(xgame::type_guid_v);
+        std::vector<std::pair<std::uint64_t, std::string>> Sorted(Games.begin(), Games.end());
+        std::ranges::sort(Sorted, [](const auto& A, const auto& B) { return A.second < B.second; });
+        std::ranges::stable_partition(Sorted, [](const auto& G) { return G.first == ProjectGameValue(); });
+        for (const auto& [Game, Name] : Sorted)
+        {
+            const auto Modules = ReadGame(Game).m_Modules;
+            if (std::any_of(Modules.begin(), Modules.end(), [&](const xscript::module::module_ref& M) { return M.m_Instance.m_Value == Module; })) Names.push_back(Name);
+        }
+        return Names;
+    }
+
+    // The Game a Level runs under and whether it can: what the toolbar and the Level tree show. From files (no DLL): the Level's descriptor, the Game's modules, the scenes' ComponentDeps.txt.
+    struct level_game_status
+    {
+        std::uint64_t   m_Game   = 0;               // the Game the Level runs under (0: the project has none)
+        bool            m_bNamed = false;           // the Level names it (otherwise it is the project's)
+        std::string     m_Name;
+        std::string     m_Issue;                    // what is wrong with it, "" when nothing is
+    };
+
+    inline level_game_status StatusOfLevelGame( std::uint64_t Level, const std::vector<std::uint64_t>& Scenes ) noexcept
+    {
+        level_game_status S;
+        const std::wstring Project = ProjectRoot().wstring();
+        const auto Named = ReadLevelGame(Project, Level);
+        S.m_bNamed = Named != 0;
+        S.m_Game   = Named ? Named : ProjectGameValue();
+        if (!S.m_Game) { S.m_Name = "(no Game)"; return S; }
+        const auto Names = commands::BuildAssetNameMap(xgame::type_guid_v);
+        auto Label = [&](std::uint64_t Game) { const auto It = Names.find(Game); return It == Names.end() ? std::format("{:X}", Game) : It->second; };
+        S.m_Name = Label(S.m_Game);
+        if (S.m_Game != ProjectGameValue())
+        {
+            S.m_Issue = std::format("This Level runs under the Game '{}', but this editor runs the project's Game '{}' (one Game at a time), so it cannot open.", S.m_Name, Label(ProjectGameValue()));
+            return S;
+        }
+        scene_module_needs Needs;
+        for (const auto Scene : Scenes) AddSceneModuleNeeds(Needs, Project, Scene, /*bTransitive*/ true);
+        const auto Game = ReadGame(S.m_Game);
+        if (const auto Gaps = MissingModules(Needs, Game.m_Modules); !Gaps.empty())
+        {
+            const auto Modules = commands::BuildAssetNameMap(xscript::module::type_guid_v);
+            std::string List;
+            for (const auto& [Module, Need] : Gaps) { const auto It = Modules.find(Module); List += (List.empty() ? "" : ", ") + (It == Modules.end() ? std::format("{:X}", Module) : It->second); }
+            S.m_Issue = std::format("The Game '{}' does not list the module(s) these scenes need: {}.", S.m_Name, List);
+        }
+        return S;
+    }
+
     // The modules a Game resource lists (read from its Descriptor.txt: the Game does not have to be the project's, or loaded). Empty and false when the Game is not in the project.
     inline bool ReadGameModules( std::uint64_t Game, std::vector<xscript::module::module_ref>& Out ) noexcept
     {

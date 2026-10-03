@@ -698,13 +698,41 @@ namespace xlevel
         // The top bar of the window: the same one every other editor has (xeditor::RenderEditorToolbar): Undo / Redo / Save on the left, and in the
         // middle - where the others have Compile + Feedback - Play and Step. No File menu: Save is here and on Ctrl+S, the Asset Browser is the drawer
         // (Space), closing the Level is the tab's close button.
+        // The Game this Level runs under, from files: refreshed now and then, never every frame.
+        xlevel::level_game_status m_GameStatus;
+        double                    m_NextGameStatus = 0.0;
+        void RefreshGameStatus() noexcept
+        {
+            if (const double Now = ImGui::GetTime(); Now >= m_NextGameStatus)
+            {
+                m_NextGameStatus = Now + 1.0;
+                std::vector<std::uint64_t> Scenes;
+                for (auto& S : m_State.m_OpenScenes) Scenes.push_back(S.m_Instance.m_Value);
+                m_GameStatus = xlevel::StatusOfLevelGame(m_State.m_CurrentLevel.m_Instance.m_Value, Scenes);
+            }
+        }
+
         static void CenterPlay(void* pUser) noexcept
         {
             auto& Self = *static_cast<session*>(pUser);
+            Self.RefreshGameStatus();
+            const std::string GameLabel = "Game: " + Self.m_GameStatus.m_Name;
+            const float GameWidth = ImGui::CalcTextSize(GameLabel.c_str()).x;
             if (Self.m_GamePlugin.m_bBuilding)
             {
-                ImGui::SameLine(ImGui::GetWindowWidth() - 250.0f);
+                ImGui::SameLine(ImGui::GetWindowWidth() - 250.0f - GameWidth - 20.0f);
                 ImGui::TextDisabled("Game.dll: building...");
+            }
+            // The Game this Level runs under, at the right of the bar; red when it cannot run its scenes (the hint says why).
+            ImGui::SameLine(ImGui::GetWindowWidth() - GameWidth - 16.0f);
+            if (Self.m_GameStatus.m_Issue.empty()) ImGui::TextDisabled("%s", GameLabel.c_str());
+            else ImGui::TextColored(ImVec4(0.90f, 0.45f, 0.42f, 1.0f), "%s", GameLabel.c_str());
+            if (ImGui::IsItemHovered())
+            {
+                const std::string Body = Self.m_GameStatus.m_Issue.empty()
+                    ? std::string(Self.m_GameStatus.m_bNamed ? "The Game this Level names: its systems run the Level's scenes." : "The project's Game: this Level names none. Give it its own with SetLevelGame, or from the Level's right-click menu.")
+                    : Self.m_GameStatus.m_Issue;
+                xeditor::hint::Draw({ .m_Topic = "Game", .m_Body = Body });
             }
             xlevel::RenderPlayTransport(Self.m_CmdContext, { ImVec2(30.0f, 0.0f), true, true });
         }
