@@ -93,7 +93,7 @@ namespace xlevel::commands
 
                 std::vector<xecs::scene::component_dependency> Missing;
                 for (auto& Dep : xecs::scene::LoadSceneComponentDependencies(xresource_editor::g_LibMgr.m_ProjectPath, SceneGuid))
-                    if (!xscene::IsComponentInLiveRegistry(Dep.m_Guid))
+                    if (!xscene::IsComponentInLiveRegistry(World(), Dep.m_Guid))
                         Missing.push_back(Dep);
 
                 if (!Missing.empty())
