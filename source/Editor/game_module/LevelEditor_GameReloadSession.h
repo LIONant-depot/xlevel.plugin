@@ -8,6 +8,7 @@
 // modal for components the new module lacks, and PollGameReload, which finishes it once the build is done. Play itself
 // (the transport and Stop) is in the Level editor.
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_ComponentCompatibility.h"
+#include "dependencies/xLIONCore/src/game/xlioncore_editor.h"
 #include <sstream>
 #include <iterator>
 #include <unordered_map>
@@ -40,7 +41,9 @@ namespace xlevel
     inline bool SaveSnapshot( xecs::game_mgr::instance& GameMgr, const std::wstring& Path ) noexcept
     {
         const std::string PathA{ std::filesystem::path(Path).string() };
-        if (auto Err = GameMgr.SerializeGameState(PathA.c_str(), /*isRead*/false, /*isBinary*/true); Err)
+        auto* pEcs = xlioncore::EditorOf(GameMgr);                      // the xECSEditor of the copy of the core this world belongs to
+        if (!pEcs) { LogGamePlugin("Game.dll: snapshot save failed: the world has no xECSEditor"); return false; }
+        if (auto Err = pEcs->SerializeGameState(PathA.c_str(), /*isRead*/false, /*isBinary*/true); Err)
         {
             LogGamePlugin(std::format("Game.dll: snapshot save failed: {}", Err.getMessage()));
             return false;
@@ -56,7 +59,9 @@ namespace xlevel
             return false;
         }
         const std::string PathA{ std::filesystem::path(Path).string() };
-        auto Err = GameMgr.SerializeGameState(PathA.c_str(), /*isRead*/true, /*isBinary*/true);
+        auto* pEcs = xlioncore::EditorOf(GameMgr);
+        if (!pEcs) { LogGamePlugin("Game.dll: snapshot restore failed: the world has no xECSEditor"); return false; }
+        auto Err = pEcs->SerializeGameState(PathA.c_str(), /*isRead*/true, /*isBinary*/true);
         std::error_code Ec;
         std::filesystem::remove(Path, Ec);                      // a bridge is for one reload; it is not left behind in the temp folder
         if (Err)

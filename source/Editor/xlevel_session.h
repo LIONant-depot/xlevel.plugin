@@ -212,8 +212,9 @@ namespace xlevel
         LevelDocument                              m_Document;
         xundo::system                              m_Undo;
         level_state                                m_State;
-        // The game: it owns the game manager (the ECS instance the Level is loaded into) and the time of the game, which the speed slider sets.
-        xlioncore::game                            m_Game;
+        // The ECS of this Level: the editor interface of the core (what runs xECS code), its game (the game manager - the ECS instance the Level is loaded into - and the time, which the speed slider sets).
+        ecs_editor_ptr                             m_pEcs = CreateEcsEditor();
+        xlioncore::game&                           m_Game = m_pEcs->Game();
         std::unique_ptr<xecs::game_mgr::instance>& m_pGameMgr = m_Game.m_pGameMgr;
         std::wstring                               m_ProjectPath;
         xgpu::device*                              m_pDevice = nullptr;   // null in headless builds - see resource_editor's own comment on m_pDevice
@@ -333,7 +334,7 @@ namespace xlevel
                 xeditor::NotifyModal(std::format("Level session xundo Init failed: {}", Err));
             m_Document.Bind(m_CmdContext);
 
-            m_Game.CreateWorld();
+            m_pEcs->CreateWorld();
             RegisterHostComponents(*m_pGameMgr);
 
             // Resolve the same project root every other editor example locates itself against (walking up from
@@ -542,7 +543,7 @@ namespace xlevel
 
             if (m_bToolbarHandler && ImGui::GetCurrentContext()) ImGui::RemoveSettingsHandler(m_ToolbarHandlerName);
 
-            m_Game.DestroyWorld();
+            m_pEcs->DestroyWorld();
             m_Grid.Release();
         }
 
@@ -559,14 +560,14 @@ namespace xlevel
             if (xlevel::RegisterGamePluginSystems(*m_pGameMgr, m_GamePlugin)) return;
 
             xeditor::NotifyToast(m_GamePlugin.m_LastStatus);
-            m_Game.AbandonWorld();
-            m_Game.CreateWorld();
+            m_pEcs->AbandonWorld();
+            m_pEcs->CreateWorld();
             RegisterHostSystems(*m_pGameMgr);
         }
 
         void CreateWorld() noexcept
         {
-            m_Game.CreateWorld();
+            m_pEcs->CreateWorld();
             RegisterWorldSystems();
 
             m_pGameMgr->m_SceneMgr.m_ProjectPath  = m_ProjectPath;
@@ -605,7 +606,7 @@ namespace xlevel
                     }
                     LogGamePlugin(std::format("Game.dll: the reload did not bring {} entities back - reopening the Level from its last save", Unknown));
                     const auto Level = m_State.m_CurrentLevel;
-                    m_Game.DestroyWorld();
+                    m_pEcs->DestroyWorld();
                     CreateWorld();
                     m_pGameMgr->EnableBuilders(m_State.isPlaying());
                     if (!Level.empty())
@@ -653,7 +654,7 @@ namespace xlevel
 
             m_ReloadCapture = xlevel::CaptureOpenScenes(*m_pGameMgr, m_State);
             xlevel::SaveSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath(m_LevelGuid.m_Instance.m_Value));
-            m_Game.DestroyWorld();
+            m_pEcs->DestroyWorld();
         }
 
         void AfterReload() noexcept
@@ -669,8 +670,8 @@ namespace xlevel
         {
             m_Undo.JumpTo(m_State.m_PlayHistoryBoundary);
 
-            m_pGameMgr->Stop();
-            m_Game.DestroyWorld();
+            m_pEcs->StopPlay();
+            m_pEcs->DestroyWorld();
             CreateWorld();
             RestoreWorld(xlevel::persist_mode::RestoreFromV1);
 
@@ -1210,7 +1211,7 @@ namespace xlevel
             if (m_State.m_bPlayWorldRebuildRequested)
             {
                 m_State.m_bPlayWorldRebuildRequested = false;
-                m_Game.DestroyWorld();
+                m_pEcs->DestroyWorld();
                 CreateWorld();
                 m_pGameMgr->EnableBuilders(true);
                 RestoreWorld(xlevel::persist_mode::RestoreFromV1);
@@ -1323,7 +1324,7 @@ namespace xlevel
 
             if (m_State.m_PlayState == xlevel::level_state::play_state::Playing)
             {
-                m_Game.Run();
+                m_pEcs->Run();
                 if (m_State.m_bStepOneFrame)
                 {
                     m_State.m_bStepOneFrame = false;
@@ -1333,7 +1334,7 @@ namespace xlevel
             else if (m_State.m_PlayState == xlevel::level_state::play_state::Paused && m_State.m_bStepOneFrame)
             {
                 m_State.m_bStepOneFrame = false;
-                m_Game.StepOnce();                      // exactly one fixed step (1/60 s), whatever the speed
+                m_pEcs->StepOnce();                      // exactly one fixed step (1/60 s), whatever the speed
             }
 
             // Asset-open routing (a Level or Scene double-clicked/dropped from the browser) stays wired by the

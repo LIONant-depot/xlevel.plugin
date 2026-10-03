@@ -9,10 +9,27 @@
 // xLION.exe never includes a single component/system header from these DLLs - it only knows their
 // module names, mirroring LevelEditor_GamePluginLoad.h's own resolve-and-call shape for Game.dll.
 #include "dependencies/xECSV2/src/xecs_plugin_api.h"
+#include "dependencies/xLIONCore/src/game/xlioncore_editor.h"
 #include <Windows.h>
+#include <memory>
 
 namespace xlevel
 {
+    // The xECSEditor of a copy of the core (see xlioncore_editor.h): the editor does not run xECS code itself, it asks the copy it was given for this interface and calls it. The copy is found by the
+    // name of its module for now (the one LIONCore.dll); a manager that makes copies per Level will pass the name of the copy it made. Null when that module has no editor interface (or another version).
+    struct ecs_editor_release { void operator()(xlioncore::xECSEditor* p) const noexcept { if (p) p->Release(); } };
+    using ecs_editor_ptr = std::unique_ptr<xlioncore::xECSEditor, ecs_editor_release>;
+
+    inline ecs_editor_ptr CreateEcsEditor(const wchar_t* pCoreModule = L"LIONCore.dll") noexcept
+    {
+        HMODULE hModule = GetModuleHandleW(pCoreModule);
+        auto* pCreate = hModule ? reinterpret_cast<xlioncore::pfn_create_editor>(GetProcAddress(hModule, xlioncore::kCreateEditorName)) : nullptr;
+        if (!pCreate) { OutputDebugStringA("xECSEditor: the core module has no editor interface\n"); return {}; }
+        ecs_editor_ptr pEditor(pCreate());
+        if (pEditor && pEditor->Version() != xlioncore::xECSEditor::kVersion) { OutputDebugStringA("xECSEditor: the core module has another version of the interface\n"); pEditor.reset(); }
+        return pEditor;
+    }
+
     // Slot 0 (host_v) is the host program - never unloaded. Slot 1 is Game.dll (game_plugin_state's
     // own token, minted per reload generation). These engine DLLs are permanent (import-linked,
     // never FreeLibrary'd), so they MUST register as host_v: UnregisterPlugin(GameToken) full-resets
