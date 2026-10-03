@@ -28,7 +28,7 @@ namespace xlevel
     void OpenLevel(xecs::game_mgr::instance& GameMgr, level_state& State, xresource::full_guid LevelGuid)
     {
         const xecs::level::guid Guid{ .m_Instance = LevelGuid.m_Instance };
-        if (auto Err = GameMgr.m_LevelMgr.Load(Guid); Err)
+        if (auto Err = xlioncore::Ecs(GameMgr).LoadLevel(Guid); Err)
         {
             xeditor::NotifyToast(std::format("Failed to load Level: {}", Err.getMessage()));
             return;
@@ -45,7 +45,7 @@ namespace xlevel
         // State.m_OpenScenes in sync so the Level tree's own bIsOpenScene checks reflect it.
         if (auto* pLevel = GameMgr.m_LevelMgr.Find(Guid))
         {
-            if (auto Err = GameMgr.m_LevelMgr.Activate(Guid); Err)
+            if (auto Err = xlioncore::Ecs(GameMgr).ActivateLevel(Guid); Err)
             {
                 xeditor::NotifyToast(std::format("Failed to activate Level (load its scenes): {}", Err.getMessage()));
                 return;

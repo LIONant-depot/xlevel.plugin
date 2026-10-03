@@ -319,6 +319,9 @@ namespace xlevel
             // gets a garbage/default value (confirmed live: asserted "Bit >= 0 && Bit < max" the one
             // time this was missed) - must run after Lock (already done, inside LIONCore.dll's own
             // RegisterSystems above) and before any host-compiled system/command touches these types.
+            // The poison run (XLION_POISON_EXE_BITIDS=1, see documentation/Editors/ecs_link_gate.md): the editor's own copies of the bit ids stay UNSET, so every place that still reads them (instead of asking
+            // the xECSEditor) fails loudly in the tests. That is the definition of done for talking to a copy of the core that is not the one this binary imported.
+            if (!std::getenv("XLION_POISON_EXE_BITIDS"))
             xecs::component::mgr::SyncLocalBitIDs<xlioncore::static_tag, xlioncore::transform, xecs::editor::prefab_instance, xecs::component::entity_reference>();      // the editor's own copies: prefab instances and entity references are registered by the core now
         }
 
@@ -587,7 +590,7 @@ namespace xlevel
                 xlevel::LoadSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath(m_LevelGuid.m_Instance.m_Value));
                 xlevel::ReattachOpenScenes(*m_pGameMgr, std::move(m_ReloadCapture));
                 if (!m_State.m_CurrentLevel.empty())
-                    m_pGameMgr->m_LevelMgr.Load(m_State.m_CurrentLevel);
+                    xlioncore::Ecs(*m_pGameMgr).LoadLevel(m_State.m_CurrentLevel);
 
                 // The bridge trusts the snapshot to bring every entity back at the same slot. When it did not, the scenes name entities the new world never made:
                 // everything that walks them would read nothing. Say so and rebuild the world from the saved level instead (what was unsaved is lost, the editor is not).
@@ -606,7 +609,7 @@ namespace xlevel
                     const auto Level = m_State.m_CurrentLevel;
                     m_pEcs->DestroyWorld();
                     CreateWorld();
-                    m_pGameMgr->EnableBuilders(m_State.isPlaying());
+                    xlioncore::Ecs(*m_pGameMgr).EnableBuilders(m_State.isPlaying());
                     if (!Level.empty())
                         xlevel::OpenLevel(*m_pGameMgr, m_State, xresource::full_guid{ Level.m_Instance, Level.m_Type });
                 }
@@ -658,7 +661,7 @@ namespace xlevel
         void AfterReload() noexcept
         {
             CreateWorld();
-            m_pGameMgr->EnableBuilders(m_State.isPlaying());
+            xlioncore::Ecs(*m_pGameMgr).EnableBuilders(m_State.isPlaying());
             RestoreWorld(xlevel::persist_mode::RawSnapshotBridge);
         }
 
@@ -947,7 +950,7 @@ namespace xlevel
             // runs while Playing. The editor needs entities visible to Search/Foreach (render, gizmos,
             // ...) as soon as they're created, not just after the first Play - flush unconditionally,
             // every frame, here. Cheap no-op when the pending list is empty (the common case).
-            m_pGameMgr->m_ArchetypeMgr.UpdateStructuralChanges();
+            xlioncore::Ecs(*m_pGameMgr).UpdateStructuralChanges();
 
             // The host's own turn, every frame (Stopped/Paused/Playing alike): Draw has LIONRender's own
             // system collect its entities (after GameMgr.Run() finished, when Playing) and issues the GPU commands.
@@ -1212,7 +1215,7 @@ namespace xlevel
                 m_State.m_bPlayWorldRebuildRequested = false;
                 m_pEcs->DestroyWorld();
                 CreateWorld();
-                m_pGameMgr->EnableBuilders(true);
+                xlioncore::Ecs(*m_pGameMgr).EnableBuilders(true);
                 RestoreWorld(xlevel::persist_mode::RestoreFromV1);
                 xlevel::FinishEnterPlaying(m_CmdContext);
             }

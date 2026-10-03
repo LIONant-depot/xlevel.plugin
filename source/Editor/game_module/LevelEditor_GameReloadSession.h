@@ -139,7 +139,7 @@ namespace xlevel
         for (auto& pScene : Captured)
         {
             const auto SceneGuid = pScene->m_Guid;
-            auto& NewScene = GameMgr.m_SceneMgr.FindOrCreate(SceneGuid);
+            auto& NewScene = xlioncore::Ecs(GameMgr).FindOrCreateScene(SceneGuid);
             NewScene = std::move(*pScene);
             LogGamePlugin(std::format("Game.dll: [Vn reattach] scene {:016X} - {} entit(y/ies), {} folder(s), state={}",
                 SceneGuid.m_Instance.m_Value, NewScene.m_LocalToRuntime.size(), NewScene.m_Folders.size(), (int)NewScene.m_State));

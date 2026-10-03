@@ -60,7 +60,7 @@ namespace xlevel
 
         if (!State.m_CurrentLevel.empty() && GameMgr.m_LevelMgr.Find(State.m_CurrentLevel))
         {
-            if (auto Err = GameMgr.m_LevelMgr.Save(State.m_CurrentLevel); Err)
+            if (auto Err = xlioncore::Ecs(GameMgr).SaveLevel(State.m_CurrentLevel); Err)
                 xeditor::NotifyToast(std::format("Failed to save Level: {}", Err.getMessage()));
         }
 
@@ -92,7 +92,7 @@ namespace xlevel
                     xeditor::NotifyToast(std::format("Scene {:016X} was not saved: {} of its entities are not in the world (the scene is out of step with it). Reopen the Level.", SceneGuid.m_Instance.m_Value, Unknown));
                     continue;
                 }
-            if (auto Err = GameMgr.m_SceneMgr.SaveScene(SceneGuid); Err)
+            if (auto Err = xlioncore::Ecs(GameMgr).SaveScene(SceneGuid); Err)
                 xeditor::NotifyToast(std::format("Failed to save Scene: {}", Err.getMessage()));
         }
 

@@ -620,12 +620,10 @@ namespace xlevel
                                         // folder walk already follows).
                                         std::function<void(xecs::component::entity)> RenderChildEntities = [&](xecs::component::entity Parent) noexcept
                                         {
-                                            auto* pPDetails = FindEntityDetails(GameMgr, Parent);
-                                            if (pPDetails == nullptr || pPDetails->m_pPool == nullptr) return;
-                                            auto& PDetails = *pPDetails;
-                                            if (PDetails.m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::children>.m_BitID) == false) return;
+                                            auto* pParentChildren = xlioncore::Ecs(GameMgr).ChildrenOf(Parent);
+                                            if (pParentChildren == nullptr) return;
 
-                                            auto ChildEntities = PDetails.m_pPool->getComponent<xecs::component::children>(PDetails.m_PoolIndex).m_List;
+                                            auto ChildEntities = pParentChildren->m_List;
                                             for (auto ChildEntity : ChildEntities)
                                             {
                                                 if (auto ChildIt = pScene->m_RuntimeToLocal.find(ChildEntity.m_Value); ChildIt != pScene->m_RuntimeToLocal.end())
@@ -638,8 +636,7 @@ namespace xlevel
                                             const std::string EntityBaseName = xscene::EntityDisplayName(*pScene, Id);
                                             std::string EntityLabel = EntityBaseName;
                                             bool bHasChildren = false;
-                                            if (auto* pDetails = FindEntityDetails(GameMgr, Entity); pDetails && pDetails->m_pPool)
-                                                bHasChildren = pDetails->m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::children>.m_BitID);
+                                            bHasChildren = xlioncore::Ecs(GameMgr).ChildrenOf(Entity) != nullptr;
                                             auto* pPI = xscene::FindPrefabInstance(GameMgr, Entity);
                                             if (pPI)
                                             {
@@ -995,8 +992,7 @@ namespace xlevel
                                                             bool bHasParent = false;
                                                             if (auto DroppedIt = pScene->m_LocalToRuntime.find(Dropped.m_Id); DroppedIt != pScene->m_LocalToRuntime.end())
                                                             {
-                                                                auto* pDroppedDetails = FindEntityDetails(GameMgr, DroppedIt->second);
-                                                                bHasParent = pDroppedDetails && pDroppedDetails->m_pPool && pDroppedDetails->m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::parent>.m_BitID);
+                                                                bHasParent = xlioncore::Ecs(GameMgr).ParentOf(DroppedIt->second) != nullptr;
                                                             }
                                                             if (!bHasParent)
                                                                 xeditor::Run(Ed.m_Undo, std::format("MoveToFolder -Scene {} -Id {} -Folder {:08X}"
@@ -1146,10 +1142,9 @@ namespace xlevel
                                             for (auto& Pair : pScene->m_LocalToRuntime)
                                             {
                                                 if (FolderedEntities.contains(Pair.first)) continue;
-                                                auto* pDetails = FindEntityDetails(GameMgr, Pair.second);
-                                                if (pDetails == nullptr) { ++Unknown; continue; }
-                                                if (pDetails->m_pPool && pDetails->m_pPool->m_pArchetype->getComponentBits().getBit(xecs::component::type::info_v<xecs::component::parent>.m_BitID))
-                                                    continue;
+                                                auto& Ecs = xlioncore::Ecs(GameMgr);
+                                                if (!Ecs.IsAlive(Pair.second)) { ++Unknown; continue; }
+                                                if (Ecs.ParentOf(Pair.second)) continue;
                                                 Unfoldered.push_back(Pair.first);
                                             }
                                             // Said once per change, not once per frame: a diagnostic of the Logs, with a stable code.
@@ -1200,18 +1195,9 @@ namespace xlevel
                         // read-only, synthesized every frame. Counts are per-archetype sums; the entity
                         // lists are only walked while their folder is expanded.
                         {
-                            enum runtime_kind : int { SPAWNED, PREFAB, SHARE, KIND_COUNT };
-
-                            const auto KindOf = [](const xecs::archetype::instance& Archetype) noexcept
-                            {
-                                runtime_kind Kind = SPAWNED;
-                                Archetype.getComponentBits().Foreach([&](int, const xecs::component::type::info& Info) noexcept
-                                {
-                                    if      (xecs::component::type::IsComponentType<xecs::prefab::tag>(&Info))                                Kind = PREFAB;
-                                    else if (xecs::component::type::IsComponentType<xecs::component::share_as_data_exclusive_tag>(&Info)) Kind = SHARE;
-                                });
-                                return Kind;
-                            };
+                            using runtime_kind = xlioncore::xECSEditor;
+                            constexpr auto SPAWNED = xlioncore::xECSEditor::SPAWNED, PREFAB = xlioncore::xECSEditor::PREFAB, SHARE = xlioncore::xECSEditor::SHARE;
+                            constexpr int  KIND_COUNT = xlioncore::xECSEditor::KIND_COUNT;
 
                             const auto IsInOpenScene = [&](xecs::component::entity E) noexcept
                             {
@@ -1222,13 +1208,7 @@ namespace xlevel
                             };
 
                             std::array<int, KIND_COUNT> Count{};
-                            for (auto& pArchetype : GameMgr.m_ArchetypeMgr.m_lArchetype)
-                            {
-                                auto& N = Count[KindOf(*pArchetype)];
-                                for (auto pF = pArchetype->getFamilyHead(); pF; pF = pF->m_Next.get())
-                                    for (auto pP = &pF->m_DefaultPool; pP; pP = pP->m_Next.get())
-                                        N += pP->Size();
-                            }
+                            xlioncore::Ecs(GameMgr).CountRuntimeEntities(Count);
 
                             // Scene entities are never prefab templates or share-entities, so they only
                             // ever need subtracting from the spawned count.
@@ -1239,37 +1219,23 @@ namespace xlevel
 
                             const int RuntimeCount = Count[SPAWNED] + Count[PREFAB] + Count[SHARE];
 
-                            const auto RenderEntities = [&](runtime_kind Kind) noexcept
+                            const auto RenderEntities = [&](xlioncore::xECSEditor::runtime_kind Kind) noexcept
                             {
-                                for (auto& pArchetype : GameMgr.m_ArchetypeMgr.m_lArchetype)
+                                std::vector<xlioncore::xECSEditor::runtime_entity> Entities;
+                                xlioncore::Ecs(GameMgr).ListRuntimeEntities(Kind, Entities);
+                                for (const auto& [E, Components] : Entities)
                                 {
-                                    if (KindOf(*pArchetype) != Kind) continue;
+                                    if (Kind == SPAWNED && IsInOpenScene(E)) continue;
 
-                                    std::string Components;
-                                    for (auto pInfo : pArchetype->getDataComponentInfos())
-                                    {
-                                        if (xecs::component::type::IsComponentType<xecs::component::entity>(pInfo)
-                                         || xecs::component::type::IsComponentType<xecs::component::ref_count>(pInfo)) continue;
-                                        Components += Components.empty() ? pInfo->m_pName : std::format(", {}", pInfo->m_pName);
-                                    }
-
-                                    for (auto pF = pArchetype->getFamilyHead(); pF; pF = pF->m_Next.get())
-                                        for (auto pP = &pF->m_DefaultPool; pP; pP = pP->m_Next.get())
-                                            for (int i = 0, n = pP->Size(); i < n; ++i)
-                                            {
-                                                const auto E = pP->getComponent<xecs::component::entity>(xecs::pool::index{ i });
-                                                if (E.isZombie() || (Kind == SPAWNED && IsInOpenScene(E))) continue;
-
-                                                ImGui::TableNextRow();
-                                                ImGui::TableSetColumnIndex(1);
-                                                ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(E.m_Value))
-                                                    , ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanFullWidth
-                                                    , "Entity 0x%llX  (%s)", static_cast<unsigned long long>(E.m_Value), Components.c_str());
-                                            }
+                                    ImGui::TableNextRow();
+                                    ImGui::TableSetColumnIndex(1);
+                                    ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(E.m_Value))
+                                        , ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanFullWidth
+                                        , "Entity 0x%llX  (%s)", static_cast<unsigned long long>(E.m_Value), Components.c_str());
                                 }
                             };
 
-                            const auto RenderSubFolder = [&](const char* pName, runtime_kind Kind) noexcept
+                            const auto RenderSubFolder = [&](const char* pName, xlioncore::xECSEditor::runtime_kind Kind) noexcept
                             {
                                 if (Count[Kind] == 0) return;
                                 ImGui::TableNextRow();
