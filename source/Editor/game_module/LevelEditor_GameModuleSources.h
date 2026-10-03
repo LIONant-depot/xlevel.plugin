@@ -80,11 +80,11 @@ namespace xlevel
         std::filesystem::remove_all(Platform / L"Debug", Ec);
     }
 
-    // The project this example edits sits next to the xGPU checkout.
+    // The paths of the project that is open (the one asked for when the editor started, else the example project: the shell opened it and the library manager knows it). The xGPU checkout
+    // (the engine headers and libraries a Game is built against) is where the executable is, which is not necessarily where the project is.
     inline script_project_paths MakeScriptProjectPaths() noexcept
     {
-        auto P = MakeScriptProjectPaths(std::filesystem::path{});
-        return MakeScriptProjectPaths(P.m_XGpuRoot / L"example.lionprj");
+        return MakeScriptProjectPaths(std::filesystem::path(xresource_editor::g_LibMgr.m_ProjectPath));
     }
 
     // The newest time at which anything the DLL is built from changed: the game entry files, the generated project (written by the compile of the Game resource when a module,
