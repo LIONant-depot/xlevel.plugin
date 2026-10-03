@@ -294,12 +294,12 @@ namespace xlevel
     // Called once per frame from the main loop. Reads/writes the single-instance globals (g_PendingReloadCompatibility,
     // g_pGamePlugin) and strips the components from the editor's own scenes.
     //---------------------------------------------------------------------------
-    inline void RenderReloadCompatibilityModal(xlevel::level_context& Ed) noexcept
+    inline void RenderReloadCompatibilityModal(xlevel::level_context& Ed, const ImVec2* pCenter = nullptr) noexcept
     {
         if (g_PendingReloadCompatibility.has_value())
             ImGui::OpenPopup("Game.dll Reload - Missing Components");
 
-        if (xeditor::BeginModal("Game.dll Reload - Missing Components"))
+        if (xeditor::BeginModal("Game.dll Reload - Missing Components", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings, pCenter))
         {
             if (g_PendingReloadCompatibility.has_value())
             {

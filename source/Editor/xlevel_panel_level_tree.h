@@ -366,19 +366,23 @@ namespace xlevel
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(1);
                     const std::string LevelLabelWithIcon = std::format("{} {}", xlevel::LevelIcon(), LevelLabel);
-                    const bool bLevelOpen = ImGui::TreeNodeEx(LevelLabelWithIcon.c_str(), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth);
+                    const bool bLevelOpen = ImGui::TreeNodeEx(LevelLabelWithIcon.c_str(), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth
+                        | (State.m_bRootSelected ?ImGuiTreeNodeFlags_Selected : 0));
+                    // A click on the row (not its arrow) selects the Level: the Inspector shows its properties (its Game, its scenes). A right-click opens the menu below, and selects it too.
+                    if ((ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) || ImGui::IsItemClicked(ImGuiMouseButton_Right))
+                        xeditor::Run(Undo, "SelectLevel");
 
                     // Right-click: whole-folder SC Revert - direct user request, item 3 ("The Level
                     // will revert the level resource - everything in the folder of the resource").
                     // The Level row had no context menu at all before this.
                     if (ImGui::BeginPopupContextItem())
                     {
-                        // The Game this Level runs under: the project's, or one of the project's Games (SetLevelGame: refused when the Game lacks a module the scenes need).
+                        // The Game this Level runs under: one of the project's Games, or none (SetLevelGame: refused when the Game lacks a module the scenes need).
                         if (ImGui::BeginMenu("Game"))
                         {
                             const auto LevelValue = State.m_CurrentLevel.m_Instance.m_Value;
                             const auto Named      = xlevel::ReadLevelGame(xlevel::ProjectRoot().wstring(), LevelValue);
-                            if (ImGui::MenuItem("Project's Game (default)", nullptr, Named == 0, !State.isPlaying()))
+                            if (ImGui::MenuItem("(no Game)", nullptr, Named == 0, !State.isPlaying()))
                                 xeditor::Run(Undo, std::format("SetLevelGame -Level {:016X}", LevelValue));
                             for (const auto& [Game, Name] : xlevel::commands::BuildAssetNameMap(xgame::type_guid_v))
                                 if (ImGui::MenuItem(Name.c_str(), nullptr, Named == Game, !State.isPlaying()))

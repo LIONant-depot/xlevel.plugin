@@ -44,6 +44,7 @@ namespace xlevel
         State.m_MultiSelectedEntityIds.clear();
         State.m_MultiSelectOrder.clear();
         State.m_MultiSelectScene = {};
+        State.m_bRootSelected    = false;
 
         // CLI Close (or any immediate close) cancels a pending File>Close / open-other prompt.
         State.m_bAwaitingSaveBeforeClose = false;
@@ -117,12 +118,12 @@ namespace xlevel
     }
 
     // Same OpenPopup-every-frame convention as RenderKeepTweaksModal / RenderErrorPopup.
-    inline void RenderSaveBeforeCloseModal(xecs::game_mgr::instance& GameMgr, level_state& State, xundo::system& Undo) noexcept
+    inline void RenderSaveBeforeCloseModal(xecs::game_mgr::instance& GameMgr, level_state& State, xundo::system& Undo, const ImVec2* pCenter = nullptr) noexcept
     {
         if (State.m_bAwaitingSaveBeforeClose)
             ImGui::OpenPopup("Save changes?##LevelDocument");
 
-        if (xeditor::BeginModal("Save changes?##LevelDocument"))
+        if (xeditor::BeginModal("Save changes?##LevelDocument", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings, pCenter))
         {
             const bool bOpeningOther = !State.m_PendingOpenLevelAfterClose.empty();
             ImGui::TextUnformatted(State.m_CurrentLevel.empty()

@@ -78,12 +78,8 @@ namespace xlevel
         return D.m_Game.m_Instance.m_Value;
     }
 
-    // The Game a Level really runs under: the one it names, or else the project's.
-    inline std::uint64_t EffectiveGameOf( std::uint64_t Level ) noexcept
-    {
-        const auto Named = ReadLevelGame(ProjectRoot().wstring(), Level);
-        return Named ? Named : ProjectGameValue();
-    }
+    // The Game a Level runs under: the one it names. A Level has to name one (0: it does not, and does not know what to run); the project's Game only says which Game the editor builds.
+    inline std::uint64_t GameOfLevel( std::uint64_t Level ) noexcept { return ReadLevelGame(ProjectRoot().wstring(), Level); }
 
     // Makes sure the project has a Game resource: when it has none, one is created in the project's own library (named "Game") from what Script.config.txt listed before the
     // Game resource existed (nothing, for a new project), and Script.config.txt names it from then on. Returns "" or why not.

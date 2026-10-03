@@ -20,6 +20,7 @@ namespace xlevel
     {
         std::function<bool()> m_IsBuilding;
         std::function<void()> m_StartBuild;
+        std::function<std::string(const level_state&)> m_WhyNotPlay;    // "" when the Level can run (its Game lists the modules its scenes need), else why not
     };
 
     //---------------------------------------------------------------------------
@@ -86,6 +87,14 @@ namespace xlevel
         auto* pGate = xeditor::host::current()->find<play_gate>();
         if (pGate && pGate->m_IsBuilding())          return "Play: a build is already in flight";
         if (State.m_PlayState == play_state::Paused)  { RequestResume(State); return "Resumed"; }
+
+        // A Level whose Game does not list the modules its scenes need (or that names none) has nothing to run them with: an error, not a play session of half a world
+        if (pGate && pGate->m_WhyNotPlay)
+            if (auto Why = pGate->m_WhyNotPlay(State); !Why.empty())
+            {
+                xeditor::NotifyToast("Play refused: " + Why);
+                return "Play: refused - " + Why;
+            }
 
         auto& Host = *xeditor::host::current();
         if (!Host.try_begin_play(&State))
@@ -304,13 +313,14 @@ namespace xlevel
     // decides Keep-vs-Discard here; the real Stop itself still runs at the usual deferred, safe frame
     // boundary (RequestStop just re-flags m_bStopRequested).
     //---------------------------------------------------------------------------
-    inline void RenderKeepTweaksModal(level_context& Ed) noexcept
+    // pCenter: the middle of the editor this Level is in (these modals are drawn from the top level of the frame, where there is no panel to find the editor from).
+    inline void RenderKeepTweaksModal(level_context& Ed, const ImVec2* pCenter = nullptr) noexcept
     {
         auto& State = Ed.State();
         if (State.m_bAwaitingKeepTweaksAnswer)
             ImGui::OpenPopup("Keep Play Mode Changes?");
 
-        if (xeditor::BeginModal("Keep Play Mode Changes?"))
+        if (xeditor::BeginModal("Keep Play Mode Changes?", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings, pCenter))
         {
             const auto Count = State.m_PendingKeepTweaksCommands.size();
             ImGui::Text("You changed %zu propert%s while Playing.", Count, Count == 1 ? "y" : "ies");

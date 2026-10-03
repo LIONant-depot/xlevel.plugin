@@ -209,7 +209,7 @@ namespace xlevel
         if (pMe == nullptr) return true;
 
         const auto Name = Cmd.substr(0, Cmd.find(' '));
-        if (Name == "Select" || Name == "ToggleMultiSelect" || Name == "ClearSelection") return true;
+        if (Name == "Select" || Name == "SelectLevel" || Name == "ToggleMultiSelect" || Name == "ClearSelection") return true;
 
         // Adding/removing a Scene names it but changes the Level's membership list, not the Scene.
         const bool bLevelMembershipEdit = Name == "AddScene" || Name == "RemoveScene";

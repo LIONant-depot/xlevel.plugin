@@ -171,7 +171,7 @@ namespace xlevel::commands
     struct list_levels_query_cmd : level_query_command
     {
         list_levels_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "ListLevels", pDataBase) { RegisterArguments(); }
-        const char* getCommandHelp() const noexcept override { return "Lists every Level asset (guid + name); with -Game, only the Levels that run under that Game (a Level that names none runs under the project's). Usage: ListLevels [-Game assetguid]"; }
+        const char* getCommandHelp() const noexcept override { return "Lists every Level asset (guid + name); with -Game, only the Levels that name that Game. Usage: ListLevels [-Game assetguid]"; }
         void RegisterArguments() noexcept override
         {
             m_hGame = m_Parser.addOption("Game", "Game asset guid, 32 hex digits: only the Levels that run under it", false, 1);
@@ -189,7 +189,7 @@ namespace xlevel::commands
             std::string Out;
             for (auto& [Guid, Name] : BuildAssetNameMap(xecs::level::type_guid_v))
             {
-                if (OnlyGame && EffectiveGameOf(Guid) != OnlyGame) continue;                // the Levels that run under that Game (the ones that name none run under the project's)
+                if (OnlyGame && GameOfLevel(Guid) != OnlyGame) continue;                // the Levels that name that Game
                 Out += std::format("{:016X}  {}\n", Guid, Name);
             }
             return Out;

@@ -55,6 +55,7 @@
 #include "plugins/xlevel.plugin/source/Editor/xlevel_viewport_tools.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_box.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_shapes.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_panel_level_properties.h"
 
 #include <memory>
 #include <limits>
@@ -227,6 +228,11 @@ namespace xlevel
         scene_sanity_scanner                       m_SceneScanner{ m_CmdContext };
 
         xproperty::inspector                       m_EntityInspector{ "Inspector" };
+        // The middle of this Level's editor, from its last frame: the modals of the session open there (null until the editor has drawn once, then they ask the dock tree as before)
+        ImVec2                                     m_EditorCenter{ 0.0f, 0.0f };
+        bool                                       m_bEditorCenter = false;
+        const ImVec2* ModalCenter() const noexcept { return m_bEditorCenter ? &m_EditorCenter : nullptr; }
+        xlevel::level_properties_panel             m_LevelView;     // what the Inspector shows while the Level is selected in the tree
         xscene::entity_inspector_bridge            m_InspectorBridge;
 
         // Scene tool state + the "Editor"/"Scene" toolbars (ported from LevelEditor_AppToolbars.h - these read
@@ -383,6 +389,12 @@ namespace xlevel
 
                 Svc.Gate.m_IsBuilding = []() noexcept { return Services().Plugin.m_bBuilding; };
                 Svc.Gate.m_StartBuild = []() noexcept { xlevel::StartGameReload(Services().Plugin); };
+                Svc.Gate.m_WhyNotPlay = [](const level_state& State) -> std::string
+                {
+                    std::vector<std::uint64_t> Scenes;
+                    for (auto& S : State.m_OpenScenes) Scenes.push_back(S.m_Instance.m_Value);
+                    return xlevel::StatusOfLevelGame(State.m_CurrentLevel.m_Instance.m_Value, Scenes).m_Issue;
+                };
                 if (auto* pHost = xeditor::host::current()) pHost->provide(Svc.Gate);
                 Svc.bReady = true;
             }
@@ -709,6 +721,7 @@ namespace xlevel
                 std::vector<std::uint64_t> Scenes;
                 for (auto& S : m_State.m_OpenScenes) Scenes.push_back(S.m_Instance.m_Value);
                 m_GameStatus = xlevel::StatusOfLevelGame(m_State.m_CurrentLevel.m_Instance.m_Value, Scenes);
+                m_State.m_WhyNotPlay = m_GameStatus.m_Issue;
             }
         }
 
@@ -730,7 +743,7 @@ namespace xlevel
             if (ImGui::IsItemHovered())
             {
                 const std::string Body = Self.m_GameStatus.m_Issue.empty()
-                    ? std::string(Self.m_GameStatus.m_bNamed ? "The Game this Level names: its systems run the Level's scenes." : "The project's Game: this Level names none. Give it its own with SetLevelGame, or from the Level's right-click menu.")
+                    ? std::string(Self.m_GameStatus.m_bNamed ? "The Game this Level names: its systems run the Level's scenes." : "This Level names no Game: it has no scripts, components or systems of any module. Give it one: select the Level in the Level Tree and drag a Game onto its Game, or SetLevelGame.")
                     : Self.m_GameStatus.m_Issue;
                 xeditor::hint::Draw({ .m_Topic = "Game", .m_Body = Body });
             }
@@ -1285,14 +1298,14 @@ namespace xlevel
 
             if (bParentEditorVisible)
             {
-                xlevel::RenderKeepTweaksModal(m_CmdContext);
+                xlevel::RenderKeepTweaksModal(m_CmdContext, ModalCenter());
                 // NOTE: the original (LevelEditor_AppFrame.h) passed the shell's separate workspace xundo::system
                 // (LevelEditorUndo) here, not the Level session's own - a pre-existing mismatch against how
                 // CmdRemoveSceneDependency is actually registered (see LevelEditor_CommandSet.h: Level, not
                 // Workspace). Passing m_Undo is what stage (c)'s command split makes correct; not yet exercised
                 // since nothing opens this session before stage (b).
-                xlevel::RenderRemoveDependencyConfirmModal(m_Undo);
-                xlevel::RenderSaveBeforeCloseModal(*m_pGameMgr, m_State, m_Undo);
+                xlevel::RenderRemoveDependencyConfirmModal(m_Undo, ModalCenter());
+                xlevel::RenderSaveBeforeCloseModal(*m_pGameMgr, m_State, m_Undo, ModalCenter());
 
                 if (m_State.m_bPendingStartGameReloadAfterOpen)
                 {
@@ -1334,7 +1347,7 @@ namespace xlevel
                     ImGui::OpenPopup("##PlayBusy");
                     m_State.m_bPlayBusyPopup = false;
                 }
-                if (xeditor::BeginModal("##PlayBusy"))
+                if (xeditor::BeginModal("##PlayBusy", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings, ModalCenter()))
                 {
                     ImGui::Text("Play is already active in another Level editor.");
                     ImGui::Text("Stop that Play first, then try again.");
@@ -1355,7 +1368,9 @@ namespace xlevel
                 m_State.m_bRenameRequested = false;      // F2 was offered to the tree this frame; a request that found no selected row is dropped, not kept for later
 
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
-                xscene::RenderEntityPropertiesPanel(m_CmdContext, m_Names.m_Inspector, m_EntityInspector, m_InspectorBridge, bSelectedLocked, ReadOnlyReason.c_str());
+                // The Level selected in the Level Tree: the Inspector tab shows the Level's own properties (its Game, its scenes) instead of an entity's
+                if (m_State.m_bRootSelected && !m_State.m_CurrentLevel.empty()) m_LevelView.Render(m_CmdContext, m_Names.m_Inspector);
+                else                                                            xscene::RenderEntityPropertiesPanel(m_CmdContext, m_Names.m_Inspector, m_EntityInspector, m_InspectorBridge, bSelectedLocked, ReadOnlyReason.c_str());
 
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
                 xlevel::RenderSystemRegistryPanel(*m_pGameMgr, m_State, m_Names.m_SystemRegistry);
@@ -1364,7 +1379,10 @@ namespace xlevel
                 ImGui::SetNextWindowSize(ImVec2(1050.0f, 480.0f), ImGuiCond_FirstUseEver);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
-                if (ImGui::Begin(m_Names.m_Editor))
+                const bool bEditorShown = ImGui::Begin(m_Names.m_Editor);
+                m_EditorCenter  = xeditor::EditorRect().GetCenter();         // the middle of this Level's editor: where its modals open (they are drawn from the top level, with no panel to ask)
+                m_bEditorCenter = true;
+                if (bEditorShown)
                 {
                     ximgui::toolbar::RenderToolbarHost(m_EditorToolbarHost, ImGui::GetContentRegionAvail(),
                         [this](const char* Name, ximgui::toolbar::axis Axis) { RenderEditorToolbar(Name, Axis); },
@@ -1373,7 +1391,7 @@ namespace xlevel
                 ImGui::End();
                 ImGui::PopStyleVar();
 
-                xlevel::RenderReloadCompatibilityModal(m_CmdContext);
+                xlevel::RenderReloadCompatibilityModal(m_CmdContext, ModalCenter());
             }
         }
 

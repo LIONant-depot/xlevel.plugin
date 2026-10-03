@@ -221,8 +221,8 @@ namespace xlevel
     // The Game a Level runs under and whether it can: what the toolbar and the Level tree show. From files (no DLL): the Level's descriptor, the Game's modules, the scenes' ComponentDeps.txt.
     struct level_game_status
     {
-        std::uint64_t   m_Game   = 0;               // the Game the Level runs under (0: the project has none)
-        bool            m_bNamed = false;           // the Level names it (otherwise it is the project's)
+        std::uint64_t   m_Game   = 0;               // the Game the Level names (0: none - a Level without a Game has no scripts, components or systems of any module)
+        bool            m_bNamed = false;           // the Level names a Game
         std::string     m_Name;
         std::string     m_Issue;                    // what is wrong with it, "" when nothing is
     };
@@ -231,27 +231,27 @@ namespace xlevel
     {
         level_game_status S;
         const std::wstring Project = ProjectRoot().wstring();
-        const auto Named = ReadLevelGame(Project, Level);
-        S.m_bNamed = Named != 0;
-        S.m_Game   = Named ? Named : ProjectGameValue();
-        if (!S.m_Game) { S.m_Name = "(no Game)"; return S; }
+        S.m_Game   = ReadLevelGame(Project, Level);
+        S.m_bNamed = S.m_Game != 0;
         const auto Names = commands::BuildAssetNameMap(xgame::type_guid_v);
         auto Label = [&](std::uint64_t Game) { const auto It = Names.find(Game); return It == Names.end() ? std::format("{:X}", Game) : It->second; };
-        S.m_Name = Label(S.m_Game);
-        if (S.m_Game != ProjectGameValue())
+        S.m_Name = S.m_bNamed ? Label(S.m_Game) : "(no Game)";
+        if (S.m_bNamed && S.m_Game != ProjectGameValue())
         {
             S.m_Issue = std::format("This Level runs under the Game '{}', but this editor runs the project's Game '{}' (one Game at a time), so it cannot open.", S.m_Name, Label(ProjectGameValue()));
             return S;
         }
+        // What the scenes need must be in the Game: without a Game nothing is, so the Level has no scripts, components or systems of any module
         scene_module_needs Needs;
         for (const auto Scene : Scenes) AddSceneModuleNeeds(Needs, Project, Scene, /*bTransitive*/ true);
-        const auto Game = ReadGame(S.m_Game);
+        const auto Game = S.m_bNamed ? ReadGame(S.m_Game) : project_game{};
         if (const auto Gaps = MissingModules(Needs, Game.m_Modules); !Gaps.empty())
         {
             const auto Modules = commands::BuildAssetNameMap(xscript::module::type_guid_v);
             std::string List;
             for (const auto& [Module, Need] : Gaps) { const auto It = Modules.find(Module); List += (List.empty() ? "" : ", ") + (It == Modules.end() ? std::format("{:X}", Module) : It->second); }
-            S.m_Issue = std::format("The Game '{}' does not list the module(s) these scenes need: {}.", S.m_Name, List);
+            S.m_Issue = S.m_bNamed ? std::format("The Game '{}' does not list the module(s) these scenes need: {}.", S.m_Name, List)
+                                   : std::format("This Level names no Game, so nothing provides the module(s) its scenes need: {}. Give it a Game that lists them.", List);
         }
         return S;
     }

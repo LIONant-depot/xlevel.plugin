@@ -46,6 +46,10 @@ namespace xlevel
         // re-pauses; from Paused, the gate runs ONE tick without leaving Paused (this flag alone authorizes a tick then).
         bool m_bStepOneFrame = false;
 
+        // Why this Level cannot be played (its Game does not list the modules its scenes need), "" when it can: read from files about once a second by the session, for the Play button.
+        // RequestPlay asks the play_gate itself, so a Play that comes before the next refresh is still refused.
+        std::string m_WhyNotPlay;
+
         bool m_bLevelEditorOpen = true;   // peer Level root tab (Texture-shaped close)
         bool m_bPlayBusyPopup   = false;  // shown when another Play session is already active
         // Set by Play (Stopped -> Playing only; Paused -> Playing is a plain resume) and consumed by PollGameReload once the

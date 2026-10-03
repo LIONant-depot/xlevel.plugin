@@ -94,12 +94,15 @@ namespace xlevel
         if (Layout.m_bHorizontal)
             ImGui::SameLine(PairX);
 
-        Slot(bStopped ? PlayIcon : StopIcon, bBuilding || (bStopped && bOtherPlaying), false, [&]
+        // A Level with an error (its Game lacks what its scenes need) cannot be played: it would run without the systems and components its scenes use
+        const bool bBlocked = bStopped && !State.m_WhyNotPlay.empty();
+        Slot(bStopped ? PlayIcon : StopIcon, bBuilding || (bStopped && bOtherPlaying) || bBlocked, false, [&]
         {
             if (bStopped) RequestPlay(Ed);
             else          RequestStop(Ed, std::nullopt);
         });
         if (bStopped && bOtherPlaying) { if (Layout.m_bTooltips && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) xeditor::hint::Text("Another Level is playing - stop it first"); }
+        else if (bBlocked) { if (Layout.m_bTooltips && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) xeditor::hint::Text("Cannot play: %s", State.m_WhyNotPlay.c_str()); }
         else Tip(bStopped ? "Play" : "Stop", bStopped ? "Start playback" : "Stop playback");
 
         Next();
@@ -110,7 +113,7 @@ namespace xlevel
         }
         else
         {
-            Slot(StepIcon, bBuilding || (bStopped && bOtherPlaying), false, [&] { RequestStep(Ed); });
+            Slot(StepIcon, bBuilding || (bStopped && bOtherPlaying) || bBlocked, false, [&] { RequestStep(Ed); });
             Tip("Step", "Run one frame");
         }
 

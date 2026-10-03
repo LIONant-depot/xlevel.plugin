@@ -297,7 +297,7 @@ namespace xlevel
     }
 
     // Same top-level OpenPopup/BeginPopupModal scope as RenderErrorPopup / RenderKeepTweaksModal.
-    inline void RenderRemoveDependencyConfirmModal(xundo::system& Undo) noexcept
+    inline void RenderRemoveDependencyConfirmModal(xundo::system& Undo, const ImVec2* pCenter = nullptr) noexcept
     {
         if (g_PendingRemoveDependencyConfirm.m_bOpen)
         {
@@ -306,7 +306,7 @@ namespace xlevel
         }
 
         ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
-        if (xeditor::BeginModal("Clear dependency refs?##LevelClearDependencyRefs"))
+        if (xeditor::BeginModal("Clear dependency refs?##LevelClearDependencyRefs", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings, pCenter))
         {
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f);
             ImGui::TextUnformatted(std::format(
