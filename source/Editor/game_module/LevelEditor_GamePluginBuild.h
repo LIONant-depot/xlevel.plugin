@@ -9,7 +9,9 @@
 // LevelEditor_GamePluginLog.h (LogGamePlugin).
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GameModuleSources.h"
 #include "dependencies/xlog/source/xlog_build.h"
+#include <chrono>
 #include <optional>
+#include <unordered_map>
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GameModuleEvents.h"
 
 namespace xlevel
@@ -37,12 +39,29 @@ namespace xlevel
     // This means a rebuild (whether the user's own external build or LevelEditor's own auto-build below)
     // never has to fight a file this process still has mapped - the compiler always writes to
     // m_Paths.m_Dll, which is NEVER the currently-loaded file.
+    // A component or a system of the loaded Game.dll, and the script module that defines it (what XScript_GetRegistrations says: the file the type is defined in, and the module that file is in).
+    struct game_registration
+    {
+        int             m_Kind   = 0;           // 0 component, 1 system
+        std::uint64_t   m_Guid   = 0;
+        std::string     m_Name;
+        std::string     m_File;                 // the absolute path the compiler saw
+        std::uint64_t   m_Module = 0;           // the ScriptModule resource that holds the file; 0 when the file is in no module
+    };
+
     struct game_plugin_state
     {
         game_module_events m_Events;      // the editors that take part in a reload subscribe here
+        std::vector<game_registration> m_Registrations;     // what the loaded Game.dll defines, with its modules (empty when it is not loaded)
+        bool                   m_bHasRegistrations = false; // the loaded Game.dll has the XScript_GetRegistrations export (one built before it existed has not: its modules are unknown)
+        std::unordered_map<std::uint64_t, std::string> m_ModuleNames;   // the names of the script modules, for the hints (refreshed now and then: a module can be renamed)
+        std::chrono::steady_clock::time_point          m_ModuleNamesAt{};
         HMODULE                m_hModule          = nullptr;
         xecs::plugin::token     m_Token            = {};
         script_project_paths    m_Paths;
+        game_inputs             m_GameInputs;               // what the build waits for the resource pipeline to have made (captured on the main thread, see CaptureGameInputs)
+        std::atomic<bool>       m_bCancelWait{ false };     // the editor is closing: stop waiting for the pipeline
+        ~game_plugin_state() noexcept { m_bCancelWait = true; }
         std::wstring            m_LoadedDllPath;
 
         // Human-readable outcome of the most recent build/load attempt - printf's own log lines are
@@ -87,6 +106,22 @@ namespace xlevel
     // buttons do without needing synthetic mouse input - same "one instance per process" assumption
     // those two globals already make.
     inline game_plugin_state* g_pGamePlugin = nullptr;
+
+    // The script module that defines a component: the guid of its ScriptModule resource, 0 for a component that no module defines (the engine's or the editor's: it is not in the Game.dll's
+    // registrations, or the file it is defined in is outside every module), xecs::scene::unknown_module_v when nobody can say (the loaded Game.dll was built before modules were tracked).
+    inline std::uint64_t ModuleOfComponent( const game_plugin_state& Plugin, std::uint64_t ComponentGuid ) noexcept
+    {
+        if (!Plugin.isLoaded())          return 0;                                   // no game module: every component that exists is the host's
+        if (!Plugin.m_bHasRegistrations) return xecs::scene::unknown_module_v;
+        for (const auto& R : Plugin.m_Registrations)
+            if (R.m_Kind == 0 && R.m_Guid == ComponentGuid) return R.m_Module;
+        return 0;
+    }
+    // The form xecs::scene::mgr::m_pModuleOfComponent takes: the editor's one game module.
+    inline std::uint64_t ResolveComponentModule( xecs::component::type::guid Guid ) noexcept
+    {
+        return g_pGamePlugin ? ModuleOfComponent(*g_pGamePlugin, Guid.m_Value) : xecs::scene::unknown_module_v;
+    }
 
     //---------------------------------------------------------------------------
     // "The editor should try to recompile automatically; if it's already compiled (newer than the one we're using) just load"
@@ -261,6 +296,27 @@ namespace xlevel
         std::error_code Ec;
         const auto& P = Plugin.m_Paths;
 
+        // The CMake project of the game is made by the resource pipeline (each module is compiled into its CMake file, then the Game resource into the project): wait for it to be
+        // over. A compile that failed is said as it is; the build is not attempted on a project that is out of date.
+        switch (WaitForGameProject(Plugin.m_GameInputs, Plugin.m_bCancelWait))
+        {
+        case game_project_state::NoGame:
+            Plugin.m_LastStatus = "Game.dll: the project has no Game resource - nothing to build";
+            LogGamePlugin(Plugin.m_LastStatus);
+            return build_result::UpToDate;
+        case game_project_state::Failed:
+            Plugin.m_LastStatus = "Game.dll: the Game project failed to compile (the Game resource or one of its modules) - see the Logs";
+            LogGamePlugin(Plugin.m_LastStatus);
+            return build_result::Failed;
+        case game_project_state::Pending:
+            Plugin.m_LastStatus = "Game.dll: the resource pipeline did not make the Game project in time - is the compile queue paused?";
+            LogGamePlugin(Plugin.m_LastStatus);
+            return build_result::Failed;
+        case game_project_state::Current:
+            break;
+        }
+        if (const auto T = std::filesystem::last_write_time(P.m_CMakeLists, Ec); !Ec && T > ModuleSourceTime) ModuleSourceTime = T;      // the pipeline may have written it while we waited
+
         const bool bDllMissing  = !std::filesystem::exists(P.m_Dll, Ec);
         const bool bWrongConfig = !bDllMissing && !IsGamePluginUsable(P);
         const bool bStale       = IsGamePluginStale(P, ModuleSourceTime);
@@ -297,26 +353,43 @@ namespace xlevel
         }
         auto* pAdapter = Adapter ? &*Adapter : nullptr;
 
-        // An explicit reconfigure before every build: `cmake --build`'s own automatic reconfigure does not reliably notice that
-        // the generated CMakeLists.txt changed (a module was added or removed). It is cheap when nothing changed. The
-        // generator is only given the first time, when the build directory is created.
+        // An explicit reconfigure when the generated CMakeLists.txt changed (a module, a file or a folder was added, removed or renamed):
+        // `cmake --build`'s own automatic reconfigure does not reliably notice that. A plain edit of a source file does not change it, and
+        // then only MSBuild runs. The stamp is written after each successful configure. The generator is only given the first time,
+        // when the build directory is created.
         // MSBuild would consider the other configuration's DLL up to date, so it goes first.
         if (bWrongConfig) std::filesystem::remove(P.m_Dll, Ec);
 
-        std::wstring Configure = std::format(L"cmake -S \"{}\" -B \"{}\"", P.m_Root.wstring(), P.m_BuildDir.wstring());
-        if (!std::filesystem::exists(P.m_BuildDir / L"CMakeCache.txt", Ec)) Configure += ScriptProjectGeneratorArgs(P);
-        if (const auto ConfigureExit = RunCmakeCommand(Configure, P.m_Root, pAdapter); ConfigureExit != 0)
-        {
-            Plugin.m_LastStatus = std::format("Game.dll: cmake reconfigure FAILED (exit={}) - see the Logs (LogProblems -Operation {})", ConfigureExit, Op.Id());
-            LogGamePlugin(Plugin.m_LastStatus);
-            Op.Fail();
-            return build_result::Failed;
-        }
+        // The project names no place: the two folders of the engine come on the command line of the configure (the stamp says which ones it was configured with).
+        auto Fwd = [](const std::filesystem::path& Path) { std::wstring Text = Path.wstring(); std::ranges::replace(Text, L'\\', L'/'); return Text; };
+        const std::wstring EngineArgs = std::format(L" -DXGPU_ROOT=\"{}\" -DXGPU_BIN_DIR=\"{}\"", Fwd(P.m_XGpuRoot), Fwd(P.m_XGpuBinDir));
+        const std::string  EngineText = xstrtool::To(EngineArgs);
 
-        // MSBuild decides whether the precompiled header is stale from cmake_pch.cxx, a one-line file CMake never rewrites, so
-        // adding a header to (or removing one from) the PCH list does not make it rebuild. Touching that file does.
-        if (const auto PchFile = P.m_BuildDir / L"CMakeFiles" / L"Game.dir" / L"cmake_pch.cxx"; std::filesystem::exists(PchFile, Ec))
-            std::filesystem::last_write_time(PchFile, std::filesystem::file_time_type::clock::now(), Ec);
+        const auto ConfiguredStamp = P.m_BuildDir / L"configured.stamp";
+        const bool bCacheExists    = std::filesystem::exists(P.m_BuildDir / L"CMakeCache.txt", Ec);
+        const auto StampTime       = std::filesystem::last_write_time(ConfiguredStamp, Ec);
+        std::string StampText;
+        if (!Ec) { std::ifstream In(ConfiguredStamp, std::ios::binary); StampText.assign(std::istreambuf_iterator<char>(In), std::istreambuf_iterator<char>()); }
+        const bool bConfigure      = !bCacheExists || Ec || std::filesystem::last_write_time(P.m_CMakeLists, Ec) > StampTime || StampText != EngineText;
+        if (bConfigure)
+        {
+            std::wstring Configure = std::format(L"cmake -S \"{}\" -B \"{}\"", P.m_Root.wstring(), P.m_BuildDir.wstring()) + EngineArgs;
+            if (!bCacheExists) Configure += ScriptProjectGeneratorArgs(P);
+            if (const auto ConfigureExit = RunCmakeCommand(Configure, P.m_Root, pAdapter); ConfigureExit != 0)
+            {
+                Plugin.m_LastStatus = std::format("Game.dll: cmake reconfigure FAILED (exit={}) - see the Logs (LogProblems -Operation {})", ConfigureExit, Op.Id());
+                LogGamePlugin(Plugin.m_LastStatus);
+                Op.Fail();
+                return build_result::Failed;
+            }
+            std::ofstream(ConfiguredStamp, std::ios::trunc | std::ios::binary) << EngineText;
+
+            // MSBuild decides whether the precompiled header is stale from cmake_pch.cxx, a one-line file CMake never rewrites, so
+            // adding a header to (or removing one from) the PCH list does not make it rebuild. Touching that file does - and only
+            // here: the list is part of CMakeLists.txt, and touching it on every build would recompile everything for a one-line edit.
+            if (const auto PchFile = P.m_BuildDir / L"CMakeFiles" / L"Game.dir" / L"cmake_pch.cxx"; std::filesystem::exists(PchFile, Ec))
+                std::filesystem::last_write_time(PchFile, std::filesystem::file_time_type::clock::now(), Ec);
+        }
 
         const auto BuildExit = RunCmakeCommand(std::format(L"cmake --build \"{}\" --target Game --config {} -- /nodeReuse:false", P.m_BuildDir.wstring(), P.m_Config), P.m_Root, pAdapter);
         if (BuildExit != 0)

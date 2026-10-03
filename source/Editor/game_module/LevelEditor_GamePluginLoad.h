@@ -188,6 +188,50 @@ namespace xlevel
         return Result;
     }
 
+    // What the DLL says it defines and where (XScript_GetRegistrations; the module of each file is found from its path). Like ProbeCandidateComponents it needs nothing but the loaded library: the data
+    // comes from lists filled at static-init time. false when the DLL has no such export (built before it existed).
+    inline bool ProbeRegistrations( HMODULE hModule, std::vector<game_registration>& Out ) noexcept
+    {
+        Out.clear();
+        if (!hModule) return false;
+        auto* pGet = reinterpret_cast<xscript::pfn_get_registrations>(GetProcAddress(hModule, xscript::kGetRegistrationsName));
+        if (!pGet) return false;
+        pGet([](void* pUserData, int Kind, std::uint64_t Guid, const char* pName, const char* pFile) noexcept
+        {
+            game_registration R;
+            R.m_Kind   = Kind;
+            R.m_Guid   = Guid;
+            R.m_Name   = pName ? pName : "";
+            R.m_File   = pFile ? pFile : "";
+            R.m_Module = xscript::module::ModuleGuidFromSourcePath(R.m_File);
+            static_cast<std::vector<game_registration>*>(pUserData)->push_back(std::move(R));
+        }, &Out);
+        return true;
+    }
+
+    // Said once per generation, in the log: what the registrations show that the person should know.
+    inline void ReportRegistrations( const game_plugin_state& Plugin ) noexcept
+    {
+        if (!Plugin.m_bHasRegistrations) return;
+        const auto Listed = ProjectModules();
+        std::vector<std::uint64_t> NotListed;
+        int nOutside = 0;
+        std::string Example;
+        for (const auto& R : Plugin.m_Registrations)
+        {
+            if (R.m_Module == 0)
+            {
+                if (!nOutside++) Example = std::format("{} in '{}'", R.m_Name, R.m_File);
+                continue;
+            }
+            const bool bListed = std::any_of(Listed.begin(), Listed.end(), [&](const xscript::module::module_ref& M) { return M.m_Instance.m_Value == R.m_Module; });
+            if (!bListed && std::find(NotListed.begin(), NotListed.end(), R.m_Module) == NotListed.end()) NotListed.push_back(R.m_Module);
+        }
+        if (nOutside) LogGamePlugin(std::format("Game.dll: {} type(s) are defined outside every script module, so no module owns them (the first: {}): an engine header included without XSCRIPT_IMPORT_ONLY registers its components a second time", nOutside, Example));
+        for (const auto Module : NotListed)
+            LogGamePlugin(std::format("Game.dll: it defines types of the script module {:X}, which the Game does not list (a module includes one of its headers): add that module to the Game", Module));
+    }
+
     // A call into the game module, under a structured-exception handler: a module that registers badly (a system that queries a component
     // it never told the DLL about reads an unset bit id, for one) must not take the whole editor down with it. The call is plain function
     // + context so this function holds no C++ objects (__try cannot live next to destructors).
@@ -238,6 +282,7 @@ namespace xlevel
 
         Plugin.m_hModule       = Candidate.m_hModule;
         Plugin.m_LoadedDllPath = Candidate.m_LoadedPath;
+        Plugin.m_bHasRegistrations = ProbeRegistrations(Plugin.m_hModule, Plugin.m_Registrations);
         Plugin.m_Token         = { .m_Slot = 1, .m_Generation = Generation };
         Plugin.m_bCrashed      = false;
 
@@ -250,6 +295,7 @@ namespace xlevel
         }
 
         Plugin.m_LastStatus = std::format("Game.dll: loaded generation {} ({})", Generation, std::filesystem::path(Candidate.m_LoadedPath).filename().string());
+        ReportRegistrations(Plugin);
         Candidate = {}; // ownership transferred to Plugin - Discard must never also free what Plugin now owns
         return true;
     }
@@ -304,6 +350,8 @@ namespace xlevel
 
         FreeLibrary(Plugin.m_hModule);
         Plugin.m_hModule  = nullptr;
+        Plugin.m_Registrations.clear();
+        Plugin.m_bHasRegistrations = false;
         Plugin.m_Token    = {};
         Plugin.m_bCrashed = false;
 

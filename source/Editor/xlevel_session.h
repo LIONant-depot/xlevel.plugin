@@ -359,9 +359,9 @@ namespace xlevel
                 m_GamePlugin.m_Paths = xlevel::MakeScriptProjectPaths();
                 if (auto Err = xlevel::LoadScriptConfig(m_GamePlugin.m_Paths.m_Project.wstring(), xlevel::g_ScriptConfig); Err)
                     xlevel::LogGamePlugin(std::format("Game.dll: failed to read Script.config.txt: {}", Err.getMessage()));
-                xlevel::RegenerateGameModuleSources(m_GamePlugin.m_Paths);   // rewrites only what changed
+                xlevel::MigrateScriptConfig();                               // a project from before the Game resource gets one, from its old module list
 
-                if (xlevel::g_ScriptConfig.m_ModuleRefs.empty())
+                if (xlevel::ProjectModules().empty())
                 {
                     m_GamePlugin.m_LastStatus = "Game.dll: the project has no script modules - nothing to build or load";
                     xlevel::LogGamePlugin(m_GamePlugin.m_LastStatus);
@@ -397,6 +397,7 @@ namespace xlevel
             RegisterWorldSystems();
 
             m_pGameMgr->m_SceneMgr.m_ProjectPath  = m_ProjectPath;
+            m_pGameMgr->m_SceneMgr.m_pModuleOfComponent = &xlevel::ResolveComponentModule;      // a scene's ComponentDeps.txt names the module of each component
             m_pGameMgr->m_LevelMgr.m_ProjectPath  = m_ProjectPath;
             m_pGameMgr->m_PrefabMgr.m_ProjectPath = m_ProjectPath;
             m_pGameMgr->m_SystemMgr.m_ProjectPath = m_ProjectPath;
@@ -555,6 +556,7 @@ namespace xlevel
             RegisterWorldSystems();
 
             m_pGameMgr->m_SceneMgr.m_ProjectPath  = m_ProjectPath;
+            m_pGameMgr->m_SceneMgr.m_pModuleOfComponent = &xlevel::ResolveComponentModule;      // a scene's ComponentDeps.txt names the module of each component
             m_pGameMgr->m_LevelMgr.m_ProjectPath  = m_ProjectPath;
             m_pGameMgr->m_PrefabMgr.m_ProjectPath = m_ProjectPath;
             m_pGameMgr->m_SystemMgr.m_ProjectPath = m_ProjectPath;

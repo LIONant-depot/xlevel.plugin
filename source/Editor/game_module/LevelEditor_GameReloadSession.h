@@ -180,7 +180,7 @@ namespace xlevel
 
         // A project with no script modules has nothing to put in Game.dll: no cmake, no build, no DLL - the check is answered
         // right away (the editors waiting on it, e.g. for Play, see "up to date" at their next frame).
-        if (g_ScriptConfig.m_ModuleRefs.empty() && !Plugin.isLoaded())
+        if (ProjectModules().empty() && !Plugin.isLoaded())
         {
             Plugin.m_LastStatus = "Game.dll: the project has no script modules - nothing to build";
             Plugin.m_LastResult = build_result::UpToDate;
@@ -189,9 +189,10 @@ namespace xlevel
         }
 
         Plugin.m_bBuilding  = true;
+        Plugin.m_GameInputs = CaptureGameInputs();          // what the build waits for the resource pipeline to have made: read here for the same reason
         // Computed HERE, on the main thread, and captured by value - NOT re-computed inside the
         // background task. See BuildGamePluginIfStale's own comment on ModuleSourceTime for why: it
-        // reads xlevel::g_ScriptConfig/xresource_editor::g_LibMgr, neither safe to touch from the background thread
+        // reads xlevel::g_ScriptConfig/the Game resource, neither safe to touch from the background thread
         // this function's lambda runs on.
         const auto ModuleSourceTime = GetLatestModuleSourceWriteTime(Plugin.m_Paths);
         Plugin.m_BuildFuture = std::async(std::launch::async, [&Plugin, ModuleSourceTime]() noexcept

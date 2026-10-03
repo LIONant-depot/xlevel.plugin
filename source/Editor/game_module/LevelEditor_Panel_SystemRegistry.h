@@ -11,6 +11,7 @@
 #include "source/Editors/LevelEditor/LevelEditor_Theme.h"
 #include "dependencies/xeditor/include/xeditor/hint.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_system_usage.h"
+#include "plugins/xscene.plugin/source/Editor/xscene_component_display.h"
 
 namespace xlevel
 {
@@ -24,6 +25,9 @@ namespace xlevel
         xeditor::hint::PlaceAwayFromEdges(16.0f, ImVec2(380.0f, 220.0f));
         if (!ImGui::BeginTooltip()) return;
         ImGui::TextUnformatted(pHeader);
+        // where the system is defined: the module and the file
+        if (const auto From = xscene::DescribeSource(xscene::SourceOfType(true, Info.m_Guid.m_Value)); !From.empty())
+            ImGui::TextDisabled("%s", From.c_str());
         ImGui::Separator();
 
         if (Info.m_Access.empty())
@@ -178,6 +182,25 @@ namespace xlevel
                     for (int y = 0; y < 3; ++y) for (int x = 0; x < 2; ++x)
                         ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(P.x + 1.0f + x * 3.0f, P.y + H * 0.25f + y * 3.5f), ImVec2(P.x + 2.5f + x * 3.0f, P.y + H * 0.25f + y * 3.5f + 1.5f), Col);
                 };
+                // Where the system comes from: the module that defines it, as a quiet tag at the right of the row; the right-click menu opens its file.
+                // Drawn with the draw list over the row (it is no item, so it takes nothing from the drag and the drop of the row).
+                auto DrawSourceTag = [](bool bSystem, std::uint64_t Guid) noexcept
+                {
+                    const auto Source = xscene::SourceOfType(bSystem, Guid);
+                    if (Source.m_bKnown && Source.m_Module != 0 && !Source.m_ModuleName.empty())
+                    {
+                        const ImVec2 Min = ImGui::GetItemRectMin(), Max = ImGui::GetItemRectMax();
+                        const float  W = ImGui::CalcTextSize(Source.m_ModuleName.c_str()).x;
+                        if (Max.x - Min.x > W + 160.0f)
+                            ImGui::GetWindowDrawList()->AddText(ImVec2(Max.x - W - 6.0f, Min.y + (Max.y - Min.y - ImGui::GetFontSize()) * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled), Source.m_ModuleName.c_str());
+                    }
+                    if (Source.m_bKnown && !Source.m_bBuiltIn && !Source.m_Path.empty() && ImGui::BeginPopupContextItem("##typesource"))
+                    {
+                        if (ImGui::MenuItem(std::format("Open {}", Source.m_File.empty() ? Source.m_Path : Source.m_File).c_str(), nullptr, false, static_cast<bool>(xscene::g_OpenTypeSource)))
+                            xscene::g_OpenTypeSource(Source);
+                        ImGui::EndPopup();
+                    }
+                };
                 constexpr unsigned kSystemIcon    = 0xE713;
                 constexpr unsigned kConnectorIcon = 0xE71B;    // Link: the same glyph the Level tree gives its Dependencies
 
@@ -217,6 +240,7 @@ namespace xlevel
                             , ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen
                             | (Connectors.empty() ? ImGuiTreeNodeFlags_Leaf : 0));
                         if (!bEnabled) ImGui::PopStyleColor();
+                        DrawSourceTag(true, Row.m_Guid.m_Value);
                         if (ImGui::IsItemHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left) && i < GameMgr.m_SystemMgr.m_UpdaterSystems.size())
                             RenderSystemAccessTooltip(*GameMgr.m_SystemMgr.m_UpdaterSystems[i].first
                                 , std::format("{}  (runs #{})", Row.m_pName ? Row.m_pName : "(unnamed system)", i).c_str());
@@ -313,6 +337,12 @@ namespace xlevel
                     {
                         ImGui::Selectable(Builder.first->m_pName);
                         if (ImGui::IsItemHovered()) RenderSystemAccessTooltip(*Builder.first, Builder.first->m_pName);
+                        if (const auto Source = xscene::SourceOfType(true, Builder.first->m_Guid.m_Value); Source.m_bKnown && !Source.m_bBuiltIn && !Source.m_Path.empty() && ImGui::BeginPopupContextItem("##typesource"))
+                        {
+                            if (ImGui::MenuItem(std::format("Open {}", Source.m_File.empty() ? Source.m_Path : Source.m_File).c_str(), nullptr, false, static_cast<bool>(xscene::g_OpenTypeSource)))
+                                xscene::g_OpenTypeSource(Source);
+                            ImGui::EndPopup();
+                        }
                     }
                     ImGui::EndListBox();
                 }
