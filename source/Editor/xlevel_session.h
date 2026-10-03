@@ -390,21 +390,7 @@ namespace xlevel
             m_pEcs->CreateWorld();
             RegisterHostComponents(*m_pGameMgr);
 
-            // Resolve the same project root every other editor example locates itself against (walking up from
-            // the executable's own path to the first ancestor with a bootstrapped example.lionprj\Cache\Plugins -
-            // see LevelEditor_AppInit.h's own comment for why this is structural, not name-based).
-            TCHAR szModulePath[MAX_PATH];
-            GetModuleFileName(NULL, szModulePath, MAX_PATH);
-            std::filesystem::path RepoRoot;
-            for (std::filesystem::path Dir = std::filesystem::path(szModulePath).parent_path(); ; )
-            {
-                std::error_code Ec;
-                if (std::filesystem::exists(Dir / L"example.lionprj" / L"Cache" / L"Plugins", Ec) && !Ec) { RepoRoot = Dir; break; }
-                const std::filesystem::path Parent = Dir.parent_path();
-                if (Parent.empty() || Parent == Dir) break;
-                Dir = Parent;
-            }
-            if (!RepoRoot.empty()) m_ProjectPath = xresource_editor::g_LibMgr.m_ProjectPath;   // the shell has already opened the project by the time Open() can run
+            m_ProjectPath = xresource_editor::g_LibMgr.m_ProjectPath;   // the project the shell opened (the one asked for, or the example project): it has opened it by the time Open() can run
 
             // The game module of THIS Level: the Game the Level names, built and loaded on this Level's own copy of the core (no Level, or a Level that names no Game, has none: no scripts, no components of
             // any module, no systems of one). Never blocks startup on a build:
