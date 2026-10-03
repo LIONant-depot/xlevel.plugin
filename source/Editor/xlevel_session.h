@@ -512,6 +512,7 @@ namespace xlevel
             m_GamePlugin.m_Events.m_OnAfterReload.Register<&session::AfterReload>(*this);
 
             m_CmdContext.m_pGamePlugin = &m_GamePlugin;
+            m_CmdContext.m_GameSolution = [this]() { return xlevel::GameSolutionIn(m_GamePlugin.m_Paths.m_BuildDir); };
             m_GamePlugin.m_Display.m_SourceOf = xlevel::TypeSourceOf(m_GamePlugin);
             m_CmdContext.m_pDisplay    = &m_GamePlugin.m_Display;
             if (auto* pLogs = xlog::hub::current())          // LogVerify on a build problem: build again (an up-to-date module is answered at once; the evidence decides what it verifies)

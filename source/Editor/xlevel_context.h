@@ -1,5 +1,7 @@
 #pragma once
 #include "dependencies/xLIONCore/src/game/xlioncore_game.h"
+#include <filesystem>
+#include <functional>
 
 // level_state: the scene state plus what is specific to a Level editor: which Level is open, whether it is playing, and
 // where its document stands (saved or not).
@@ -106,6 +108,7 @@ namespace xlevel
 
         void* m_pToolEditor = nullptr;   // this editor's viewport_tools::editor (the "Edit Collider" tools), set by its session
         game_plugin_state* m_pGamePlugin = nullptr;   // the game module of this editor's Level (its own: every Level loads the one of its Game), set by its session
+        std::function<std::filesystem::path()> m_GameSolution;   // the Visual Studio solution of this Level's game project (empty: not made yet), set by its session
     };
 
     // Every Level editor that is open right now (one per Level, plus the session that stands in when none is), and the one the

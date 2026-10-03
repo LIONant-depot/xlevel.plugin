@@ -1,5 +1,6 @@
 #include "dependencies/xeditor/include/xeditor/hint.h"
 #include "dependencies/xeditor/include/xeditor/shortcuts.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_visual_studio.h"
 #ifndef XLEVEL_PANEL_PLAY_TRANSPORT_H
 #define XLEVEL_PANEL_PLAY_TRANSPORT_H
 #pragma once
@@ -11,7 +12,8 @@
 // Unity-style, worked out to keep the mouse from ever landing on a moved button: two fixed slots, centered as
 // a PAIR - slot 1 is Play/Stop, slot 2 is Step while Stopped/Paused or Pause while Playing (same position, only
 // the icon/action changes). A third slot - Pause again, pressed, to Resume - appears only while Paused, to the
-// right of the pair. Glyphs are Segoe MDL2 (U+E768 play, E769 pause, E71A stop, E893 step), merged into font 4.
+// right of the pair. Glyphs are Segoe MDL2 (U+E768 play, E769 pause, E71A stop, E893 step, E943 code), merged into font 4.
+// At the right of all of them, in a place of its own (it does not move when Resume appears), the button that goes to Visual Studio: where the scripts are written.
 namespace xlevel
 {
     struct transport_layout
@@ -31,6 +33,7 @@ namespace xlevel
         constexpr const char* PauseIcon = "\xEE\x9D\xA9";
         constexpr const char* StopIcon  = "\xEE\x9C\x9A";
         constexpr const char* StepIcon  = "\xEE\xA2\x93";
+        constexpr const char* CodeIcon  = "\xEE\xA5\x83";
 
         // Captured once, before any button: clicking slot 2's Pause must not make slot 3 appear this same frame.
         const bool bStopped = State.m_PlayState == play_state::Stopped;
@@ -119,6 +122,13 @@ namespace xlevel
             Slot(PauseIcon, false, true, [&] { RequestResume(State); });
             Tip("Resume", "Resume playback");
         }
+
+        // The way to Visual Studio, after the room the three transport slots may take (and a little more).
+        if (Layout.m_bHorizontal) ImGui::SameLine(PairX + (Layout.m_ButtonSize.x + ImGui::GetStyle().ItemSpacing.x) * 3.0f + 16.0f);
+        const bool bNoProject = !Ed.m_GameSolution || Ed.m_GameSolution().empty();
+        Slot(CodeIcon, bNoProject, false, [&] { RequestOpenVisualStudio(Ed, false); });
+        if (bNoProject) { if (Layout.m_bTooltips && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) xeditor::hint::Text("No game project to open yet: this Level's Game has no script modules, or has not been built"); }
+        else Tip("Visual Studio", "Open this Level's game project in Visual Studio, or go back to it when it is open: where the scripts are written");
     }
 }
 

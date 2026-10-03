@@ -115,6 +115,26 @@ namespace xlevel::commands
     };
 
     //================================================================================================
+    // OpenInVisualStudio - the button at the right of the transport: the Level's game project (where its scripts are written) in Visual Studio, started or brought forward.
+    //================================================================================================
+    struct open_in_visual_studio_query_cmd : level_query_command
+    {
+        open_in_visual_studio_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "OpenInVisualStudio", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Opens the game project of the Level (where its scripts are written) in Visual Studio, or brings forward the Visual Studio that has it open: the button at the right of Play. -DryRun true only says what it would open. Usage: OpenInVisualStudio [-DryRun true|false]"; }
+        void RegisterArguments() noexcept override
+        {
+            m_hDryRun = m_Parser.addOption("DryRun", "true to only say which solution would be opened", false, 1);
+        }
+        std::string Query() noexcept override
+        {
+            bool bDryRun = false;
+            if (auto Arg = m_Parser.getOptionArgAs<std::string>(m_hDryRun, 0); !std::holds_alternative<xerr>(Arg)) bDryRun = std::get<std::string>(Arg) == "true" || std::get<std::string>(Arg) == "1";
+            return xlevel::RequestOpenVisualStudio(LevelContext(), bDryRun);
+        }
+        xcmdline::parser::handle m_hDryRun;
+    };
+
+    //================================================================================================
     // GetPlayState - the read-only counterpart the other three need to be useful headlessly: no
     // synthetic mouse click can show a CLI/AI caller what the menu-bar buttons currently look like.
     //================================================================================================
