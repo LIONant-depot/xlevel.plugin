@@ -15,6 +15,20 @@
 
 namespace xlevel
 {
+    // The right-click menu of a system (or a component) that a script module defines: the file it is defined in, shown in Visual Studio (the solution of the game project: where the scripts are
+    // written) or in the editor of the module.
+    inline void RenderTypeSourceMenu(const xscene::type_source& Source) noexcept
+    {
+        const std::string File = Source.m_File.empty() ? Source.m_Path : Source.m_File;
+        ImGui::TextDisabled("%s", File.c_str());
+        ImGui::Separator();
+        if (ImGui::MenuItem("Open in Visual Studio", nullptr, false, static_cast<bool>(xscene::g_OpenTypeSourceInVisualStudio)))
+            (void)xscene::g_OpenTypeSourceInVisualStudio(Source, false);
+        if (ImGui::IsItemHovered()) xeditor::hint::Text("Opens the file in the Visual Studio of this Level's game project (the solution of the scripts), or starts it");
+        if (ImGui::MenuItem(Source.m_ModuleName.empty() ? "Open in the module editor" : std::format("Open in the {} module editor", Source.m_ModuleName).c_str(), nullptr, false, static_cast<bool>(xscene::g_OpenTypeSource)))
+            (void)xscene::g_OpenTypeSource(Source);
+    }
+
     //---------------------------------------------------------------------------
     // Tooltip listing one system's declared components - how each one matches (must / one of /
     // none of / if present) and how it's accessed - tagging builder components, which exist only
@@ -196,8 +210,7 @@ namespace xlevel
                     }
                     if (Source.m_bKnown && !Source.m_bBuiltIn && !Source.m_Path.empty() && ImGui::BeginPopupContextItem("##typesource"))
                     {
-                        if (ImGui::MenuItem(std::format("Open {}", Source.m_File.empty() ? Source.m_Path : Source.m_File).c_str(), nullptr, false, static_cast<bool>(xscene::g_OpenTypeSource)))
-                            xscene::g_OpenTypeSource(Source);
+                        RenderTypeSourceMenu(Source);
                         ImGui::EndPopup();
                     }
                 };
@@ -339,8 +352,7 @@ namespace xlevel
                         if (ImGui::IsItemHovered()) RenderSystemAccessTooltip(xlioncore::Ecs(GameMgr), Display, *Builder.first, Builder.first->m_pName);
                         if (const auto Source = Display.SourceOf(true, Builder.first->m_Guid.m_Value); Source.m_bKnown && !Source.m_bBuiltIn && !Source.m_Path.empty() && ImGui::BeginPopupContextItem("##typesource"))
                         {
-                            if (ImGui::MenuItem(std::format("Open {}", Source.m_File.empty() ? Source.m_Path : Source.m_File).c_str(), nullptr, false, static_cast<bool>(xscene::g_OpenTypeSource)))
-                                xscene::g_OpenTypeSource(Source);
+                            RenderTypeSourceMenu(Source);
                             ImGui::EndPopup();
                         }
                     }
