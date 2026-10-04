@@ -601,6 +601,15 @@ namespace xlevel
         }
 
         xeditor::IDocument& getDocument() noexcept override { return m_Document; }
+        // What the editor menu asks of a Level editor: its unsaved changes are the Level's, its save is the toolbar's, and its close is the one that asks (save-before-close) when a Level is open.
+        bool                HasPendingChanges() noexcept override { return xlevel::HasUnsavedDocumentChanges(m_State, m_Undo); }
+        std::string         DisplayName()       noexcept override { return xeditor::ResolveResourceDisplayName(m_State.m_CurrentLevel, "Level"); }
+        void                SaveChanges()       noexcept override { m_Actions.Save(); }
+        void                RequestClose()      noexcept override
+        {
+            xlevel::RequestCloseLevel(*m_pGameMgr, m_State, m_Undo);
+            m_State.m_bLevelEditorOpen = m_State.m_bAwaitingSaveBeforeClose || !m_State.m_CurrentLevel.empty() || !m_State.m_OpenScenes.empty();
+        }
         xundo::system&      getUndo()     noexcept override { return m_Undo; }
         bool                isLoaded()  const noexcept override { return true; }   // a Level tool is always "loaded" - it may simply have nothing open yet
 
@@ -819,6 +828,9 @@ namespace xlevel
             Bar.m_OnRedo            = [](void* p) noexcept { static_cast<session*>(p)->m_Actions.Redo(); };
             Bar.m_OnHint            = [](void* p, const char* pAction) noexcept { static_cast<session*>(p)->ActionHint(pAction, pAction); };
             Bar.m_OnCenter          = &session::CenterPlay;
+            Bar.m_pEditor           = this;
+            Bar.m_pDevice           = m_pDevice;
+            Bar.m_IconType          = xecs::level::type_guid_v;
             xeditor::RenderEditorToolbar(Bar);
         }
 
