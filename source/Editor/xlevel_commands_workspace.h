@@ -260,8 +260,9 @@ namespace xlevel::commands
             std::string Out;
             for (auto& S : xscene::system_usage::AllSystems(World(), false))
             {
+                const bool bEvent = !S.m_bUpdate && (S.m_pInfo->m_ID == xecs::system::type::id::GLOBAL_EVENT || S.m_pInfo->m_ID == xecs::system::type::id::SYSTEM_EVENT);     // ListEventHandlers says what it handles
                 Out += std::format("{}  [{}{}]\n", xscene::system_usage::SystemName(S),
-                                   S.m_bUpdate ? std::format("update #{}", S.m_Order) : std::string("notifier"), S.m_bEnabled ? "" : ", DISABLED");
+                                   S.m_bUpdate ? std::format("update #{}", S.m_Order) : std::string(bEvent ? "event handler" : "notifier"), S.m_bEnabled ? "" : ", DISABLED");
                 Out += xscene::system_usage::DescribeDeclaration(*S.m_pInfo, "    ");
             }
             if (!Out.empty()) Out += HierarchyText(World());
@@ -289,6 +290,34 @@ namespace xlevel::commands
             std::string Out = "\nHierarchy (top level in order; a connector is shown in brackets with the systems connected to it):\n";
             TreeText(GameMgr, GameMgr.m_SystemMgr.GetUpdateSystemRows(), xecs::system::type::guid{}, -1, 1, Out);
             return Out;
+        }
+    };
+
+    //================================================================================================
+    // ListEventHandlers - the events of the world (the physics ones, ...) with what each one tells and the systems that handle it, and what each handler declares. A handler runs when
+    // the event is raised, not every frame: it is not in ListSystems' order.
+    //================================================================================================
+    struct list_event_handlers_query_cmd : level_query_command
+    {
+        list_event_handlers_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "ListEventHandlers", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Lists the events of the world with what each tells and when, and the systems that handle each (with the components each declares). A handler runs when the event is raised, not every frame. Usage: ListEventHandlers"; }
+        void RegisterArguments() noexcept override {}
+
+        std::string Query() noexcept override
+        {
+            std::string Out;
+            for (const auto& G : xscene::system_usage::EventGroups(World()))
+            {
+                Out += std::format("{}  [{}, {} handler{}]\n", G.m_Name, G.m_bGlobal ? "event" : "system events", G.m_Handlers.size(), G.m_Handlers.size() == 1 ? "" : "s");
+                if (!G.m_Help.empty()) Out += std::format("    {}\n", G.m_Help);
+                for (const auto* pHandler : G.m_Handlers)
+                {
+                    Out += std::format("    handler: {}\n", pHandler->m_pName ? pHandler->m_pName : "(unnamed system)");
+                    if (pHandler->m_Access.empty()) Out += "        (runs when the event is raised; it does not iterate entities: it reads what the event gives it)\n";
+                    else                            Out += xscene::system_usage::DescribeDeclaration(*pHandler, "        ");
+                }
+            }
+            return Out.empty() ? std::string("No events registered.") : Out;
         }
     };
 

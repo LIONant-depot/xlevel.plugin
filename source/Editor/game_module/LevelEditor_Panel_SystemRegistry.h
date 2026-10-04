@@ -34,7 +34,8 @@ namespace xlevel
     // none of / if present) and how it's accessed - tagging builder components, which exist only
     // while an entity is being created (doc/xecs_builder_components.md).
     //---------------------------------------------------------------------------
-    inline void RenderSystemAccessTooltip(xlioncore::xECSEditor& Ecs, const xscene::component_display& Display, const xecs::system::type::info& Info, const char* pHeader) noexcept
+    inline void RenderSystemAccessTooltip(xlioncore::xECSEditor& Ecs, const xscene::component_display& Display, const xecs::system::type::info& Info, const char* pHeader
+                                        , const char* pEmpty = "No declared components", const char* pAbout = nullptr) noexcept
     {
         xeditor::hint::PlaceAwayFromEdges(16.0f, ImVec2(380.0f, 220.0f));
         if (!ImGui::BeginTooltip()) return;
@@ -42,11 +43,17 @@ namespace xlevel
         // where the system is defined: the module and the file
         if (const auto From = xscene::DescribeSource(Display.SourceOf(true, Info.m_Guid.m_Value)); !From.empty())
             ImGui::TextDisabled("%s", From.c_str());
+        if (pAbout && pAbout[0])                 // what it handles, said by the event
+        {
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
+            ImGui::TextWrapped("%s", pAbout);
+            ImGui::PopTextWrapPos();
+        }
         ImGui::Separator();
 
         if (Info.m_Access.empty())
         {
-            ImGui::TextDisabled("No declared components");
+            ImGui::TextDisabled("%s", pEmpty);
         }
         else if (ImGui::BeginTable("##Access", 3, ImGuiTableFlags_SizingFixedFit))
         {
@@ -76,6 +83,152 @@ namespace xlevel
             ImGui::EndTable();
         }
         ImGui::EndTooltip();
+    }
+
+    //---------------------------------------------------------------------------
+    // The event handlers: the systems that run when something HAPPENS (the physics tells that a shape touched a sensor, ...), not every frame, so they are not in the order above. Grouped by the
+    // event they handle: the event is a node (what it tells and when is its tooltip, the number of handlers is beside its name), and each handler is a row under it that says, like any system,
+    // what it reads and writes when hovered, and where it is defined. An event nobody handles is listed too (it is there to be handled).
+    //---------------------------------------------------------------------------
+    inline void RenderEventHandlers(xecs::game_mgr::instance& GameMgr, const xscene::component_display& Display, const std::vector<xscene::system_usage::event_group>& Groups) noexcept
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 8.0f);
+        if (ImGui::BeginTable("##EventHandlers", 1, ImGuiTableFlags_RowBg))
+        {
+            for (std::size_t g = 0; g < Groups.size(); ++g)
+            {
+                const auto& Group = Groups[g];
+                ImGui::PushID(static_cast<int>(g));
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                if (Group.m_Handlers.empty()) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                const bool bOpen = ImGui::TreeNodeEx(std::format("\xEE\xA5\x85 {}  ({})", Group.m_Name, Group.m_Handlers.empty() ? std::string("no handlers") : std::format("{}", Group.m_Handlers.size())).c_str()   // E945: the lightning bolt of the icon font
+                    , ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen | (Group.m_Handlers.empty() ? ImGuiTreeNodeFlags_Leaf : 0));
+                if (Group.m_Handlers.empty()) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered() && !Group.m_Help.empty())
+                {
+                    ImGui::BeginTooltip();
+                    ImGui::TextUnformatted(Group.m_Name.c_str());
+                    ImGui::Separator();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
+                    ImGui::TextUnformatted(Group.m_Help.c_str());
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
+                if (bOpen)
+                {
+                    for (const auto* pHandler : Group.m_Handlers)
+                    {
+                        ImGui::PushID(static_cast<int>(pHandler->m_Guid.m_Value & 0x7FFFFFFF));
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TreeNodeEx(pHandler->m_pName ? pHandler->m_pName : "(unnamed system)", ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_Bullet);
+                        const ImVec2 Min = ImGui::GetItemRectMin(), Max = ImGui::GetItemRectMax();
+                        const auto Source = Display.SourceOf(true, pHandler->m_Guid.m_Value);
+                        if (Source.m_bKnown && Source.m_Module != 0 && !Source.m_ModuleName.empty())
+                        {
+                            const float W = ImGui::CalcTextSize(Source.m_ModuleName.c_str()).x;
+                            if (Max.x - Min.x > W + 160.0f)
+                                ImGui::GetWindowDrawList()->AddText(ImVec2(Max.x - W - 6.0f, Min.y + (Max.y - Min.y - ImGui::GetFontSize()) * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled), Source.m_ModuleName.c_str());
+                        }
+                        if (ImGui::IsItemHovered())
+                            RenderSystemAccessTooltip(xlioncore::Ecs(GameMgr), Display, *pHandler, std::format("{}  (handles {})", pHandler->m_pName ? pHandler->m_pName : "(unnamed system)", Group.m_Name).c_str()
+                                , "It runs when the event is raised and does not iterate entities: it reads what the event gives it, and can look entities up", Group.m_Help.c_str());
+                        if (Source.m_bKnown && !Source.m_bBuiltIn && !Source.m_Path.empty() && ImGui::BeginPopupContextItem("##typesource"))
+                        {
+                            RenderTypeSourceMenu(Source);
+                            ImGui::EndPopup();
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleVar();
+    }
+
+    //---------------------------------------------------------------------------
+    // The notifiers: systems that run when an ENTITY changes - one is created (what initializes it), destroyed, moved to another archetype, or has components added, removed or changed - for the
+    // entities that match what the system declares. Grouped by what triggers them; hover one for what it reads and writes.
+    //---------------------------------------------------------------------------
+    inline const char* NotifierKind(xecs::system::type::id Id) noexcept
+    {
+        using id = xecs::system::type::id;
+        switch (Id)
+        {
+        case id::NOTIFY_CREATE:             return "an entity is created";
+        case id::NOTIFY_DESTROY:            return "an entity is destroyed";
+        case id::NOTIFY_MODIFIED:           return "an entity is modified";
+        case id::NOTIFY_MOVE_IN:            return "an entity moves into an archetype that matches";
+        case id::NOTIFY_MOVE_OUT:           return "an entity moves out of an archetype that matched";
+        case id::NOTIFY_COMPONENT_CHANGE:   return "a component of an entity changes";
+        case id::NOTIFY_COMPONENT_ADDED:    return "a component is added to an entity";
+        case id::NOTIFY_COMPONENT_REMOVE:   return "a component is removed from an entity";
+        case id::POOL_FAMILY_CREATE:        return "a pool family is created (a new value of a share component)";
+        case id::POOL_FAMILY_DESTROY:       return "a pool family is destroyed";
+        default:                            return "an entity changes";
+        }
+    }
+
+    // xECS keeps the event handlers in the list of the notifiers too: they have their own section, so they are not counted here.
+    inline std::size_t CountNotifiers(xecs::game_mgr::instance& GameMgr) noexcept
+    {
+        using id = xecs::system::type::id;
+        std::size_t n = 0;
+        for (auto& Notifier : GameMgr.m_SystemMgr.m_NotifierSystems) if (Notifier.first->m_ID != id::GLOBAL_EVENT && Notifier.first->m_ID != id::SYSTEM_EVENT) ++n;
+        return n;
+    }
+
+    inline void RenderNotifiers(xecs::game_mgr::instance& GameMgr, const xscene::component_display& Display) noexcept
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 8.0f);
+        if (ImGui::BeginTable("##Notifiers", 1, ImGuiTableFlags_RowBg))
+        {
+            using id = xecs::system::type::id;
+            for (const id Kind : { id::NOTIFY_CREATE, id::NOTIFY_DESTROY, id::NOTIFY_MODIFIED, id::NOTIFY_MOVE_IN, id::NOTIFY_MOVE_OUT, id::NOTIFY_COMPONENT_CHANGE, id::NOTIFY_COMPONENT_ADDED, id::NOTIFY_COMPONENT_REMOVE, id::POOL_FAMILY_CREATE, id::POOL_FAMILY_DESTROY })
+            {
+                std::vector<const xecs::system::type::info*> Systems;
+                for (auto& Notifier : GameMgr.m_SystemMgr.m_NotifierSystems) if (Notifier.first->m_ID == Kind) Systems.push_back(Notifier.first);
+                if (Systems.empty()) continue;
+                ImGui::PushID(static_cast<int>(Kind));
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                const bool bOpen = ImGui::TreeNodeEx(std::format("When {}  ({})", NotifierKind(Kind), Systems.size()).c_str(), ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen);
+                if (bOpen)
+                {
+                    for (const auto* pInfo : Systems)
+                    {
+                        ImGui::PushID(static_cast<int>(pInfo->m_Guid.m_Value & 0x7FFFFFFF));
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TreeNodeEx(pInfo->m_pName ? pInfo->m_pName : "(unnamed system)", ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_Bullet);
+                        const ImVec2 Min = ImGui::GetItemRectMin(), Max = ImGui::GetItemRectMax();
+                        const auto Source = Display.SourceOf(true, pInfo->m_Guid.m_Value);
+                        if (Source.m_bKnown && Source.m_Module != 0 && !Source.m_ModuleName.empty())
+                        {
+                            const float W = ImGui::CalcTextSize(Source.m_ModuleName.c_str()).x;
+                            if (Max.x - Min.x > W + 160.0f)
+                                ImGui::GetWindowDrawList()->AddText(ImVec2(Max.x - W - 6.0f, Min.y + (Max.y - Min.y - ImGui::GetFontSize()) * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled), Source.m_ModuleName.c_str());
+                        }
+                        if (ImGui::IsItemHovered())
+                            RenderSystemAccessTooltip(xlioncore::Ecs(GameMgr), Display, *pInfo, std::format("{}  (runs when {}, for the entities it matches)", pInfo->m_pName ? pInfo->m_pName : "(unnamed system)", NotifierKind(Kind)).c_str());
+                        if (Source.m_bKnown && !Source.m_bBuiltIn && !Source.m_Path.empty() && ImGui::BeginPopupContextItem("##typesource"))
+                        {
+                            RenderTypeSourceMenu(Source);
+                            ImGui::EndPopup();
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleVar();
     }
 
     //---------------------------------------------------------------------------
@@ -112,9 +265,14 @@ namespace xlevel
 
             // Update systems on top, builder systems below, split by a draggable divider.
             const bool   bHasBuilders  = !GameMgr.m_SystemMgr.m_BuilderSystems.empty();
+            const auto   EventGroups   = xscene::system_usage::EventGroups(GameMgr);
+            const bool   bHasEvents    = !EventGroups.empty();
+            const std::size_t nNotifiers = CountNotifiers(GameMgr);
+            const bool   bHasNotifiers = nNotifiers != 0;
+            const bool   bHasBottom    = bHasBuilders || bHasEvents || bHasNotifiers;       // below the update systems: the event handlers, the notifiers and the builders
             static float s_TopFraction = 0.65f;
             const float  TotalHeight   = ImGui::GetContentRegionAvail().y;
-            ImGui::BeginChild("##UpdateSystems", ImVec2(0.0f, bHasBuilders ? std::max(40.0f, TotalHeight * s_TopFraction) : 0.0f));
+            ImGui::BeginChild("##UpdateSystems", ImVec2(0.0f, bHasBottom ? std::max(40.0f, TotalHeight * s_TopFraction) : 0.0f));
 
             auto Rows      = GameMgr.m_SystemMgr.GetUpdateSystemRows();
             if (Rows.empty())
@@ -330,21 +488,40 @@ namespace xlevel
             // Builder systems (doc/xecs_builder_components.md) have no order/enable - they run once per
             // entity while it's created, only when builders are on (Play / the game). Hover one for its
             // declared components.
-            if (bHasBuilders)
+            if (bHasBottom)
             {
-                ImGui::InvisibleButton("##SystemsSplitter", ImVec2(-FLT_MIN, 6.0f));
-                if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                // The divider between the update systems and what is below them: drag it up or down (the position is kept while the editor runs). Tall enough to grab, with a grip in the middle
+                // that says it moves, and it lights up under the mouse.
+                ImGui::InvisibleButton("##SystemsSplitter", ImVec2(-FLT_MIN, 10.0f));
+                const bool bSplitterHot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+                if (bSplitterHot) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
                 if (ImGui::IsItemActive() && TotalHeight > 0.0f)
                     s_TopFraction = std::clamp(s_TopFraction + ImGui::GetIO().MouseDelta.y / TotalHeight, 0.1f, 0.9f);
                 {
                     const ImVec2 Min = ImGui::GetItemRectMin();
                     const ImVec2 Max = ImGui::GetItemRectMax();
                     const float  Y   = (Min.y + Max.y) * 0.5f;
-                    ImGui::GetWindowDrawList()->AddLine(ImVec2(Min.x, Y), ImVec2(Max.x, Y), ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_SeparatorActive : ImGuiCol_Separator), 2.0f);
+                    auto* pList = ImGui::GetWindowDrawList();
+                    pList->AddLine(ImVec2(Min.x, Y), ImVec2(Max.x, Y), ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_SeparatorActive : bSplitterHot ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator), bSplitterHot ? 3.0f : 2.0f);
+                    const float  X   = (Min.x + Max.x) * 0.5f;
+                    const ImU32  Dot = ImGui::GetColorU32(bSplitterHot ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+                    for (int i = -2; i <= 2; ++i) pList->AddRectFilled(ImVec2(X + i * 6.0f - 1.5f, Y - 1.5f), ImVec2(X + i * 6.0f + 1.5f, Y + 1.5f), Dot);
                 }
 
-                ImGui::TextDisabled("Builders - run once per entity at creation (Play / game)");
-                if (ImGui::BeginListBox("##Builders", ImVec2(-FLT_MIN, -FLT_MIN)))
+                ImGui::BeginChild("##BottomSystems", ImVec2(0.0f, 0.0f));
+                if (bHasEvents)
+                {
+                    std::size_t nHandlers = 0;
+                    for (auto& G : EventGroups) nHandlers += G.m_Handlers.size();
+                    if (ImGui::CollapsingHeader(std::format("Event handlers ({})##EventHandlersHeader", nHandlers).c_str(), ImGuiTreeNodeFlags_DefaultOpen)) RenderEventHandlers(GameMgr, Display, EventGroups);
+                    if (ImGui::IsItemHovered()) xeditor::hint::Text("Systems that run when something happens (the physics tells that a shape touched a sensor, ...), not every frame");
+                }
+                if (bHasNotifiers)
+                {
+                    if (ImGui::CollapsingHeader(std::format("Notifiers ({})##NotifiersHeader", nNotifiers).c_str(), ImGuiTreeNodeFlags_DefaultOpen)) RenderNotifiers(GameMgr, Display);
+                    if (ImGui::IsItemHovered()) xeditor::hint::Text("Systems that run when an entity is created (what initializes it), destroyed, moved or changed - for the entities they match");
+                }
+                if (bHasBuilders && ImGui::CollapsingHeader(std::format("Builders ({})##BuildersHeader", GameMgr.m_SystemMgr.m_BuilderSystems.size()).c_str(), ImGuiTreeNodeFlags_DefaultOpen))
                 {
                     for (auto& Builder : GameMgr.m_SystemMgr.m_BuilderSystems)
                     {
@@ -356,8 +533,9 @@ namespace xlevel
                             ImGui::EndPopup();
                         }
                     }
-                    ImGui::EndListBox();
                 }
+                if (bHasBuilders && ImGui::IsItemHovered()) xeditor::hint::Text("Run once per entity while it is created, only when builders are on (Play / the game): they add what a builder component asks for");
+                ImGui::EndChild();
             }
 
             // Persisted immediately, but only on an actual edit this frame (not every frame the
