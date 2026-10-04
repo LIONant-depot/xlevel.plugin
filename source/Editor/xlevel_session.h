@@ -50,6 +50,7 @@
 #include "dependencies/xLIONRender/src/xlionrender_api.h"
 #include "dependencies/xLIONCore/src/tags/xlioncore_tags.h"
 #include "dependencies/xLIONCore/src/transform/xlioncore_transform.h"
+#include "dependencies/xLIONCore/src/transform/xlioncore_hierarchy.h"
 #include "dependencies/ImGuizmo/src/ImGuizmo.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_viewport_tools.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_box.h"
@@ -972,7 +973,7 @@ namespace xlevel
                     {
                         // The orbit that puts the entity at the target from where the eye is now: eye = target + RotateY(yaw)(RotateX(pitch)((0,0,distance))).
                         const auto  Eye = m_Camera.m_View.getPosition();
-                        const auto  Off = Eye - pXform->m_Position;
+                        const auto  Off = Eye - xlioncore::WorldOf(*pXform, xlioncore::Ecs(m_CmdContext.World()).ParentOf(xscene::commands::ResolvePropertyTarget(m_CmdContext, m_State.m_SelectedEntityScene, m_State.m_SelectedEntityId, xlioncore::transform::typedef_v.m_Guid.m_Value).m_Entity)).m_Position;
                         const float Len = std::sqrt(Off.m_X * Off.m_X + Off.m_Y * Off.m_Y + Off.m_Z * Off.m_Z);
                         if (Len > 0.05f)           // the eye is on top of it: no direction to turn to
                         {
@@ -1118,8 +1119,19 @@ namespace xlevel
                     const auto Operation = m_SceneTool == 1 ? ImGuizmo::TRANSLATE : m_SceneTool == 2 ? ImGuizmo::ROTATE : ImGuizmo::SCALE;
                     const auto Mode      = m_bLocalSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
 
-                    xmath::fmat4 World{};
-                    World.setupSRT(pXform->m_Scale, pXform->m_Rotation, pXform->m_Position);
+                    // A child's Transform is relative to its parent: the gizmo sits at its world pose and what it does is written back as a relative value (xlioncore_hierarchy.h).
+                    auto& GizmoEcs = xlioncore::Ecs(m_CmdContext.World());
+                    const auto GizmoTarget = xscene::commands::ResolvePropertyTarget(m_CmdContext, m_State.m_SelectedEntityScene, m_State.m_SelectedEntityId, xlioncore::transform::typedef_v.m_Guid.m_Value);
+                    const auto* pGizmoParent = GizmoEcs.ParentOf(GizmoTarget.m_Entity);
+                    xlioncore::world_pose GizmoParentWorld;
+                    if (pGizmoParent)
+                    {
+                        const xecs::component::type::info* pInfo = nullptr;
+                        if (auto* pParentXform = static_cast<const xlioncore::transform*>(GizmoEcs.ResolveComponent(pGizmoParent->m_Value, xlioncore::transform::typedef_v.m_Guid, pInfo)))
+                            GizmoParentWorld = xlioncore::WorldOf(*pParentXform, GizmoEcs.ParentOf(pGizmoParent->m_Value));
+                    }
+
+                    xmath::fmat4 World = xlioncore::WorldOf(*pXform, pGizmoParent).Matrix();
 
                     // Snapshot the pre-drag value every frame we are NOT already mid-drag. The grab itself
                     // only happens inside Manipulate() below, and m_bGizmoWasUsing is already true by the
@@ -1142,6 +1154,14 @@ namespace xlevel
                         // angles, whose axis order doesn't match xmath::radian3's ZXY (direct user
                         // report: "the rotation is very strange"). Only the channel this tool edits is
                         // written, so the other two stay bit-exact instead of picking up float drift.
+                        if (pGizmoParent)
+                        {
+                            xlioncore::world_pose New = xlioncore::PoseOf(*pGizmoParent);
+                            New.m_Position = World.ExtractPosition(); New.m_Rotation = World.ExtractRotation(); New.m_Scale = World.ExtractScale();
+                            xlioncore::LocalFromWorld(GizmoParentWorld, New, pGizmoParent->m_Follow, m_SceneTool == 1, m_SceneTool == 2, m_SceneTool == 3, *pXform);
+                            if (m_SceneTool == 2) pXform->m_EditorRotation = pXform->m_Rotation.ToEuler();
+                        }
+                        else
                         switch (m_SceneTool)
                         {
                         case 1: pXform->m_Position = World.ExtractPosition(); break;
