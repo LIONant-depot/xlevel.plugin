@@ -669,22 +669,16 @@ namespace xlevel
                                             const ImGuiTreeNodeFlags TreeFlags = bHasChildren
                                                 ? (ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth | SelFlag)
                                                 : (ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_Bullet | ImGuiTreeNodeFlags_SpanFullWidth | SelFlag);
-                                            // Inline rename, Explorer style. Starts from F2 on the selected row, the context menu's
-                                            // Rename, or a slow second click on the selected row (armed below, fires once the
-                                            // double-click window has passed with no further click). Enter / click-away commits, Esc cancels.
+                                            // Inline rename, Explorer style. Starts from F2 on the selected row, the context menu's Rename, or a DOUBLE click on the name (a single click only
+                                            // selects: a rename started by a slow second click was too easy to start by mistake). Enter / click-away commits, Esc cancels.
                                             auto BeginRename = [&]() noexcept
                                             {
                                                 if (bSceneLocked) return;
                                                 State.m_RenameScene      = SceneGuid;
                                                 State.m_RenameId         = Id;
                                                 State.m_bRenameFocus     = true;
-                                                State.m_RenameArmedId    = xecs::scene::invalid_permanent_id_v;
                                                 std::snprintf(State.m_RenameText.data(), State.m_RenameText.size(), "%s", EntityBaseName.c_str());
                                             };
-                                            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) State.m_RenameArmedId = xecs::scene::invalid_permanent_id_v;
-                                            if (State.m_RenameArmedId == Id && State.m_RenameArmedScene == SceneGuid && !ImGui::IsMouseDown(ImGuiMouseButton_Left)
-                                                && ImGui::GetTime() - State.m_RenameArmedTime > ImGui::GetIO().MouseDoubleClickTime + 0.15)
-                                                BeginRename();
                                             // F2 is the Level/Entity/Rename action: it only raises m_bRenameRequested, this row (the selected one) takes it.
                                             if (bEntitySelected && State.m_bRenameRequested && State.m_RenameId != Id && !State.isPlaying())
                                             {
@@ -752,19 +746,17 @@ namespace xlevel
                                                         xeditor::Run(Ed.m_Undo, std::format("ToggleMultiSelect -Scene {} -Id {}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id)));
                                                     else
                                                     {
-                                                        const bool bAlreadyOnlySelected = bEntitySelected && State.m_MultiSelectedEntityIds.size() <= 1 && !bRenaming;
                                                         xeditor::Run(Ed.m_Undo, std::format("Select -Scene {} -Id {}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id)));
-                                                        // A press on the arrow that opens and closes the children is not a slow second click on the name: it must not start a rename (a leaf has no arrow)
-                                                        const bool bPressedOnArrow = !(TreeFlags & ImGuiTreeNodeFlags_Leaf)
-                                                                                  && ImGui::GetIO().MouseClickedPos[ImGuiMouseButton_Left].x < ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing();
-                                                        if (bAlreadyOnlySelected && !bPressedOnArrow)
-                                                        {
-                                                            State.m_RenameArmedScene = SceneGuid;
-                                                            State.m_RenameArmedId    = Id;
-                                                            State.m_RenameArmedTime  = ImGui::GetTime();
-                                                        }
                                                     }
                                                 }
+                                            }
+
+                                            // A double click on the NAME renames (not on the arrow that opens the children, which a double click would toggle twice, and not while playing)
+                                            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !bRenaming && !State.isPlaying() && !ImGui::GetIO().KeyCtrl)
+                                            {
+                                                const bool bOnArrow = !(TreeFlags & ImGuiTreeNodeFlags_Leaf)
+                                                                   && ImGui::GetIO().MouseClickedPos[ImGuiMouseButton_Left].x < ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing();
+                                                if (!bOnArrow) BeginRename();
                                             }
 
                                             // Three independent drag intents from the same row, picked

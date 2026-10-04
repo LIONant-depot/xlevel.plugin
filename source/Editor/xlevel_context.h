@@ -29,10 +29,6 @@ namespace xlevel
         std::array<char, 256>       m_RenameText     = {};
         bool                        m_bRenameFocus   = false;      // focus the edit box on its first frame
         bool                        m_bRenameRequested = false;    // the Rename action (F2) asks the tree to start renaming the selected entity; the tree row takes it the same frame
-        // A click on the already-selected row arms a rename; it starts once the double-click window has passed.
-        xecs::scene::guid           m_RenameArmedScene = {};
-        xecs::scene::permanent_id   m_RenameArmedId    = xecs::scene::invalid_permanent_id_v;
-        double                      m_RenameArmedTime  = 0.0;
 
         // Stopped: editing normally, the world is never ticked. Playing: ticking every frame. Paused: a live play session
         // (the world stays exactly as it is and Stop still reverts it) that is not ticked this frame, which is also what lets

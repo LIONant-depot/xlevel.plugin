@@ -178,7 +178,7 @@ namespace xlevel
         inline constexpr gesture tree[] =
         { { 0,             mouse_input::Left,   mouse_kind::Click,  "Select",      "Selects the entity (when the button is released, so a drag can start from the row)." }
         , { ImGuiMod_Ctrl, mouse_input::Left,   mouse_kind::Click,  "Add / remove","Adds the entity to the selection, or takes it out." }
-        , { 0,             mouse_input::Left,   mouse_kind::Click,  "Rename",      "Clicking the one selected entity again starts renaming it." }
+        , { 0,             mouse_input::Left,   mouse_kind::Click,  "Rename",      "Double-click the name of an entity to rename it (F2 too). A single click only selects." }
         , { 0,             mouse_input::Left,   mouse_kind::Drag,   "Move",        "Drag an entity onto a folder, or onto the Level row to take it out of its folder." }
         , { 0,             mouse_input::Right,  mouse_kind::Click,  "Menu",        "Opens the menu of the row." } };
     }
