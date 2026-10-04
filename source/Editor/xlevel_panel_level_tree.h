@@ -754,7 +754,10 @@ namespace xlevel
                                                     {
                                                         const bool bAlreadyOnlySelected = bEntitySelected && State.m_MultiSelectedEntityIds.size() <= 1 && !bRenaming;
                                                         xeditor::Run(Ed.m_Undo, std::format("Select -Scene {} -Id {}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id)));
-                                                        if (bAlreadyOnlySelected)
+                                                        // A press on the arrow that opens and closes the children is not a slow second click on the name: it must not start a rename (a leaf has no arrow)
+                                                        const bool bPressedOnArrow = !(TreeFlags & ImGuiTreeNodeFlags_Leaf)
+                                                                                  && ImGui::GetIO().MouseClickedPos[ImGuiMouseButton_Left].x < ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing();
+                                                        if (bAlreadyOnlySelected && !bPressedOnArrow)
                                                         {
                                                             State.m_RenameArmedScene = SceneGuid;
                                                             State.m_RenameArmedId    = Id;
