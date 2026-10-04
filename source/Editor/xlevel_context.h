@@ -2,6 +2,7 @@
 #include "dependencies/xLIONCore/src/game/xlioncore_game.h"
 #include <filesystem>
 #include <functional>
+#include <string>
 
 // level_state: the scene state plus what is specific to a Level editor: which Level is open, whether it is playing, and
 // where its document stands (saved or not).
@@ -108,6 +109,9 @@ namespace xlevel
 
         void* m_pToolEditor = nullptr;   // this editor's viewport_tools::editor (the "Edit Collider" tools), set by its session
         game_plugin_state* m_pGamePlugin = nullptr;   // the game module of this editor's Level (its own: every Level loads the one of its Game), set by its session
+        std::function<std::string(const xmath::fvec3&, const xmath::fvec3&)> m_PickRay;   // which entity (scene and id) a ray hits, as the render module of this Level picks (what a click in the viewport does)
+        std::function<std::string()> m_DescribeTextDraw;            // what the last draw of the Texts of this Level did (the render module says it)
+        std::function<std::string(std::uint64_t)> m_DescribeText;   // the layout of the Text of an entity (raw runtime entity value), as the render module of this Level says it, set by its session
         std::function<std::filesystem::path()> m_GameSolution;   // the Visual Studio solution of this Level's game project (empty: not made yet), set by its session
     };
 

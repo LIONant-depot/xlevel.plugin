@@ -513,6 +513,29 @@ namespace xlevel
 
             m_CmdContext.m_pGamePlugin = &m_GamePlugin;
             m_CmdContext.m_GameSolution = [this]() { return xlevel::GameSolutionIn(m_GamePlugin.m_Paths.m_BuildDir); };
+            m_CmdContext.m_PickRay = [this](const xmath::fvec3& Origin, const xmath::fvec3& Dir) -> std::string
+            {
+                if (!m_pRender) return "PickRay: this Level has no render module";
+                const auto Hit = m_pRender->Pick(m_pGameMgr.get(), Origin, Dir, std::numeric_limits<float>::max());
+                if (Hit != xecs::component::entity::invalid_entity_v)
+                    for (auto& SceneGuid : m_State.m_OpenScenes)
+                        if (auto* pScene = m_pGameMgr->m_SceneMgr.Find(SceneGuid))
+                            if (auto It = pScene->m_RuntimeToLocal.find(Hit); It != pScene->m_RuntimeToLocal.end())
+                                return std::format("PickRay: hit\nScene={}\nId={}",xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(It->second));
+                return "PickRay: nothing";
+            };
+            m_CmdContext.m_DescribeTextDraw = [this]() -> std::string
+            {
+                char Text[256];
+                const int Length = m_pRender ? m_pRender->DescribeTextDraw(Text, static_cast<int>(sizeof(Text))) : -1;
+                return Length < 0 ? std::string("DescribeTextDraw: this Level has no render module") : std::string(Text, static_cast<std::size_t>(Length));
+            };
+            m_CmdContext.m_DescribeText = [this](std::uint64_t Entity) -> std::string
+            {
+                char Text[1024];
+                const int Length = m_pRender ? m_pRender->DescribeText(m_pGameMgr.get(), Entity, Text, static_cast<int>(sizeof(Text))) : -1;
+                return Length < 0 ? std::string("DescribeText: the entity has no Text") : std::string(Text, static_cast<std::size_t>(Length));
+            };
             m_GamePlugin.m_Display.m_SourceOf = xlevel::TypeSourceOf(m_GamePlugin);
             m_CmdContext.m_pDisplay    = &m_GamePlugin.m_Display;
             if (auto* pLogs = xlog::hub::current())          // LogVerify on a build problem: build again (an up-to-date module is answered at once; the evidence decides what it verifies)
