@@ -15,7 +15,8 @@ namespace xlevel
         auto& Infos = GameMgr.m_ComponentMgr.m_GlobalEntityInfos;
         if (!Entity.isValid() || Infos.m_pGlobalInfo == nullptr) return nullptr;
         auto& Entry = Infos.m_pGlobalInfo[Entity.m_GlobalInfoIndex];
-        return Entry.m_Validation == Entity.m_Validation ? &Entry : nullptr;
+        // A slot with no pool is an entity a snapshot named (its validation is restored first) and then never read back: the world does not have it.
+        return Entry.m_Validation == Entity.m_Validation && Entry.m_pPool != nullptr ? &Entry : nullptr;
     }
 
     // How many of the scene's entities the world does not know.

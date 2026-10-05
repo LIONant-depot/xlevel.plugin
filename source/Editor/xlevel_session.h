@@ -681,25 +681,29 @@ namespace xlevel
 
             if (PersistMode == xlevel::persist_mode::RawSnapshotBridge)
             {
-                xlevel::LoadSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath(m_LevelGuid.m_Instance.m_Value), &m_GamePlugin);
+                const bool bRead = xlevel::LoadSnapshot(*m_pGameMgr, xlevel::GetReloadBridgeSnapshotPath(m_LevelGuid.m_Instance.m_Value), &m_GamePlugin);
                 xlevel::ReattachOpenScenes(*m_pGameMgr, std::move(m_ReloadCapture));
                 if (!m_State.m_CurrentLevel.empty())
                     xlioncore::Ecs(*m_pGameMgr).LoadLevel(m_State.m_CurrentLevel);
 
                 // The bridge trusts the snapshot to bring every entity back at the same slot. When it did not, the scenes name entities the new world never made:
                 // everything that walks them would read nothing. Say so and rebuild the world from the saved level instead (what was unsaved is lost, the editor is not).
-                if (const auto Unknown = xlevel::CountUnknownOpenEntities(*m_pGameMgr, m_State.m_OpenScenes); Unknown)
+                // A snapshot that was not read to its end is that too, even when every entity it names happens to be there: what comes after the point it stopped at (the
+                // components of other archetypes, the children and prefab links in them) is not.
+                const auto Unknown = xlevel::CountUnknownOpenEntities(*m_pGameMgr, m_State.m_OpenScenes);
+                if (Unknown || !bRead)
                 {
+                    const std::string What = Unknown ? std::format("did not bring {} entities back", Unknown) : std::string("could not read the snapshot of the world back to its end");
                     if (auto* pLogs = xlog::hub::current())
                     {
                         xlog::event E;
                         E.m_Producer = "xlion.reload"; E.m_Origin = { xlog::origin::type::Editor, "level", 0 };
                         E.m_Severity = xlog::severity::Error; E.m_Kind = xlog::kind::Diagnostic; E.m_Channel = "game.module";
                         E.m_Code = "GAME.MODULE.RELOAD_STATE_LOST";
-                        xlog::SetMessage(E, std::format("The reload did not bring {} entities of the open scene(s) back; the Level was reopened from its last save", Unknown));
+                        xlog::SetMessage(E, std::format("The reload {}; the Level was reopened from its last save", What));
                         pLogs->Emit(std::move(E));
                     }
-                    LogGamePlugin(std::format("Game.dll: the reload did not bring {} entities back - reopening the Level from its last save", Unknown));
+                    LogGamePlugin(std::format("Game.dll: the reload {} - reopening the Level from its last save", What));
                     const auto Level = m_State.m_CurrentLevel;
                     m_pEcs->DestroyWorld();
                     CreateWorld();
