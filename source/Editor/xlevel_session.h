@@ -611,6 +611,10 @@ namespace xlevel
 
             if (m_bToolbarHandler && ImGui::GetCurrentContext()) ImGui::RemoveSettingsHandler(m_ToolbarHandlerName);
 
+            // The Inspector holds the property values of the selected entity, and those carry type functions that live in the copies of the core and the render module and in the Game.dll that
+            // are unloaded below: destroyed after them (with the member) they call into an unmapped DLL - the crash when the editor is closed with an entity selected.
+            m_EntityInspector.clear();
+
             m_pEcs->DestroyWorld();
             m_Grid.Release();
 
