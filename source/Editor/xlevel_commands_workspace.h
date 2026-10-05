@@ -185,7 +185,7 @@ namespace xlevel::commands
             for (auto pInfo : Components)
             {
                 const char* pKind = pInfo->m_TypeID == xecs::component::type::id::SHARE ? "share"
-                                  : pInfo->m_TypeID == xecs::component::type::id::TAG   ? "tag"
+                                  : pInfo->m_TypeID == xecs::component::type::id::TAG   ? (pInfo->m_bExclusiveTag ? "exclusive_tag" : "tag")
                                   :                                                        "data";
                 // ",builder" marks a builder component (a builder system consumes it when the entity is created in the game).
                 Out += std::format("[{:016X}] {}  ({}{})\n", pInfo->m_Guid.m_Value, pInfo->m_pName, pKind, pInfo->m_bBuilder ? ",builder" : "");
@@ -234,12 +234,12 @@ namespace xlevel::commands
                 // Same set the Add Component popup offers (DATA, SHARE and TAG).
                 const char* pKind = pInfo->m_TypeID == xecs::component::type::id::DATA  ? "data"
                                   : pInfo->m_TypeID == xecs::component::type::id::SHARE ? "share"
-                                  : pInfo->m_TypeID == xecs::component::type::id::TAG   ? "tag"
+                                  : pInfo->m_TypeID == xecs::component::type::id::TAG   ? (pInfo->m_bExclusiveTag ? "exclusive_tag" : "tag")
                                   :                                                        nullptr;
                 if (!pKind || xscene::IsInternalComponent(pInfo)) continue;
                 const auto Used = xscene::system_usage::UsedBy(Systems, pInfo->m_Guid.m_Value);
-                // ",builder" marks a builder component (it only configures an entity while it is created in the game).
-                Out += std::format("{:016X}  {:<13}  {}{}\n", pInfo->m_Guid.m_Value, std::string(pKind) + (pInfo->m_bBuilder ? ",builder" : ""), pInfo->m_pName, Used.empty() ? "" : "   used by: " + Used);
+                // ",builder" marks a builder component (it only configures an entity while it is created in the game); ",editor" the state of an entity in the editor (not in the Add Component list).
+                Out += std::format("{:016X}  {:<13}  {}{}\n", pInfo->m_Guid.m_Value, std::string(pKind) + (pInfo->m_bBuilder ? ",builder" : "") + (xscene::IsEditorStateComponent(pInfo) ? ",editor" : ""), pInfo->m_pName, Used.empty() ? "" : "   used by: " + Used);
             }
             return Out;
         }

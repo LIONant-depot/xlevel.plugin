@@ -14,6 +14,14 @@ namespace xlevel
 
         std::string m_TreeSearchString;
 
+        // What the editor has turned off in the entities of the open scenes (editor_disable, editor_no_render) - counted every few frames for the note of the Level Tree.
+        int         m_EditorDisabledCount = 0;
+        int         m_EditorHiddenCount   = 0;
+        int         m_EditorEntityCount   = 0;                 // the entities of the open scenes (what the counts are "of")
+        std::unordered_map<std::uint64_t, std::uint8_t> m_EditorMemo;   // per entity, this frame: bit 0 = it or something under it is disabled, bit 1 = hidden (the amber of the rows)
+        int         m_EditorMemoFrame     = -1;
+        int         m_EditorStateFrame    = -1000;
+
         // The Scene rows of the Level tree that are expanded right now (kept by the tree as it draws): the first Scene of a Level
         // opens by itself when the Level does, and a person can collapse it. ListScenes -Tree true reports it.
         std::vector<xecs::scene::guid> m_TreeExpandedScenes;

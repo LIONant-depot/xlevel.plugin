@@ -1,6 +1,8 @@
 #ifndef XLEVEL_PANEL_LEVEL_TREE_H
 #define XLEVEL_PANEL_LEVEL_TREE_H
 #pragma once
+#include "dependencies/xLIONCore/src/tags/xlioncore_tags.h"
+#include <set>
 #include "dependencies/xeditor/include/xeditor/popup.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_world_check.h"
 
@@ -264,6 +266,228 @@ namespace xlevel
         RenderLevelTreeSourceControlBadge(ResourceGuid);
     }
 
+    // The columns of the tree: the source control badge, the entity's Enabled toggle, its Visible toggle (the eye), and the names (where the tree itself is).
+    constexpr int kLevelTreeColumnSC = 0, kLevelTreeColumnEnabled = 1, kLevelTreeColumnVisible = 2, kLevelTreeColumnName = 3;
+
+    // A one-glyph button in a narrow cell of the table (the Enabled and the Visible columns): the glyph is centered, in the color it is given, brighter under the mouse. True when it was clicked.
+    inline bool RenderLevelTreeToggleCell(const char* pId, const char* pGlyph, ImU32 Color, const char* pTip) noexcept
+    {
+        const ImVec2 Size(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeight());
+        const bool   bClicked = ImGui::InvisibleButton(pId, Size);
+        const bool   bHot     = ImGui::IsItemHovered();
+        const ImVec2 Min      = ImGui::GetItemRectMin();
+        const ImVec2 GlyphSize = ImGui::CalcTextSize(pGlyph);
+        const ImU32  Shown    = bHot ? ImGui::GetColorU32(ImGuiCol_Text) : Color;
+        ImGui::GetWindowDrawList()->AddText(ImVec2(Min.x + (Size.x - GlyphSize.x) * 0.5f, Min.y), Shown, pGlyph);
+        if (bHot) xeditor::hint::Text("%s", pTip);
+        return bClicked;
+    }
+
+    // ---- the editor's state of the entities (editor_disable, editor_no_render) as the Level Tree sets it ----
+    // An entity of a scene: what the commands name.
+    struct tree_entity { xecs::scene::guid m_Scene; xecs::scene::permanent_id m_Id; };
+
+    // The roots and everything under them (the children that are entities of the same scene), each once.
+    inline std::vector<tree_entity> ExpandWithDescendants(xecs::game_mgr::instance& GameMgr, const std::vector<tree_entity>& Roots) noexcept
+    {
+        auto& Ecs = xlioncore::Ecs(GameMgr);
+        std::vector<tree_entity> Out;
+        std::set<std::pair<std::uint64_t, std::uint32_t>> Seen;
+        std::function<void(xecs::scene::guid, xecs::scene::permanent_id)> Walk = [&](xecs::scene::guid Scene, xecs::scene::permanent_id Id) noexcept
+        {
+            if (!Seen.insert({ Scene.m_Instance.m_Value, static_cast<std::uint32_t>(Id) }).second) return;
+            auto* pScene = GameMgr.m_SceneMgr.Find(Scene);
+            if (!pScene) return;
+            auto It = pScene->m_LocalToRuntime.find(Id);
+            if (It == pScene->m_LocalToRuntime.end() || !Ecs.IsAlive(It->second)) return;
+            Out.push_back({ Scene, Id });
+            if (auto* pChildren = Ecs.ChildrenOf(It->second))
+            {
+                const auto List = pChildren->m_List;                            // a copy: the commands that follow move entities around
+                for (auto Child : List)
+                    if (auto ChildIt = pScene->m_RuntimeToLocal.find(Child.m_Value); ChildIt != pScene->m_RuntimeToLocal.end()) Walk(Scene, ChildIt->second);
+            }
+        };
+        for (const auto& Root : Roots) Walk(Root.m_Scene, Root.m_Id);
+        return Out;
+    }
+
+    // Every entity of the open scenes.
+    inline std::vector<tree_entity> AllEntitiesOfTheOpenScenes(xecs::game_mgr::instance& GameMgr, const level_state& State) noexcept
+    {
+        std::vector<tree_entity> Out;
+        for (auto& SceneGuid : State.m_OpenScenes)
+            if (auto* pScene = GameMgr.m_SceneMgr.Find(SceneGuid))
+                for (auto& [Id, Entity] : pScene->m_LocalToRuntime) Out.push_back({ SceneGuid, Id });
+        return Out;
+    }
+
+    // What the tree has selected: the entities of the multi selection, or the one that is selected.
+    inline std::vector<tree_entity> SelectedEntities(const level_state& State) noexcept
+    {
+        std::vector<tree_entity> Out;
+        if (!State.m_MultiSelectedEntityIds.empty())
+            for (auto Id : State.m_MultiSelectedEntityIds) Out.push_back({ State.m_MultiSelectScene, Id });
+        else if (State.m_SelectedEntityId != xecs::scene::invalid_permanent_id_v)
+            Out.push_back({ State.m_SelectedEntityScene, State.m_SelectedEntityId });
+        return Out;
+    }
+
+    // Gives the tag to the entities that do not have it (bAdd) or takes it from the ones that do: one command each, all of them one undo step.
+    inline void SetEditorTag(level_context& Ed, xecs::game_mgr::instance& GameMgr, const std::vector<tree_entity>& Entities, xecs::component::type::guid Guid, bool bAdd, const char* pStepName) noexcept
+    {
+        auto& Ecs = xlioncore::Ecs(GameMgr);
+        std::vector<std::string> Cmds;
+        for (const auto& E : Entities)
+        {
+            auto* pScene = GameMgr.m_SceneMgr.Find(E.m_Scene);
+            if (!pScene) continue;
+            auto It = pScene->m_LocalToRuntime.find(E.m_Id);
+            if (It == pScene->m_LocalToRuntime.end() || !Ecs.IsAlive(It->second)) continue;
+            if (Ecs.HasComponent(It->second, Guid) == bAdd) continue;               // already as it is going to be
+            Cmds.push_back(std::format("{} -Scene {} -Id {} -Component {:016X}", bAdd ? "AddComponent" : "RemoveComponent"
+                , xscene::commands::FormatSceneGuid(E.m_Scene), xscene::commands::FormatEntityId(E.m_Id), Guid.m_Value));
+        }
+        (void)xeditor::RunGroup(Ed.m_Undo, pStepName, Cmds);
+    }
+
+    // How many entities of the open scenes the editor has disabled / hidden (counted every few frames: the headers say it).
+    inline void UpdateLevelTreeEditorStateCounts(xecs::game_mgr::instance& GameMgr, level_state& State) noexcept
+    {
+        const int Frame = ImGui::GetFrameCount();
+        if (Frame - State.m_EditorStateFrame < 20 && Frame >= State.m_EditorStateFrame) return;
+        State.m_EditorStateFrame = Frame;
+        auto&      Ecs         = xlioncore::Ecs(GameMgr);
+        const auto DisableGuid = xecs::editor::disable_tag::typedef_v.m_Guid;
+        const auto NoDrawGuid  = xecs::editor::no_render_tag::typedef_v.m_Guid;
+        State.m_EditorDisabledCount = State.m_EditorHiddenCount = State.m_EditorEntityCount = 0;
+        for (auto& SceneGuid : State.m_OpenScenes)
+            if (auto* pScene = GameMgr.m_SceneMgr.Find(SceneGuid))
+                for (auto& [Id, Entity] : pScene->m_LocalToRuntime)
+                {
+                    if (!Ecs.IsAlive(Entity)) continue;
+                    ++State.m_EditorEntityCount;
+                    State.m_EditorDisabledCount += Ecs.HasComponent(Entity, DisableGuid) ? 1 : 0;
+                    State.m_EditorHiddenCount   += Ecs.HasComponent(Entity, NoDrawGuid)  ? 1 : 0;
+                }
+    }
+
+    // What the editor has switched off UNDER an entity (not on the entity itself): first = something under it is disabled, second = something under it is hidden. A row says it with the same amber
+    // as the header of its column. Worked out once per entity per frame (the tree asks for every visible row, and each answer is made of the answers of its children).
+    template<class T_ECS>
+    inline std::pair<bool, bool> EditorStateUnder(T_ECS& Ecs, level_state& State, xecs::component::entity Entity) noexcept
+    {
+        const int Frame = ImGui::GetFrameCount();
+        if (State.m_EditorMemoFrame != Frame) { State.m_EditorMemo.clear(); State.m_EditorMemoFrame = Frame; }
+
+        const auto DisableGuid = xecs::editor::disable_tag::typedef_v.m_Guid;
+        const auto NoDrawGuid  = xecs::editor::no_render_tag::typedef_v.m_Guid;
+        std::function<std::uint8_t(xecs::component::entity)> AtOrUnder = [&](xecs::component::entity E) noexcept -> std::uint8_t
+        {
+            if (auto It = State.m_EditorMemo.find(E.m_Value); It != State.m_EditorMemo.end()) return It->second;
+            std::uint8_t Flags = (Ecs.HasComponent(E, DisableGuid) ? 1 : 0) | (Ecs.HasComponent(E, NoDrawGuid) ? 2 : 0);
+            if (auto* pChildren = Ecs.ChildrenOf(E))
+                for (auto Child : pChildren->m_List) Flags |= AtOrUnder(Child);
+            State.m_EditorMemo[E.m_Value] = Flags;
+            return Flags;
+        };
+        std::uint8_t Under = 0;
+        if (auto* pChildren = Ecs.ChildrenOf(Entity))
+            for (auto Child : pChildren->m_List) Under |= AtOrUnder(Child);
+        return { (Under & 1) != 0, (Under & 2) != 0 };
+    }
+
+    // The two toggles of an entity's row. Enabled: the exclusive tag "editor_disable" (every system skips an entity that has it); Visible: the tag "editor_no_render" (the editor's view leaves it out).
+    // Both are the editor's own state (saved with the scene, left out of the game by the scene compiler): the runtime tags (disable, no_render) are the game's.
+    // A click acts on the entity AND all its descendants, as most editors do: the state the clicked entity is about to have is given to every one of them, all of them one undo step.
+    inline void RenderLevelTreeEntityToggles(level_context& Ed, xecs::game_mgr::instance& GameMgr, xecs::scene::guid SceneGuid, xecs::scene::permanent_id Id, xecs::component::entity Entity) noexcept
+    {
+        auto&      Ecs         = xlioncore::Ecs(GameMgr);
+        const auto DisableGuid = xecs::editor::disable_tag::typedef_v.m_Guid;
+        const auto NoDrawGuid  = xecs::editor::no_render_tag::typedef_v.m_Guid;
+        const bool bDisabled   = Ecs.HasComponent(Entity, DisableGuid);
+        const bool bHidden     = Ecs.HasComponent(Entity, NoDrawGuid);
+        const auto [bUnderDisabled, bUnderHidden] = EditorStateUnder(Ecs, Ed.State(), Entity);
+
+        // The icon says it: normal when all is as it should be, red / slashed when this entity is switched off, and amber (the color of the header of the column) when it is not but something under it is.
+        constexpr ImU32 Normal = IM_COL32(210, 210, 210, 255), Off = IM_COL32(220, 80, 80, 255), Dim = IM_COL32(110, 110, 110, 255), Amber = IM_COL32(240, 180, 60, 255);
+
+        std::string EnabledTip = bDisabled ? "Disabled in the editor: no system sees this entity (the game's own disable is not touched). Click to enable it and everything under it (removes editor_disable)."
+                                           : "Enabled. Click to disable it and everything under it in the editor (adds editor_disable).";
+        if (!bDisabled && bUnderDisabled) EnabledTip += "\nSomething under it is disabled.";
+        ImGui::TableSetColumnIndex(kLevelTreeColumnEnabled);
+        if (RenderLevelTreeToggleCell("##Enabled", "\xEE\x9F\xA8", bDisabled ? Off : bUnderDisabled ? Amber : Normal, EnabledTip.c_str()))
+            SetEditorTag(Ed, GameMgr, ExpandWithDescendants(GameMgr, { { SceneGuid, Id } }), DisableGuid, !bDisabled, bDisabled ? "Enable" : "Disable");
+
+        std::string VisibleTip = bHidden ? "Hidden in the editor's view (the game still draws it). Click to show it and everything under it again (removes editor_no_render)."
+                                         : "Drawn. Click to hide it and everything under it in the editor's view (adds editor_no_render).";
+        if (!bHidden && bUnderHidden) VisibleTip += "\nSomething under it is hidden.";
+        ImGui::TableSetColumnIndex(kLevelTreeColumnVisible);
+        if (RenderLevelTreeToggleCell("##Visible", bHidden ? "\xEE\xB4\x9A" : "\xEE\x9E\xB3", bHidden ? Dim : bUnderHidden ? Amber : Normal, VisibleTip.c_str()))
+            SetEditorTag(Ed, GameMgr, ExpandWithDescendants(GameMgr, { { SceneGuid, Id } }), NoDrawGuid, !bHidden, bHidden ? "Show" : "Hide");
+    }
+
+    // The header row of the tree. Narrow columns have only an icon (what it is, and how many entities it is on, is the hint of the header); the icon takes a color while the editor has anything disabled
+    // or hidden - that is how the editor says the game does not look like its scene. A right-click on a header opens the menu of that column.
+    inline void RenderLevelTreeHeaderRow(level_context& Ed, xecs::game_mgr::instance& GameMgr, level_state& State) noexcept
+    {
+        constexpr ImU32 Normal = IM_COL32(170, 170, 170, 255), Disabled = IM_COL32(240, 180, 60, 255), Hidden = IM_COL32(240, 180, 60, 255);           // amber: "something is switched off in here", the same as on the rows
+        const auto DisableGuid = xecs::editor::disable_tag::typedef_v.m_Guid;
+        const auto NoDrawGuid  = xecs::editor::no_render_tag::typedef_v.m_Guid;
+
+        auto Cell = [&](const char* pId, const char* pGlyph, ImU32 Color, const char* pTopic, const char* pBody, const std::string& Detail) noexcept
+        {
+            const ImVec2 Size(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeight());
+            ImGui::InvisibleButton(pId, Size);
+            const bool   bHot   = ImGui::IsItemHovered();
+            const ImVec2 Min    = ImGui::GetItemRectMin();
+            const ImVec2 Glyph  = ImGui::CalcTextSize(pGlyph);
+            ImGui::GetWindowDrawList()->AddText(ImVec2(Min.x + (Size.x - Glyph.x) * 0.5f, Min.y), bHot ? ImGui::GetColorU32(ImGuiCol_Text) : Color, pGlyph);
+            if (bHot) xeditor::hint::Draw({ .m_Topic = pTopic, .m_Body = pBody, .m_Detail = Detail });
+        };
+
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+
+        ImGui::TableSetColumnIndex(kLevelTreeColumnSC);
+        Cell("##HeaderSC", "", Normal, "Source control", "The status of the file of a Level, a Scene or a Prefab.", {});
+
+        // Enabled
+        ImGui::TableSetColumnIndex(kLevelTreeColumnEnabled);
+        Cell("##HeaderEnabled", "\xEE\x9F\xA8", State.m_EditorDisabledCount ? Disabled : Normal, "Enabled"
+            , "The power of each entity: click it to disable the entity and everything under it in the editor (editor_disable). Right-click here for the menu."
+            , State.m_EditorDisabledCount ? std::format("{} of {} entities are disabled in the editor.", State.m_EditorDisabledCount, State.m_EditorEntityCount) : std::string("None is disabled."));
+        if (ImGui::BeginPopupContextItem("##HeaderEnabledMenu"))
+        {
+            if (ImGui::MenuItem("Enable all", nullptr, false, State.m_EditorDisabledCount > 0))
+                SetEditorTag(Ed, GameMgr, AllEntitiesOfTheOpenScenes(GameMgr, State), DisableGuid, false, "Enable all");
+            ImGui::Separator();
+            const auto Selected = ExpandWithDescendants(GameMgr, SelectedEntities(State));
+            if (ImGui::MenuItem("Disable selected", nullptr, false, !Selected.empty())) SetEditorTag(Ed, GameMgr, Selected, DisableGuid, true,  "Disable selected");
+            if (ImGui::MenuItem("Enable selected",  nullptr, false, !Selected.empty())) SetEditorTag(Ed, GameMgr, Selected, DisableGuid, false, "Enable selected");
+            ImGui::EndPopup();
+        }
+
+        // Visible
+        ImGui::TableSetColumnIndex(kLevelTreeColumnVisible);
+        Cell("##HeaderVisible", "\xEE\x9E\xB3", State.m_EditorHiddenCount ? Hidden : Normal, "Visible"
+            , "The eye of each entity: click it to hide the entity and everything under it in the editor's view (editor_no_render); the game still draws it. Right-click here for the menu."
+            , State.m_EditorHiddenCount ? std::format("{} of {} entities are hidden in the editor.", State.m_EditorHiddenCount, State.m_EditorEntityCount) : std::string("None is hidden."));
+        if (ImGui::BeginPopupContextItem("##HeaderVisibleMenu"))
+        {
+            if (ImGui::MenuItem("Show all", nullptr, false, State.m_EditorHiddenCount > 0))
+                SetEditorTag(Ed, GameMgr, AllEntitiesOfTheOpenScenes(GameMgr, State), NoDrawGuid, false, "Show all");
+            ImGui::Separator();
+            const auto Selected = ExpandWithDescendants(GameMgr, SelectedEntities(State));
+            if (ImGui::MenuItem("Hide selected", nullptr, false, !Selected.empty())) SetEditorTag(Ed, GameMgr, Selected, NoDrawGuid, true,  "Hide selected");
+            if (ImGui::MenuItem("Show selected", nullptr, false, !Selected.empty())) SetEditorTag(Ed, GameMgr, Selected, NoDrawGuid, false, "Show selected");
+            ImGui::EndPopup();
+        }
+
+        // Names: the tree has room, so its header says what it is
+        ImGui::TableSetColumnIndex(kLevelTreeColumnName);
+        ImGui::TextDisabled("Name");
+    }
+
     void RenderLevelTreePanel(level_context& Ed, const char* pWindowName, xundo::system& Undo, bool bReadOnly = false) noexcept
     {
         auto& GameMgr = Ed.World();
@@ -310,6 +534,7 @@ namespace xlevel
                 // comment). Adding entities/folders is right-click-in-place on a Scene/Folder row now
                 // (BeginPopupContextItem, below).
                 xeditor::RenderTreeSearchBar(State.m_TreeSearchString, ImGui::GetContentRegionAvail().x);
+                UpdateLevelTreeEditorStateCounts(GameMgr, State);
 
                 // The whole Level -> Scene -> Folder -> Entity hierarchy lives in one real
                 // ImGui::BeginTable now (ImGui's own documented "tree inside a table" shape -
@@ -349,7 +574,7 @@ namespace xlevel
                 // whole-table style var, not per-column, but the Name column already has its own
                 // visual breathing room from each row's icon glyph, so losing its padding too is fine.
                 ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0.0f, 1.0f));
-                if (ImGui::BeginTable("LevelTree", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersV | ImGuiTableFlags_ScrollY | ImGuiTableFlags_NoSavedSettings, ImVec2(0.0f, ImGui::GetContentRegionAvail().y)))
+                if (ImGui::BeginTable("LevelTree", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersV | ImGuiTableFlags_ScrollY | ImGuiTableFlags_NoSavedSettings, ImVec2(0.0f, ImGui::GetContentRegionAvail().y)))
                 {
                     // IndentDisable/IndentEnable explicit on both columns (Dear ImGui's own default
                     // is the other way around - see RenderLevelTreeSourceControlBadgeColumn's own
@@ -361,10 +586,15 @@ namespace xlevel
                     // 12 (matching every other view - see RenderLevelTreeSourceControlBadge's own
                     // comment) - only the column's own empty margin shrinks here, not the icon.
                     ImGui::TableSetupColumn("##SC", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_IndentDisable, 21.0f);
+                    // To the right of it: the Enabled toggle (the disable tag) and the Visible toggle (the eye: the disable_rendering tag) of the entities. Then the names.
+                    ImGui::TableSetupColumn("##Enabled", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_IndentDisable, 21.0f);
+                    ImGui::TableSetupColumn("##Visible", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_IndentDisable, 21.0f);
                     ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_IndentEnable);
+                    ImGui::TableSetupScrollFreeze(0, 1);                    // the headers stay while the tree scrolls
+                    RenderLevelTreeHeaderRow(Ed, GameMgr, State);
 
                     ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                     const std::string LevelLabelWithIcon = std::format("{} {}", xlevel::LevelIcon(), LevelLabel);
                     const bool bLevelOpen = ImGui::TreeNodeEx(LevelLabelWithIcon.c_str(), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth
                         | (State.m_bRootSelected ?ImGuiTreeNodeFlags_Selected : 0));
@@ -451,7 +681,7 @@ namespace xlevel
                             const std::string LockOwner    = bSceneLocked ? xlevel::SceneOwnerName(SceneGuid) : std::string{};
 
                             ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(1);
+                            ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                             const std::string SceneLabelWithIcon = bSceneLocked
                                 ? std::format("{} {}  (read-only: edited in {})", xlevel::SceneIcon(), SceneLabel, LockOwner)
                                 : std::format("{} {}", xlevel::SceneIcon(), SceneLabel);
@@ -652,7 +882,7 @@ namespace xlevel
 
                                             ImGui::PushID(static_cast<int>(Id));
                                             ImGui::TableNextRow();
-                                            ImGui::TableSetColumnIndex(1);
+                                            ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                                             const bool bEntitySelected = (State.m_SelectedEntityId == Id);
                                             const bool bMultiSelected  = (State.m_MultiSelectScene == SceneGuid) && State.m_MultiSelectedEntityIds.contains(Id);
                                             // Prefab instances render in blue, matching Unity's own
@@ -862,6 +1092,8 @@ namespace xlevel
                                             // resource identity of its own either.
                                             if (!bDeleted)
                                                 RenderLevelTreeSourceControlBadgeColumn(pPI ? pPI->m_PrefabInstance : xresource::full_guid{ SceneGuid.m_Instance, SceneGuid.m_Type });
+                                            if (!bDeleted)
+                                                RenderLevelTreeEntityToggles(Ed, GameMgr, SceneGuid, Id, Entity);
 
                                             // TreeNodeEx above (no NoTreePushOnOpen for a bHasChildren
                                             // row) already pushed a node onto ImGui's own ID/tree stack
@@ -916,7 +1148,7 @@ namespace xlevel
 
                                                 ImGui::PushID(static_cast<int>(FolderId));
                                                 ImGui::TableNextRow();
-                                                ImGui::TableSetColumnIndex(1);
+                                                ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                                                 const bool bFolderHasChildren = !It->m_Entities.empty() || std::any_of(pScene->m_Folders.begin(), pScene->m_Folders.end(), [&](auto& F) noexcept { return F.m_Parent == FolderId; });
                                                 const std::string FolderLabel = std::format("{} {}", xlevel::FolderIcon(bFolderHasChildren), It->m_Name);
                                                 const bool bFolderOpen = ImGui::TreeNodeEx(FolderLabel.c_str(), ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth);
@@ -1041,7 +1273,7 @@ namespace xlevel
                                         {
                                             ImGui::PushID("Dependencies");
                                             ImGui::TableNextRow();
-                                            ImGui::TableSetColumnIndex(1);
+                                            ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                                             const std::string DepLabel = std::format("{} Dependencies", xlevel::DependenciesIcon());
                                             const bool bDepOpen = ImGui::TreeNodeEx(DepLabel.c_str(), ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth);
 
@@ -1079,7 +1311,7 @@ namespace xlevel
                                                     xresource_editor::RemapGUIDToString(DepName, xresource::full_guid{ pScene->m_ParentScenes[iDep].m_Instance, pScene->m_ParentScenes[iDep].m_Type });
 
                                                     ImGui::TableNextRow();
-                                                    ImGui::TableSetColumnIndex(1);
+                                                    ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                                                     ImGui::TreeNodeEx(DepName.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_Bullet | ImGuiTreeNodeFlags_SpanFullWidth);
 
                                                     bool bDepRemoved = false;
@@ -1173,7 +1405,7 @@ namespace xlevel
                                 else
                                 {
                                     ImGui::TableNextRow();
-                                    ImGui::TableSetColumnIndex(1);
+                                    ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                                     ImGui::TextDisabled("(click to open)");
                                 }
                                 ImGui::TreePop();
@@ -1223,7 +1455,7 @@ namespace xlevel
                                     if (Kind == SPAWNED && IsInOpenScene(E)) continue;
 
                                     ImGui::TableNextRow();
-                                    ImGui::TableSetColumnIndex(1);
+                                    ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                                     ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(E.m_Value))
                                         , ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanFullWidth
                                         , "Entity 0x%llX  (%s)", static_cast<unsigned long long>(E.m_Value), Components.c_str());
@@ -1234,7 +1466,7 @@ namespace xlevel
                             {
                                 if (Count[Kind] == 0) return;
                                 ImGui::TableNextRow();
-                                ImGui::TableSetColumnIndex(1);
+                                ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                                 if (ImGui::TreeNodeEx(pName, ImGuiTreeNodeFlags_SpanFullWidth, "%s %s (%d)", xlevel::FolderIcon(true), pName, Count[Kind]))
                                 {
                                     RenderEntities(Kind);
@@ -1243,7 +1475,7 @@ namespace xlevel
                             };
 
                             ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(1);
+                            ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                             const std::string RuntimeLabel = std::format("{} Runtime ({})", xlevel::FolderIcon(RuntimeCount != 0), RuntimeCount);
 
                             // Distinct color (not a distinct icon - FolderIcon's own codepoints are

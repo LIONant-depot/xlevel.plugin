@@ -521,7 +521,7 @@ namespace xlevel
             m_CmdContext.m_PickRay = [this](const xmath::fvec3& Origin, const xmath::fvec3& Dir) -> std::string
             {
                 if (!m_pRender) return "PickRay: this Level has no render module";
-                const auto Hit = m_pRender->Pick(m_pGameMgr.get(), Origin, Dir, std::numeric_limits<float>::max());
+                const auto Hit = m_pRender->Pick(m_pGameMgr.get(), Origin, Dir, std::numeric_limits<float>::max(), xlionrender::view::SCENE);
                 if (Hit != xecs::component::entity::invalid_entity_v)
                     for (auto& SceneGuid : m_State.m_OpenScenes)
                         if (auto* pScene = m_pGameMgr->m_SceneMgr.Find(SceneGuid))
@@ -1056,7 +1056,7 @@ namespace xlevel
                 // own world, with its own selection outlined.
                 if (!m_pRender) return;
                 m_pRender->SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
-                m_pRender->Draw(m_pGameMgr.get(), CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y);
+                m_pRender->Draw(m_pGameMgr.get(), CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y, xlionrender::view::SCENE);     // the editor's viewport: the scene view
             });
 
             // Gizmo (Move/Rotate/Scale tools, m_SceneTool 1/2/3) - drives the primary selection's
@@ -1249,7 +1249,7 @@ namespace xlevel
                             const float GroundT = -Origin.m_Y / Dir.m_Y;
                             if (GroundT > 1.0e-6f) MaxT = GroundT;
                         }
-                        const auto Hit = m_pRender ? m_pRender->Pick(m_pGameMgr.get(), Origin, Dir, MaxT) : xecs::component::entity::invalid_entity_v;
+                        const auto Hit = m_pRender ? m_pRender->Pick(m_pGameMgr.get(), Origin, Dir, MaxT, xlionrender::view::SCENE) : xecs::component::entity::invalid_entity_v;
 
                         xecs::scene::guid          HitScene{};
                         xecs::scene::permanent_id  HitId = xecs::scene::invalid_permanent_id_v;
