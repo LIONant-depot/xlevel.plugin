@@ -10,6 +10,7 @@
 // for UnityCheckbox - same self-sufficiency reasoning as level/LevelEditor_Panel_LevelTree.h's own top comment.
 #include "source/Editors/LevelEditor/LevelEditor_Theme.h"
 #include "dependencies/xeditor/include/xeditor/hint.h"
+#include "dependencies/xeditor/include/xeditor/widgets.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_system_usage.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_component_display.h"
 
@@ -503,9 +504,7 @@ namespace xlevel
                     const float  Y   = (Min.y + Max.y) * 0.5f;
                     auto* pList = ImGui::GetWindowDrawList();
                     pList->AddLine(ImVec2(Min.x, Y), ImVec2(Max.x, Y), ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_SeparatorActive : bSplitterHot ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator), bSplitterHot ? 3.0f : 2.0f);
-                    const float  X   = (Min.x + Max.x) * 0.5f;
-                    const ImU32  Dot = ImGui::GetColorU32(bSplitterHot ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-                    for (int i = -2; i <= 2; ++i) pList->AddRectFilled(ImVec2(X + i * 6.0f - 1.5f, Y - 1.5f), ImVec2(X + i * 6.0f + 1.5f, Y + 1.5f), Dot);
+                    xeditor::DrawSplitterGrip(pList, Min, Max, true, bSplitterHot);
                 }
 
                 ImGui::BeginChild("##BottomSystems", ImVec2(0.0f, 0.0f));
