@@ -1,10 +1,12 @@
 // New Types
 < s32:d u32:g s16:C u16:H s8:c u8:h f32:f f64:F string:s wstring:S u64:G s64:D bool:c enum:s >
 
-[ xProperties : 9 ]
+[ xProperties : 11 ]
 { Name:s                            Value:?                   }
 //--------------------------------  -------------------------
   "PipelinePlugin/TypeName"                  ;string "Level"
+  "PipelinePlugin/Group"                     ;string "World"
+  "PipelinePlugin/Description"               ;string "A place of the game: the scenes it loads and the Game that runs them."
   "PipelinePlugin/FileExtension"             ;wstring ""
   "PipelinePlugin/TypeGUID/Value"            ;u64    #E465C0E3C3723FFB
   "PipelinePlugin/IconPaths[]"                      ;s64    1

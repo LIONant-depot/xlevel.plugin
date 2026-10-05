@@ -191,6 +191,7 @@ namespace xlevel
         session& S() const noexcept { return *m_pS; }
 
         void        Save()       noexcept;      const char* WhyNoSave() const noexcept;
+        void        SaveAll()    noexcept;
         void        Undo()       noexcept;      const char* WhyNoUndo() const noexcept;
         void        Redo()       noexcept;      const char* WhyNoRedo() const noexcept;
         void        Delete()     noexcept;      const char* WhyNoDelete() const noexcept;
@@ -209,6 +210,9 @@ namespace xlevel
             , member_help<"Saves the Level and the Scenes it may write">
             , ximgui::actions::member_keys<"Ctrl+S", true>
             , member_dynamic_reason<+[](const session_actions& A) noexcept -> const char* { return A.WhyNoSave(); }> >
+        , obj_action<"SaveAll", &session_actions::SaveAll
+            , member_help<"Saves everything in the editor that has unsaved work, whoever owns it: the open editors and the renames and moves of the resource view">
+            , ximgui::actions::member_keys<"Ctrl+Shift+S", true> >
         , obj_action<"Undo", &session_actions::Undo
             , member_help<"Undoes the last change to this Level">
             , ximgui::actions::member_keys<"Ctrl+Z">
@@ -1514,6 +1518,7 @@ namespace xlevel
         xlevel::SaveEverything(*S().m_pGameMgr, S().m_State);
         xlevel::MarkDocumentClean(S().m_State, S().m_Undo);
     }
+    inline void session_actions::SaveAll() noexcept { (void)xeditor::SaveAllNow(); }
 
     inline const char* session_actions::WhyNoUndo() const noexcept
     {

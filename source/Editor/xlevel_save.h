@@ -49,7 +49,7 @@ namespace xlevel
         return pWriter ? pWriter->display_name() : std::string{};
     }
 
-    // Saves the Level and every open Scene this editor may write - a Scene another Level editor owns is left alone (its
+    // The Level's Save. Saves the Level and every open Scene this editor may write - a Scene another Level editor owns is left alone (its
     // edits are that editor's to save). The other editors that have one of the Scenes this editor owned open reload it.
     void SaveEverything(xecs::game_mgr::instance& GameMgr, level_state& State) noexcept
     {
@@ -96,8 +96,7 @@ namespace xlevel
                 xeditor::NotifyToast(std::format("Failed to save Scene: {}", Err.getMessage()));
         }
 
-        xproperty::settings::context Context;
-        xresource_editor::g_LibMgr.Save(Context);
+        // Save is local: the Level and its Scenes. The renames and moves of the resource view are its own (its Save button), and Save All saves everything.
 
         for (auto* pOther : g_LevelContexts)
         {
