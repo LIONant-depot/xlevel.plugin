@@ -20,6 +20,7 @@ namespace xlevel
         int         m_EditorEntityCount   = 0;                 // the entities of the open scenes (what the counts are "of")
         std::unordered_map<std::uint64_t, std::uint8_t> m_EditorMemo;   // per entity, this frame: bit 0 = it or something under it is disabled, bit 1 = hidden (the amber of the rows)
         int         m_EditorMemoFrame     = -1;
+        std::unordered_map<std::uint64_t, std::uint8_t> m_EditorSceneFlags;   // per open scene (its instance guid): bit 0 = something in it is disabled, bit 1 = hidden (the amber of its row)
         int         m_EditorStateFrame    = -1000;
 
         // The Scene rows of the Level tree that are expanded right now (kept by the tree as it draws): the first Scene of a Level

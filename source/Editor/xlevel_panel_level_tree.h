@@ -361,15 +361,22 @@ namespace xlevel
         const auto DisableGuid = xecs::editor::disable_tag::typedef_v.m_Guid;
         const auto NoDrawGuid  = xecs::editor::no_render_tag::typedef_v.m_Guid;
         State.m_EditorDisabledCount = State.m_EditorHiddenCount = State.m_EditorEntityCount = 0;
+        State.m_EditorSceneFlags.clear();
         for (auto& SceneGuid : State.m_OpenScenes)
             if (auto* pScene = GameMgr.m_SceneMgr.Find(SceneGuid))
+            {
+                std::uint8_t Flags = 0;
                 for (auto& [Id, Entity] : pScene->m_LocalToRuntime)
                 {
                     if (!Ecs.IsAlive(Entity)) continue;
                     ++State.m_EditorEntityCount;
-                    State.m_EditorDisabledCount += Ecs.HasComponent(Entity, DisableGuid) ? 1 : 0;
-                    State.m_EditorHiddenCount   += Ecs.HasComponent(Entity, NoDrawGuid)  ? 1 : 0;
+                    const bool bDisabled = Ecs.HasComponent(Entity, DisableGuid), bHidden = Ecs.HasComponent(Entity, NoDrawGuid);
+                    State.m_EditorDisabledCount += bDisabled ? 1 : 0;
+                    State.m_EditorHiddenCount   += bHidden   ? 1 : 0;
+                    Flags |= (bDisabled ? 1 : 0) | (bHidden ? 2 : 0);
                 }
+                State.m_EditorSceneFlags[SceneGuid.m_Instance.m_Value] = Flags;
+            }
     }
 
     // What the editor has switched off UNDER an entity (not on the entity itself): first = something under it is disabled, second = something under it is hidden. A row says it with the same amber
@@ -425,6 +432,85 @@ namespace xlevel
         ImGui::TableSetColumnIndex(kLevelTreeColumnVisible);
         if (RenderLevelTreeToggleCell("##Visible", bHidden ? "\xEE\xB4\x9A" : "\xEE\x9E\xB3", bHidden ? Dim : bUnderHidden ? Amber : Normal, VisibleTip.c_str()))
             SetEditorTag(Ed, GameMgr, ExpandWithDescendants(GameMgr, { { SceneGuid, Id } }), NoDrawGuid, !bHidden, bHidden ? "Show" : "Hide");
+    }
+
+    // ---- folders, scenes and the Level: what is switched off inside them ----
+    // The entities a folder holds, and those of the folders inside it (the roots: ExpandWithDescendants adds everything under them).
+    template<class T_SCENE>
+    inline std::vector<tree_entity> FolderRoots(const T_SCENE& Scene, xecs::scene::guid SceneGuid, xecs::scene::folder_id FolderId) noexcept
+    {
+        std::vector<tree_entity> Out;
+        std::function<void(xecs::scene::folder_id)> Walk = [&](xecs::scene::folder_id Id) noexcept
+        {
+            for (const auto& F : Scene.m_Folders)
+                if (F.m_Id == Id) for (auto E : F.m_Entities) Out.push_back({ SceneGuid, E });
+            for (const auto& F : Scene.m_Folders)
+                if (F.m_Parent == Id) Walk(F.m_Id);
+        };
+        Walk(FolderId);
+        return Out;
+    }
+
+    // How many of the entities have the tag.
+    inline int CountWithTag(xecs::game_mgr::instance& GameMgr, const std::vector<tree_entity>& Entities, xecs::component::type::guid Guid) noexcept
+    {
+        auto& Ecs = xlioncore::Ecs(GameMgr);
+        int n = 0;
+        for (const auto& E : Entities)
+            if (auto* pScene = GameMgr.m_SceneMgr.Find(E.m_Scene))
+                if (auto It = pScene->m_LocalToRuntime.find(E.m_Id); It != pScene->m_LocalToRuntime.end() && Ecs.IsAlive(It->second) && Ecs.HasComponent(It->second, Guid)) ++n;
+        return n;
+    }
+
+    // The two toggles of a folder row: they act on everything inside it (the entities of the folder and of the folders in it, and everything under them). A folder has no tag of its own, so its icon says
+    // how the inside is: normal when nothing is switched off, amber when some of it is, red / slashed when all of it is. A click gives everything the state the icon is not showing: all off, unless all
+    // already are, then all back on - one undo step.
+    template<class T_SCENE>
+    inline void RenderLevelTreeFolderToggles(level_context& Ed, xecs::game_mgr::instance& GameMgr, xecs::scene::guid SceneGuid, const T_SCENE& Scene, xecs::scene::folder_id FolderId) noexcept
+    {
+        const auto Inside = ExpandWithDescendants(GameMgr, FolderRoots(Scene, SceneGuid, FolderId));
+        if (Inside.empty()) return;                                          // an empty folder has nothing to switch
+        const auto DisableGuid = xecs::editor::disable_tag::typedef_v.m_Guid;
+        const auto NoDrawGuid  = xecs::editor::no_render_tag::typedef_v.m_Guid;
+        const int  Total       = static_cast<int>(Inside.size());
+        const int  nDisabled   = CountWithTag(GameMgr, Inside, DisableGuid);
+        const int  nHidden     = CountWithTag(GameMgr, Inside, NoDrawGuid);
+
+        constexpr ImU32 Normal = IM_COL32(210, 210, 210, 255), Off = IM_COL32(220, 80, 80, 255), Dim = IM_COL32(110, 110, 110, 255), Amber = IM_COL32(240, 180, 60, 255);
+
+        const bool bAllDisabled = nDisabled == Total;
+        std::string EnabledTip = bAllDisabled ? std::format("All {} entities inside are disabled in the editor. Click to enable them.", Total)
+                               : nDisabled    ? std::format("{} of {} entities inside are disabled in the editor. Click to disable all of them.", nDisabled, Total)
+                               :                std::format("Enabled. Click to disable the {} entities inside in the editor.", Total);
+        ImGui::TableSetColumnIndex(kLevelTreeColumnEnabled);
+        if (RenderLevelTreeToggleCell("##FolderEnabled", "\xEE\x9F\xA8", bAllDisabled ? Off : nDisabled ? Amber : Normal, EnabledTip.c_str()))
+            SetEditorTag(Ed, GameMgr, Inside, DisableGuid, !bAllDisabled, bAllDisabled ? "Enable folder" : "Disable folder");
+
+        const bool bAllHidden = nHidden == Total;
+        std::string VisibleTip = bAllHidden ? std::format("All {} entities inside are hidden in the editor's view. Click to show them.", Total)
+                               : nHidden    ? std::format("{} of {} entities inside are hidden in the editor's view. Click to hide all of them.", nHidden, Total)
+                               :              std::format("Drawn. Click to hide the {} entities inside in the editor's view.", Total);
+        ImGui::TableSetColumnIndex(kLevelTreeColumnVisible);
+        if (RenderLevelTreeToggleCell("##FolderVisible", bAllHidden ? "\xEE\xB4\x9A" : "\xEE\x9E\xB3", bAllHidden ? Dim : nHidden ? Amber : Normal, VisibleTip.c_str()))
+            SetEditorTag(Ed, GameMgr, Inside, NoDrawGuid, !bAllHidden, bAllHidden ? "Show folder" : "Hide folder");
+    }
+
+    // The row of a Scene or of the Level: there is no toggle (a scene or a level is not switched off this way), only the amber that says something inside is.
+    inline void RenderLevelTreeContainerMarkers(std::uint64_t Key, bool bAnyDisabled, bool bAnyHidden, const char* pWhat) noexcept
+    {
+        constexpr ImU32 Amber = IM_COL32(240, 180, 60, 255);
+        ImGui::PushID(static_cast<int>(Key & 0x7FFFFFFF));
+        if (bAnyDisabled)
+        {
+            ImGui::TableSetColumnIndex(kLevelTreeColumnEnabled);
+            (void)RenderLevelTreeToggleCell("##ContainerEnabled", "\xEE\x9F\xA8", Amber, std::format("Something in this {} is disabled in the editor.", pWhat).c_str());
+        }
+        if (bAnyHidden)
+        {
+            ImGui::TableSetColumnIndex(kLevelTreeColumnVisible);
+            (void)RenderLevelTreeToggleCell("##ContainerVisible", "\xEE\x9E\xB3", Amber, std::format("Something in this {} is hidden in the editor's view.", pWhat).c_str());
+        }
+        ImGui::PopID();
     }
 
     // The header row of the tree. Narrow columns have only an icon (what it is, and how many entities it is on, is the hint of the header); the icon takes a color while the editor has anything disabled
@@ -661,6 +747,7 @@ namespace xlevel
                     // neutralizes ImGui's own indent-into-column-0 table quirk, see that helper's own
                     // comment.
                     RenderLevelTreeSourceControlBadgeColumn(xresource::full_guid{ State.m_CurrentLevel.m_Instance, State.m_CurrentLevel.m_Type });
+                    RenderLevelTreeContainerMarkers(State.m_CurrentLevel.m_Instance.m_Value, State.m_EditorDisabledCount > 0, State.m_EditorHiddenCount > 0, "Level");
                     if (!bLevelOpen) State.m_TreeExpandedScenes.clear();               // its Scene rows are not drawn: none of them is showing expanded
 
                     if (bLevelOpen)
@@ -819,6 +906,11 @@ namespace xlevel
                             // The old "Remove" button (column 2) is gone - "Remove Scene" above
                             // (the row's own right-click context menu) already does the same thing.
                             RenderLevelTreeSourceControlBadgeColumn(xresource::full_guid{ SceneGuid.m_Instance, SceneGuid.m_Type });
+                            {
+                                const auto FlagsIt = State.m_EditorSceneFlags.find(SceneGuid.m_Instance.m_Value);
+                                const std::uint8_t Flags = FlagsIt == State.m_EditorSceneFlags.end() ? 0 : FlagsIt->second;
+                                RenderLevelTreeContainerMarkers(SceneGuid.m_Instance.m_Value, (Flags & 1) != 0, (Flags & 2) != 0, "Scene");
+                            }
 
                             if (bSceneExpanded)
                             {
@@ -1240,6 +1332,7 @@ namespace xlevel
                                                 // inside its owning Scene's single file, so it shows
                                                 // that scene's own badge too.
                                                 RenderLevelTreeSourceControlBadgeColumn(xresource::full_guid{ SceneGuid.m_Instance, SceneGuid.m_Type });
+                                                RenderLevelTreeFolderToggles(Ed, GameMgr, SceneGuid, *pScene, FolderId);
 
                                                 if (bFolderOpen)
                                                 {
