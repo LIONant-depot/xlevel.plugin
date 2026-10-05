@@ -91,6 +91,18 @@ namespace xlevel
     // event they handle: the event is a node (what it tells and when is its tooltip, the number of handlers is beside its name), and each handler is a row under it that says, like any system,
     // what it reads and writes when hovered, and where it is defined. An event nobody handles is listed too (it is there to be handled).
     //---------------------------------------------------------------------------
+    // The header of a section (Event handlers, Notifiers, Builders): the grey of the theme's buttons, not the blue of a selection - a section is not selected. Only the header has it: what is inside keeps the
+    // colors of the theme.
+    inline bool RenderSystemRegistrySectionHeader(const std::string& Label) noexcept
+    {
+        ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0x58 / 255.0f, 0x58 / 255.0f, 0x58 / 255.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0x66 / 255.0f, 0x66 / 255.0f, 0x66 / 255.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0x72 / 255.0f, 0x72 / 255.0f, 0x72 / 255.0f, 1.0f));
+        const bool bOpen = ImGui::CollapsingHeader(Label.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        ImGui::PopStyleColor(3);
+        return bOpen;
+    }
+
     inline void RenderEventHandlers(xecs::game_mgr::instance& GameMgr, const xscene::component_display& Display, const std::vector<xscene::system_usage::event_group>& Groups) noexcept
     {
         ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 8.0f);
@@ -512,15 +524,15 @@ namespace xlevel
                 {
                     std::size_t nHandlers = 0;
                     for (auto& G : EventGroups) nHandlers += G.m_Handlers.size();
-                    if (ImGui::CollapsingHeader(std::format("Event handlers ({})##EventHandlersHeader", nHandlers).c_str(), ImGuiTreeNodeFlags_DefaultOpen)) RenderEventHandlers(GameMgr, Display, EventGroups);
+                    if (RenderSystemRegistrySectionHeader(std::format("Event handlers ({})##EventHandlersHeader", nHandlers))) RenderEventHandlers(GameMgr, Display, EventGroups);
                     if (ImGui::IsItemHovered()) xeditor::hint::Text("Systems that run when something happens (the physics tells that a shape touched a sensor, ...), not every frame");
                 }
                 if (bHasNotifiers)
                 {
-                    if (ImGui::CollapsingHeader(std::format("Notifiers ({})##NotifiersHeader", nNotifiers).c_str(), ImGuiTreeNodeFlags_DefaultOpen)) RenderNotifiers(GameMgr, Display);
+                    if (RenderSystemRegistrySectionHeader(std::format("Notifiers ({})##NotifiersHeader", nNotifiers))) RenderNotifiers(GameMgr, Display);
                     if (ImGui::IsItemHovered()) xeditor::hint::Text("Systems that run when an entity is created (what initializes it), destroyed, moved or changed - for the entities they match");
                 }
-                if (bHasBuilders && ImGui::CollapsingHeader(std::format("Builders ({})##BuildersHeader", GameMgr.m_SystemMgr.m_BuilderSystems.size()).c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+                if (bHasBuilders && RenderSystemRegistrySectionHeader(std::format("Builders ({})##BuildersHeader", GameMgr.m_SystemMgr.m_BuilderSystems.size())))
                 {
                     for (auto& Builder : GameMgr.m_SystemMgr.m_BuilderSystems)
                     {
