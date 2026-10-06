@@ -64,6 +64,12 @@ namespace xlevel
                 xeditor::NotifyToast(std::format("Failed to save Level: {}", Err.getMessage()));
         }
 
+        // The system registry of the Level's game (what is placed where, the order, what is enabled) is part of the Level: its edits are in the undo history and are written with it. (Not while
+        // playing: what a play session changes is reverted on Stop.)
+        if (!State.isPlaying())
+            if (auto Err = GameMgr.m_SystemMgr.Save(); Err)
+                xeditor::NotifyToast(std::format("Failed to save System Registry order: {}", Err.getMessage()));
+
         for (auto& SceneGuid : State.m_OpenScenes)
         {
             if (pEd && IsSceneLockedByOther(*pEd, SceneGuid)) continue;     // another editor owns it

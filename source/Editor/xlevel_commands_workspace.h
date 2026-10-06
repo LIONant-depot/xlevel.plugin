@@ -261,12 +261,21 @@ namespace xlevel::commands
             for (auto& S : xscene::system_usage::AllSystems(World(), false))
             {
                 const bool bEvent = !S.m_bUpdate && (S.m_pInfo->m_ID == xecs::system::type::id::GLOBAL_EVENT || S.m_pInfo->m_ID == xecs::system::type::id::SYSTEM_EVENT);     // ListEventHandlers says what it handles
-                Out += std::format("{}  [{}{}]\n", xscene::system_usage::SystemName(S),
-                                   S.m_bUpdate ? std::format("update #{}", S.m_Order) : std::string(bEvent ? "event handler" : "notifier"), S.m_bEnabled ? "" : ", DISABLED");
+                const bool bNotPlaced = S.m_bUpdate && !World().m_SystemMgr.IsUpdateSystemPlaced(S.m_pInfo->m_Guid);
+                Out += std::format("{}  [{}{}{}]\n", xscene::system_usage::SystemName(S),
+                                   S.m_bUpdate ? std::format("update #{}", S.m_Order) : std::string(bEvent ? "event handler" : "notifier"), bNotPlaced ? ", NOT PLACED (does not run)" : "", S.m_bEnabled ? "" : ", DISABLED");
+                if (S.m_bUpdate) if (const auto Needs = ConstraintNames(World().m_SystemMgr.GetUpdateSystemConstraints(S.m_pInfo->m_Guid)); !Needs.empty()) Out += std::format("    needs: {}\n", Needs);
                 Out += xscene::system_usage::DescribeDeclaration(*S.m_pInfo, "    ");
             }
             if (!Out.empty()) Out += HierarchyText(World());
             return Out.empty() ? std::string("No systems registered.") : Out;
+        }
+
+        static std::string ConstraintNames(std::span<const xecs::system::constraint::info> Constraints) noexcept
+        {
+            std::string Out;
+            for (auto& C : Constraints) { if (!Out.empty()) Out += ", "; Out += C.m_pName; }
+            return Out;
         }
 
         // Who runs when: the update systems that run at the top level in order, and under each connector of a system the systems connected to it.
@@ -274,12 +283,12 @@ namespace xlevel::commands
         {
             for (auto& Row : Rows)
             {
-                if (Row.m_ParentGuid != Parent || (!Parent.empty() && Row.m_ParentConnector != Connector)) continue;
+                if (!Row.m_bPlaced || Row.m_ParentGuid != Parent || (!Parent.empty() && Row.m_ParentConnector != Connector)) continue;
                 Out += std::format("{:{}}{}{}\n", "", Depth * 2, Row.m_pName, Row.m_bEnabled ? "" : "  (DISABLED)");
                 int c = 0;
                 for (auto& C : GameMgr.m_SystemMgr.GetConnectors(Row.m_Guid))
                 {
-                    Out += std::format("{:{}}[{}] {}\n", "", Depth * 2 + 2, C.m_pName, C.m_pDescription);
+                    Out += std::format("{:{}}[{}] {}{}\n", "", Depth * 2 + 2, C.m_pName, C.m_pDescription, C.m_Provides.empty() ? std::string() : std::format("  (gives: {})", ConstraintNames(C.m_Provides)));
                     TreeText(GameMgr, Rows, Row.m_Guid, c, Depth + 2, Out);
                     ++c;
                 }
@@ -288,7 +297,12 @@ namespace xlevel::commands
         static std::string HierarchyText(xecs::game_mgr::instance& GameMgr) noexcept
         {
             std::string Out = "\nHierarchy (top level in order; a connector is shown in brackets with the systems connected to it):\n";
-            TreeText(GameMgr, GameMgr.m_SystemMgr.GetUpdateSystemRows(), xecs::system::type::guid{}, -1, 1, Out);
+            const auto Rows = GameMgr.m_SystemMgr.GetUpdateSystemRows();
+            TreeText(GameMgr, Rows, xecs::system::type::guid{}, -1, 1, Out);
+            std::string Available;
+            for (auto& Row : Rows)
+                if (!Row.m_bPlaced) Available += std::format("  {}{}\n", Row.m_pName, Row.m_Requires.empty() ? std::string() : std::format("  (needs: {})", ConstraintNames(Row.m_Requires)));
+            if (!Available.empty()) Out += "\nAvailable (not placed: they do not run until they are placed at the top level or in a connector that gives what they need):\n" + Available;
             return Out;
         }
     };
@@ -322,49 +336,56 @@ namespace xlevel::commands
     };
 
     //================================================================================================
-    // SetSystemParent - connects an update system to a connector of another (or back to the top level), SaveSystemOrder writes the
-    // order and the connections to Project.config\SystemOrder.config.txt (what the System Registry's Save does). View/config state: not undoable.
+    // The edits of the System Registry: SetSystemParent (place a system at the top level or in a connector, last among its siblings), UnplaceSystem (take it out of the graph, what is connected
+    // under it with it), MoveSystem (take the place of another system) and SetSystemEnabled. They are what the panel's drag and drop and its checkboxes run, and what an AI runs: the same
+    // commands, all undoable. A system is named as ListSystems names it, or by its guid in hex. They are edits of the Level like any other: unsaved until the Level is saved (Save, Save All, Play
+    // write the registry to Project.config\SystemOrder.config.txt with it), and a play session reverts them on Stop. The undo of each puts back a snapshot of the whole registry (the order, what
+    // is enabled, the graph), which is what makes a change that moves several systems (the ones under a system that is taken out) one step.
     //================================================================================================
-    struct set_system_parent_cmd : level_query_command
+    struct system_registry_command : level_command
     {
-        set_system_parent_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "SetSystemParent", pDataBase) { RegisterArguments(); }
-        const char* getCommandHelp() const noexcept override { return "Connects an update system to a connector of another system, or back to the top level. Usage: SetSystemParent -System name [-Parent name -Connector name]"; }
-        void RegisterArguments() noexcept override
-        {
-            m_hSystem    = m_Parser.addOption("System",    "The system to connect (its name, as ListSystems shows it)", true,  1);
-            m_hParent    = m_Parser.addOption("Parent",    "The system that has the connector; leave out for the top level", false, 1);
-            m_hConnector = m_Parser.addOption("Connector", "The name of the connector of the parent",                        false, 1);
-        }
-        std::string Query() noexcept override
-        {
-            auto& GameMgr = World();
-            const auto Rows = GameMgr.m_SystemMgr.GetUpdateSystemRows();
-            auto Find = [&](const std::string& Name) -> const xecs::system::update_system_row*
-            {
-                for (auto& R : Rows) if (Name == R.m_pName) return &R;
-                return nullptr;
-            };
+        system_registry_command(xundo::system& System, const char* pName, void* pDataBase) noexcept : level_command(System, pName, pDataBase) {}
 
-            std::string Child, Parent, Connector;
-            if (!Arg(m_hSystem, Child)) return "SetSystemParent: -System is required";
-            const auto* pChild = Find(Child);
-            if (!pChild) return std::format("SetSystemParent: no update system called '{}'", Child);
-
-            if (!Arg(m_hParent, Parent))
+        void BackupCurrenState(xundo::undo_file& File) noexcept override
+        {
+            const auto Rows = World().m_SystemMgr.GetUpdateSystemRows();
+            File.Write(static_cast<std::uint32_t>(Rows.size()));
+            for (auto& R : Rows)
             {
-                GameMgr.m_SystemMgr.SetUpdateSystemParent(pChild->m_Guid, xecs::system::type::guid{}, -1);
-                return "SetSystemParent: done";
+                File.Write(static_cast<std::uint64_t>(R.m_Guid.m_Value));
+                File.Write(static_cast<std::uint64_t>(R.m_ParentGuid.m_Value));
+                File.Write(static_cast<std::int32_t>(R.m_ParentConnector));
+                File.Write(static_cast<std::uint8_t>(R.m_bEnabled ? 1 : 0));
+                File.Write(static_cast<std::uint8_t>(R.m_bPlaced ? 1 : 0));
             }
-            const auto* pParent = Find(Parent);
-            if (!pParent) return std::format("SetSystemParent: no update system called '{}'", Parent);
-            Arg(m_hConnector, Connector);
-
-            int Index = -1, c = 0;
-            for (auto& C : GameMgr.m_SystemMgr.GetConnectors(pParent->m_Guid)) { if (Connector == C.m_pName) Index = c; ++c; }
-            if (Index < 0) return std::format("SetSystemParent: '{}' has no connector called '{}'", Parent, Connector);
-            if (!GameMgr.m_SystemMgr.SetUpdateSystemParent(pChild->m_Guid, pParent->m_Guid, Index)) return "SetSystemParent: refused (a system cannot be connected under itself)";
-            return "SetSystemParent: done";
         }
+
+        void Undo(xundo::undo_file& File) noexcept override
+        {
+            std::uint32_t Count = 0; File.Read(Count);
+            std::vector<xecs::system::update_system_row> Rows;
+            Rows.reserve(Count);
+            for (std::uint32_t i = 0; i < Count; ++i)
+            {
+                std::uint64_t Guid = 0, Parent = 0; std::int32_t Connector = -1; std::uint8_t bEnabled = 0, bPlaced = 0;
+                File.Read(Guid); File.Read(Parent); File.Read(Connector); File.Read(bEnabled); File.Read(bPlaced);
+                Rows.push_back(xecs::system::update_system_row{ .m_Guid = xecs::system::type::guid{ Guid }, .m_pName = nullptr, .m_bEnabled = bEnabled != 0
+                                                              , .m_ParentGuid = xecs::system::type::guid{ Parent }, .m_ParentConnector = Connector, .m_bPlaced = bPlaced != 0 });
+            }
+            World().m_SystemMgr.ApplyUpdateSystemRows(Rows);
+        }
+
+        // The system called Text (as ListSystems shows it), or the one with that guid in hex.
+        static const xecs::system::update_system_row* Find(const std::vector<xecs::system::update_system_row>& Rows, const std::string& Text) noexcept
+        {
+            for (auto& R : Rows) if (R.m_pName && Text == R.m_pName) return &R;
+            char* pEnd = nullptr;
+            const auto Value = std::strtoull(Text.c_str(), &pEnd, 16);
+            if (!Text.empty() && pEnd && *pEnd == 0)
+                for (auto& R : Rows) if (R.m_Guid.m_Value == Value) return &R;
+            return nullptr;
+        }
+
         bool Arg(xcmdline::parser::handle Handle, std::string& Out) noexcept
         {
             auto A = m_Parser.getOptionArgAs<std::string>(Handle, 0);
@@ -372,7 +393,113 @@ namespace xlevel::commands
             Out = std::get<std::string>(A);
             return true;
         }
+    };
+
+    struct set_system_parent_cmd : system_registry_command
+    {
+        set_system_parent_cmd(xundo::system& System, void* pDataBase) noexcept : system_registry_command(System, "SetSystemParent", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Places an update system at the top level of the frame, or in a connector of another system (last among the systems there); a place that does not give what the system needs refuses it (undoable). Usage: SetSystemParent -System name [-Parent name -Connector name]"; }
+        void RegisterArguments() noexcept override
+        {
+            m_hSystem    = m_Parser.addOption("System",    "The system to place (its name, as ListSystems shows it, or its guid in hex)", true,  1);
+            m_hParent    = m_Parser.addOption("Parent",    "The system that has the connector; leave out for the top level", false, 1);
+            m_hConnector = m_Parser.addOption("Connector", "The name of the connector of the parent",                        false, 1);
+        }
+        std::string Redo() noexcept override
+        {
+            auto& Mgr = World().m_SystemMgr;
+            const auto Rows = Mgr.GetUpdateSystemRows();
+
+            std::string Child, Parent, Connector, Why;
+            if (!Arg(m_hSystem, Child)) return "SetSystemParent: -System is required";
+            const auto* pChild = Find(Rows, Child);
+            if (!pChild) return std::format("SetSystemParent: no update system called '{}'", Child);
+
+            if (!Arg(m_hParent, Parent))
+            {
+                if (!Mgr.CanPlaceUpdateSystem(pChild->m_Guid, xecs::system::type::guid{}, -1, &Why)) return "SetSystemParent: refused (" + Why + ")";
+                Mgr.SetUpdateSystemParent(pChild->m_Guid, xecs::system::type::guid{}, -1);
+                return {};
+            }
+            const auto* pParent = Find(Rows, Parent);
+            if (!pParent) return std::format("SetSystemParent: no update system called '{}'", Parent);
+            Arg(m_hConnector, Connector);
+
+            int Index = -1, c = 0;
+            for (auto& C : Mgr.GetConnectors(pParent->m_Guid)) { if (Connector == C.m_pName) Index = c; ++c; }
+            if (Index < 0) return std::format("SetSystemParent: '{}' has no connector called '{}'", Parent, Connector);
+            if (!Mgr.CanPlaceUpdateSystem(pChild->m_Guid, pParent->m_Guid, Index, &Why)) return "SetSystemParent: refused (" + Why + ")";
+            Mgr.SetUpdateSystemParent(pChild->m_Guid, pParent->m_Guid, Index);
+            return {};
+        }
         xcmdline::parser::handle m_hSystem, m_hParent, m_hConnector;
+    };
+
+    struct unplace_system_cmd : system_registry_command
+    {
+        unplace_system_cmd(xundo::system& System, void* pDataBase) noexcept : system_registry_command(System, "UnplaceSystem", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Takes an update system out of the graph (what is connected under it too): it does not run until it is placed again with SetSystemParent (undoable). Usage: UnplaceSystem -System name"; }
+        void RegisterArguments() noexcept override { m_hSystem = m_Parser.addOption("System", "The system (its name, as ListSystems shows it, or its guid in hex)", true, 1); }
+        std::string Redo() noexcept override
+        {
+            std::string Name;
+            if (!Arg(m_hSystem, Name)) return "UnplaceSystem: -System is required";
+            auto& Mgr = World().m_SystemMgr;
+            const auto Rows = Mgr.GetUpdateSystemRows();
+            const auto* pSystem = Find(Rows, Name);
+            if (!pSystem) return std::format("UnplaceSystem: no update system called '{}'", Name);
+            Mgr.UnplaceUpdateSystem(pSystem->m_Guid);
+            return {};
+        }
+        xcmdline::parser::handle m_hSystem;
+    };
+
+    struct move_system_cmd : system_registry_command
+    {
+        move_system_cmd(xundo::system& System, void* pDataBase) noexcept : system_registry_command(System, "MoveSystem", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "A system takes the place of another that is placed: the same connector (or the top level) when that place gives what it needs, and its position among the systems there (undoable). Usage: MoveSystem -System name -To name"; }
+        void RegisterArguments() noexcept override
+        {
+            m_hSystem = m_Parser.addOption("System", "The system to move (its name, as ListSystems shows it, or its guid in hex)", true, 1);
+            m_hTo     = m_Parser.addOption("To",     "The system whose place it takes",                                           true, 1);
+        }
+        std::string Redo() noexcept override
+        {
+            std::string Name, To;
+            if (!Arg(m_hSystem, Name) || !Arg(m_hTo, To)) return "MoveSystem: -System and -To are required";
+            auto& Mgr = World().m_SystemMgr;
+            const auto Rows = Mgr.GetUpdateSystemRows();
+            const auto* pSystem = Find(Rows, Name);
+            const auto* pTarget = Find(Rows, To);
+            if (!pSystem) return std::format("MoveSystem: no update system called '{}'", Name);
+            if (!pTarget) return std::format("MoveSystem: no update system called '{}'", To);
+            if (!Mgr.DropUpdateSystemOn(pSystem->m_Guid, pTarget->m_Guid)) return "MoveSystem: refused (the place of that system is not placed, or does not give what this one needs)";
+            return {};
+        }
+        xcmdline::parser::handle m_hSystem, m_hTo;
+    };
+
+    struct set_system_enabled_cmd : system_registry_command
+    {
+        set_system_enabled_cmd(xundo::system& System, void* pDataBase) noexcept : system_registry_command(System, "SetSystemEnabled", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Enables or disables an update system (a disabled one is placed but does not run; undoable). Usage: SetSystemEnabled -System name -Enabled 0|1"; }
+        void RegisterArguments() noexcept override
+        {
+            m_hSystem  = m_Parser.addOption("System",  "The system (its name, as ListSystems shows it, or its guid in hex)", true, 1);
+            m_hEnabled = m_Parser.addOption("Enabled", "1 to enable it, 0 to disable it",                                    true, 1);
+        }
+        std::string Redo() noexcept override
+        {
+            std::string Name, Enabled;
+            if (!Arg(m_hSystem, Name) || !Arg(m_hEnabled, Enabled)) return "SetSystemEnabled: -System and -Enabled are required";
+            auto& Mgr = World().m_SystemMgr;
+            const auto Rows = Mgr.GetUpdateSystemRows();
+            const auto* pSystem = Find(Rows, Name);
+            if (!pSystem) return std::format("SetSystemEnabled: no update system called '{}'", Name);
+            Mgr.SetUpdateSystemEnabled(pSystem->m_Guid, Enabled != "0");
+            return {};
+        }
+        xcmdline::parser::handle m_hSystem, m_hEnabled;
     };
 
     struct save_system_order_cmd : level_query_command

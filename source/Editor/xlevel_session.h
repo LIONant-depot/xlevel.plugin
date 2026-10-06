@@ -1483,7 +1483,7 @@ namespace xlevel
                 else                                                            xscene::RenderEntityPropertiesPanel(m_CmdContext, m_Names.m_Inspector, m_EntityInspector, m_InspectorBridge, bSelectedLocked, ReadOnlyReason.c_str());
 
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
-                xlevel::RenderSystemRegistryPanel(*m_pGameMgr, m_State, m_GamePlugin.m_Display, m_Names.m_SystemRegistry);
+                xlevel::RenderSystemRegistryPanel(*m_pGameMgr, m_State, m_Undo, m_GamePlugin.m_Display, m_Names.m_SystemRegistry);
 
                 ImGui::SetNextWindowPos(ImVec2(250.0f, 90.0f), ImGuiCond_FirstUseEver);
                 ImGui::SetNextWindowSize(ImVec2(1050.0f, 480.0f), ImGuiCond_FirstUseEver);
