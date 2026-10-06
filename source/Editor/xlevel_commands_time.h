@@ -37,14 +37,14 @@ namespace xlevel::commands
     {
         level_context* m_pEd;
         get_time_scale_cmd(xundo::system& System, level_context* pEd) noexcept : query_command_base(System, "GetTimeScale", nullptr), m_pEd(pEd) {}
-        const char* getCommandHelp() const noexcept override { return "The time of the game: multiplier, game time, frames and fixed steps computed. Usage: GetTimeScale"; }
+        const char* getCommandHelp() const noexcept override { return "The time of the game: multiplier, game time, frames and fixed steps computed, and how far between the last two fixed steps the frame is (fixed interpolate). Usage: GetTimeScale"; }
         void RegisterArguments() noexcept override {}
         std::string Query() noexcept override
         {
             if (!m_pEd || !m_pEd->m_pGame) return "GetTimeScale: this Level has no game";
             const auto& T = m_pEd->m_pGame->m_Time;
-            return std::format("scale: {:.3f}\npaused: {}\ntime: {:.3f}\nfixed time: {:.3f}\nframes computed: {}\nfixed steps computed: {}\n"
-                , T.m_TimeScale, T.m_bPaused ? "true" : "false", T.m_Time, T.m_FixedTime, T.m_FramesComputed, T.m_FixedStepsComputed);
+            return std::format("scale: {:.3f}\npaused: {}\ntime: {:.3f}\nfixed time: {:.3f}\nframes computed: {}\nfixed steps computed: {}\nfixed interpolate: {:.4f}\n"
+                , T.m_TimeScale, T.m_bPaused ? "true" : "false", T.m_Time, T.m_FixedTime, T.m_FramesComputed, T.m_FixedStepsComputed, T.m_FixedInterpolate);
         }
     };
 }
