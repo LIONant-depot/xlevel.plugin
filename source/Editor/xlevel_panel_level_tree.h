@@ -1184,6 +1184,13 @@ namespace xlevel
                                                 ImGui::Separator();
                                                 if (ImGui::MenuItem("Delete Entity", xeditor::ShortcutText("Level/Entity/Delete").c_str())) DoDeleteEntity();
                                                 ImGui::EndDisabled();
+                                                // The prefab of an instance opens in its own editor, placed where the instance is, with this Level around it (prefabs_plan.md, phase 7).
+                                                if (pPI && !pScene->m_InstanceMembers.contains(Id))
+                                                {
+                                                    if (ImGui::MenuItem("Edit in Context", nullptr, false, !State.isPlaying() && !State.isPrefabEditor()))
+                                                        QueueLevelCommand(&Ed, std::format("EditInContext -Scene {} -Id {}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(Id)));
+                                                    if (ImGui::IsItemHovered()) xeditor::hint::Text("Opens the prefab of this instance in its own editor, placed where the instance is, with the Level around it (faded, not pickable). Save brings every instance up to date.");
+                                                }
                                                 ImGui::Separator();
                                                 // Single-file revert of exactly the resource this row's
                                                 // own badge represents (the Prefab, if this is a prefab-

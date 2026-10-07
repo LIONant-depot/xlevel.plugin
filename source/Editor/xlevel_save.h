@@ -97,7 +97,8 @@ namespace xlevel
                     bAllSaved = false;
                     continue;
                 }
-            if (auto Err = xlioncore::Ecs(GameMgr).SaveScene(SceneGuid); Err)
+            // Editing in context: the document's root is where the instance is, the prefab's own root is what is written (WithRootAsSaved).
+            if (auto Err = WithRootAsSaved(GameMgr, State, [&] { return xlioncore::Ecs(GameMgr).SaveScene(SceneGuid); }); Err)
             {
                 bAllSaved = false;
                 xeditor::NotifyToast(std::format("{}: {}", State.isPrefabEditor() && SceneGuid == State.PrefabScene() ? "Failed to save the Prefab" : "Failed to save Scene", Err.getMessage()));

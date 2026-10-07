@@ -263,7 +263,7 @@ namespace xlevel
     // The prefab and the context scenes of its editor (the prefab is read as the scene of its guid: its ComponentDeps.txt is the prefab's).
     inline level_game_status StatusOfPrefabGame( std::uint64_t Prefab, const std::vector<std::uint64_t>& Scenes ) noexcept
     {
-        return StatusOfGameOf(ReadPrefabGame(ProjectRoot().wstring(), Prefab), Scenes, /*bPrefab*/ true);
+        return StatusOfGameOf(GameOfPrefab(Prefab), Scenes, /*bPrefab*/ true);
     }
 
     // The modules a Game resource lists (read from its Descriptor.txt: the Game does not have to be the project's, or loaded). Empty and false when the Game is not in the project.

@@ -9,6 +9,7 @@
 #include "plugins/xgame.plugin/source/Module/xgame_descriptor.h"
 #include "plugins/xscript_module.plugin/source/Module/xscript_module_files.h"
 
+#include "plugins/xlevel.plugin/source/Editor/xlevel_context.h"
 #include <chrono>
 #include <fstream>
 #include <thread>
@@ -84,7 +85,13 @@ namespace xlevel
         if (auto Err = D.Serialize(true, PrefabFolder(Project, Prefab) + L"/Descriptor.txt", Context); Err) return 0;
         return D.m_Game.m_Instance.m_Value;
     }
-    inline std::uint64_t GameOfPrefab( std::uint64_t Prefab ) noexcept { return ReadPrefabGame(ProjectRoot().wstring(), Prefab); }
+    // A prefab opened in context of a Level (Edit in Context, prefabs_plan.md phase 7) works under the Level's Game, so that the Level around it loads whole (the modules of its scenes are there): the Game
+    // the editor of that prefab is opened with, until it closes. Nothing is written: the prefab keeps naming the Game it names.
+    inline std::uint64_t GameOfPrefab( std::uint64_t Prefab ) noexcept
+    {
+        if (const auto It = g_PrefabGameOverride.find(Prefab); It != g_PrefabGameOverride.end()) return It->second;
+        return ReadPrefabGame(ProjectRoot().wstring(), Prefab);
+    }
 
     // The Game of the Level or the prefab a Level editor is opened for.
     inline std::uint64_t GameOfDocument( xresource::full_guid Guid ) noexcept

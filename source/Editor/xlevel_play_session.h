@@ -92,6 +92,13 @@ namespace xlevel
         if (pGate && pGate->m_IsBuilding(Ed))        return "Play: a build is already in flight";
         if (State.m_PlayState == play_state::Paused)  { RequestResume(State); return "Resumed"; }
 
+        // A prefab edited in context of a Level is drawn where its instance is, over the Level: Play would show the Level with its own instance and the prefab again. Play the Level instead.
+        if (State.m_ContextEdit.m_bActive)
+        {
+            xeditor::NotifyToast(std::string("Play refused: ") + kWhyNotPlayInContext);
+            return std::string("Play: refused - ") + kWhyNotPlayInContext;
+        }
+
         // A Level whose Game does not list the modules its scenes need (or that names none) has nothing to run them with: an error, not a play session of half a world
         if (pGate && pGate->m_WhyNotPlay)
             if (auto Why = pGate->m_WhyNotPlay(State); !Why.empty())

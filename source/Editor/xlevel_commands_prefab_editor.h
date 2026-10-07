@@ -97,6 +97,107 @@ namespace xlevel::commands
     };
 
     //================================================================================================
+    // EditInContext - opens the prefab of an instance as the document of a Prefab Editor, placed where the instance is, with the Level's scenes as context (drawn faded, never picked, never
+    // saved); the instance itself is left out of the draw and the pick (its prefab is there in its place). Saving the prefab brings every instance of it up to date, this one included
+    // (live update). The Prefab Editor is a plain one in every other way; the context is the Level as it is saved. Usage: EditInContext -Scene hexguid -Id hexid
+    //================================================================================================
+    struct edit_in_context_query_cmd : level_query_command
+    {
+        edit_in_context_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "EditInContext", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override
+        {
+            return "Opens the prefab of an instance in a Prefab Editor, placed where the instance is, with the Level's scenes around it as context (faded, never picked or saved) and the instance itself left out. Save brings the instances up to date. Usage: EditInContext -Scene hexguid -Id hexid (the instance's root)";
+        }
+        void RegisterArguments() noexcept override
+        {
+            m_hScene = m_Parser.addOption("Scene", "Scene guid of the instance, 16 hex digits", true, 1);
+            m_hId    = m_Parser.addOption("Id",    "Permanent id of the instance's root, 8 or 16 hex digits", true, 1);
+        }
+
+        std::string Query() noexcept override
+        {
+            auto SceneArg = m_Parser.getOptionArgAs<std::string>(m_hScene, 0);
+            auto IdArg    = m_Parser.getOptionArgAs<std::string>(m_hId, 0);
+            if (std::holds_alternative<xerr>(SceneArg) || std::holds_alternative<xerr>(IdArg)) return "EditInContext: bad arguments";
+            const auto Scene = xscene::commands::ParseSceneGuid(std::get<std::string>(SceneArg));
+            const auto Id    = xscene::commands::ParseEntityId(std::get<std::string>(IdArg));
+
+            auto& Source = LevelContext();
+            if (State().isPlaying())        return "EditInContext: not while playing";
+            if (State().isPrefabEditor())   return "EditInContext: an instance inside a prefab is not edited in context yet";
+            const auto* pScene = World().m_SceneMgr.Find(Scene);
+            if (!pScene || !pScene->m_LocalToRuntime.contains(Id)) return "EditInContext: the instance was not found";
+            const auto* pPI = xscene::FindPrefabInstance(World(), pScene->m_LocalToRuntime.at(Id));
+            if (!pPI || pScene->m_InstanceMembers.contains(Id)) return "EditInContext: the entity is not the root of a prefab instance";
+
+            const auto Prefab = xresource::full_guid{ .m_Instance = pPI->m_PrefabInstance.m_Instance, .m_Type = xecs::prefab::type_guid_v };
+            for (auto* pOther : g_LevelContexts)
+                if (pOther->State().isPrefabEditor() && pOther->State().m_CurrentPrefab.m_Instance == Prefab.m_Instance)
+                    return "EditInContext: that prefab is already open in an editor (close it first)";
+            if (!g_OpenLevelSession) return "EditInContext: no editor available";
+
+            // The Level around the prefab needs its Game's modules to load whole: the editor of the prefab is opened under the Level's Game (not written into the prefab).
+            if (const auto Game = GameOfLevel(State().m_CurrentLevel.m_Instance.m_Value); Game) g_PrefabGameOverride[Prefab.m_Instance.m_Value] = Game;
+            const auto Reply = g_OpenLevelSession(Prefab);
+            level_context* pDoc = nullptr;
+            for (auto* pOther : g_LevelContexts)
+                if (pOther->State().isPrefabEditor() && pOther->State().m_CurrentPrefab.m_Instance == Prefab.m_Instance) pDoc = pOther;
+            if (!pDoc) { g_PrefabGameOverride.erase(Prefab.m_Instance.m_Value); return "EditInContext: " + Reply; }
+
+            std::string Note;
+            if (const auto Why = EnterContextEdit(*pDoc, Source, Scene, Id, Note); !Why.empty())
+            {
+                // No plain Prefab Editor under the Level's Game is left behind: the editor this command opened is closed again (nothing in it was edited).
+                pDoc->m_Undo.Query("Close -Save 0");
+                g_PrefabGameOverride.erase(Prefab.m_Instance.m_Value);
+                return std::format("EditInContext: {}", Why);
+            }
+            return std::format("EditInContext: ok, {} context scene(s){}{}", pDoc->State().m_ContextScenes.size(), Note.empty() ? "" : " - ", Note);
+        }
+        xcmdline::parser::handle m_hScene, m_hId;
+    };
+
+    //================================================================================================
+    // DescribeRoles - what each scene of this editor is in this session (document: picked, saved, undone; context: drawn faded, never picked) and what the render did with them last.
+    //================================================================================================
+    struct describe_roles_query_cmd : level_query_command
+    {
+        describe_roles_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "DescribeRoles", pDataBase) {}
+        const char* getCommandHelp() const noexcept override
+        {
+            return "Says the role of each scene of this editor (Document: picked, saved, in the undo; Context: drawn first and faded, never picked, edited or saved), how many entities are context or hidden, whether it is editing in context, and what the last draw did (DrawnContext=, DrawnDocument= items drawn, Faded=). Usage: DescribeRoles";
+        }
+        void RegisterArguments() noexcept override {}
+        std::string Query() noexcept override
+        {
+            auto&       Ctx   = LevelContext();
+            const auto& S     = State();
+            role_sets   Sets;
+            BuildRoleSets(World(), S, Sets);
+
+            const auto List = [](const std::vector<xecs::scene::guid>& Scenes)
+            {
+                std::string Out;
+                for (const auto& Scene : Scenes) Out += (Out.empty() ? "" : ",") + xscene::commands::FormatSceneGuid(Scene);
+                return Out;
+            };
+            std::string Out = "DescribeRoles: ok\n";
+            Out += std::format("Document={}\n", List(S.m_OpenScenes));
+            Out += std::format("Context={}\n", List(S.m_ContextScenes));
+            Out += std::format("ContextEntities={}\nHiddenEntities={}\n", Sets.m_Context.size(), Sets.m_Hidden.size());
+            Out += std::format("InContext={}\n", S.m_ContextEdit.m_bActive ? 1 : 0);
+            if (S.m_ContextEdit.m_bActive)
+            {
+                const auto& E = S.m_ContextEdit;
+                Out += std::format("Level={:016X}\nInstanceScene={}\nInstance={}\nPlaced={:.3f},{:.3f},{:.3f}\n", E.m_Level.m_Instance.m_Value, xscene::commands::FormatSceneGuid(E.m_Scene), xscene::commands::FormatEntityId(E.m_Root)
+                                 , E.m_Placed.m_Position.m_X, E.m_Placed.m_Position.m_Y, E.m_Placed.m_Position.m_Z);
+            }
+            if (Ctx.m_DescribeRoleDraw) Out += Ctx.m_DescribeRoleDraw();
+            return Out;
+        }
+    };
+
+    //================================================================================================
     // ReplacePrefabDocument - the prefab document of this Prefab Editor becomes what a folder holds (a prefab as it would be saved): one writer per prefab. When another editor
     // saves a prefab that is open here (Apply Overrides of one of its instances, in a Level), it does not write the file: it hands the saved state to this editor, which takes it
     // as this undoable step - so the change is visible, makes the document dirty, and can be undone before it is saved. Undo brings back the document as it was (a snapshot this

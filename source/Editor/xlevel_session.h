@@ -341,6 +341,10 @@ namespace xlevel
         // via xeditor_tools; the Level Editor never had a camera or a grid at all before this.
         xeditor_tools::camera                       m_Camera;
         xecs::scene::permanent_id                   m_CameraAimedAt = xecs::scene::invalid_permanent_id_v;     // the selection the camera last turned to look at
+        xmath::fvec3                                m_AimTarget     = {};                                      // a point the camera is to look at (Edit in Context: where the instance is), taken by the next frame of the viewport
+        bool                                        m_bAimPending   = false;
+        // The fade of the context scenes of a Prefab Editor (what the render puts over them): the color of the viewport's background, read when the frame is queued.
+        float                                       m_FadeColor[3]  = { 0.15f, 0.15f, 0.15f };
 
         // The camera turns to look at a new selection without moving: the eye stays where it is, the angles (and the distance to the orbit
         // point) glide from what they are to what looks at the entity.
@@ -599,7 +603,7 @@ namespace xlevel
             m_CmdContext.m_PickRay = [this](const xmath::fvec3& Origin, const xmath::fvec3& Dir) -> std::string
             {
                 if (!m_pRender) return "PickRay: this Level has no render module";
-                const auto Hit = m_pRender->Pick(m_pGameMgr.get(), Origin, Dir, std::numeric_limits<float>::max(), xlionrender::view::SCENE);
+                const auto Hit = PickWithRoles(Origin, Dir, std::numeric_limits<float>::max());
                 if (Hit != xecs::component::entity::invalid_entity_v)
                     for (auto& SceneGuid : m_State.m_OpenScenes)
                         if (auto* pScene = m_pGameMgr->m_SceneMgr.Find(SceneGuid))
@@ -613,6 +617,13 @@ namespace xlevel
                 const int Length = m_pRender ? m_pRender->DescribeTextDraw(Text, static_cast<int>(sizeof(Text))) : -1;
                 return Length < 0 ? std::string("DescribeTextDraw: this Level has no render module") : std::string(Text, static_cast<std::size_t>(Length));
             };
+            m_CmdContext.m_DescribeRoleDraw = [this]() -> std::string
+            {
+                char Text[256];
+                const int Length = m_pRender ? m_pRender->DescribeRoleDraw(Text, static_cast<int>(sizeof(Text))) : -1;
+                return Length < 0 ? std::string("DescribeRoleDraw: this Level has no render module") : std::string(Text, static_cast<std::size_t>(Length));
+            };
+            m_CmdContext.m_AimCamera = [this](const xmath::fvec3& Target) noexcept { m_AimTarget = Target; m_bAimPending = true; };
             m_CmdContext.m_DescribeText = [this](std::uint64_t Entity) -> std::string
             {
                 char Text[1024];
@@ -710,6 +721,7 @@ namespace xlevel
             m_pEcs->SetPrefabSaveRedirect(nullptr);        // the core keeps the pointer for the worlds it makes: not one into an editor that is going
             m_pEcs->DestroyWorld();
             xlevel::ReleasePrefabSnapshots(m_State);
+            if (m_State.isPrefabEditor()) xlevel::g_PrefabGameOverride.erase(m_State.m_CurrentPrefab.m_Instance.m_Value);        // (Edit in Context: the Game of the Level was this editor's only while it was open)
             m_Grid.Release();
 
             // The game module goes after the world (its systems live in it) and before the copy of the core it is bound to. A build still running is stopped rather than waited for.
@@ -947,6 +959,7 @@ namespace xlevel
                                                         : xlevel::StatusOfLevelGame(m_State.m_CurrentLevel.m_Instance.m_Value, Scenes);
                 m_State.m_WhyNotPlay = m_GameStatus.m_Issue;
             }
+            if (m_State.m_ContextEdit.m_bActive) m_State.m_WhyNotPlay = xlevel::kWhyNotPlayInContext;
         }
 
         static void CenterPlay(void* pUser) noexcept
@@ -1060,6 +1073,23 @@ namespace xlevel
             ImGui::PopStyleVar();
         }
 
+        // What the viewport draws and picks with the roles of this session (a Prefab Editor with context scenes: the context is drawn first and faded, and never picked; the instance edited in context is
+        // left out). With no context scene it is the plain Draw and Pick.
+        void DrawWithRoles(xgpu::cmd_buffer& CmdBuffer, const xmath::fmat4& W2C, float W, float H, const std::array<float, 3>& Fade) noexcept
+        {
+            role_sets Sets;
+            BuildRoleSets(*m_pGameMgr, m_State, Sets);
+            if (Sets.m_Context.empty()) { m_pRender->Draw(m_pGameMgr.get(), CmdBuffer, W2C, W, H, xlionrender::view::SCENE); return; }
+            m_pRender->DrawRoles(m_pGameMgr.get(), CmdBuffer, W2C, W, H, xlionrender::view::SCENE, Sets.Roles(Fade.data(), 0.65f));
+        }
+        std::uint64_t PickWithRoles(const xmath::fvec3& Origin, const xmath::fvec3& Dir, float MaxT) noexcept
+        {
+            role_sets Sets;
+            BuildRoleSets(*m_pGameMgr, m_State, Sets);
+            if (Sets.m_Context.empty()) return m_pRender->Pick(m_pGameMgr.get(), Origin, Dir, MaxT, xlionrender::view::SCENE);
+            return m_pRender->PickRoles(m_pGameMgr.get(), Origin, Dir, MaxT, xlionrender::view::SCENE, Sets.Roles(m_FadeColor, 0.65f));
+        }
+
         // The "Editor" window's 3D viewport body: camera + ground grid, shared with every other editor via
         // xeditor_tools. Runs inside RenderToolbarHost's own child window (the toolbar host's own comment
         // documents that its RenderBody callback already gets a dedicated child region), so
@@ -1091,6 +1121,7 @@ namespace xlevel
 
                 if (m_pRender) m_pRender->Init(*m_pDevice);
             }
+            if (m_bAimPending) { m_bAimPending = false; m_Camera.m_Target = m_AimTarget; m_CameraAimedAt = m_State.m_SelectedEntityId; }
 
             const ImVec2 Avail = ImGui::GetContentRegionAvail();
             const ImVec2 Min   = ImGui::GetCursorScreenPos();
@@ -1179,13 +1210,17 @@ namespace xlevel
 
             // The host's own turn, every frame (Stopped/Paused/Playing alike): Draw has LIONRender's own
             // system collect its entities (after GameMgr.Run() finished, when Playing) and issues the GPU commands.
-            xgpu::tools::imgui::AddCustomRenderCallback([this, Avail](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
+            {
+                const auto Bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);          // what the context fades to: the background of the viewport
+                m_FadeColor[0] = Bg.x; m_FadeColor[1] = Bg.y; m_FadeColor[2] = Bg.z;
+            }
+            xgpu::tools::imgui::AddCustomRenderCallback([this, Avail, Fade = std::array<float, 3>{ m_FadeColor[0], m_FadeColor[1], m_FadeColor[2] }](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
                 // Read at render time, so the click-to-pick further down this frame is already in. Every open Level draws its
                 // own world, with its own selection outlined.
                 if (!m_pRender) return;
                 m_pRender->SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
-                m_pRender->Draw(m_pGameMgr.get(), CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y, xlionrender::view::SCENE);     // the editor's viewport: the scene view
+                DrawWithRoles(CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y, Fade);     // the editor's viewport: the scene view
             });
 
             // Gizmo (Move/Rotate/Scale tools, m_SceneTool 1/2/3) - drives the primary selection's
@@ -1362,7 +1397,7 @@ namespace xlevel
                             const float GroundT = -Origin.m_Y / Dir.m_Y;
                             if (GroundT > 1.0e-6f) MaxT = GroundT;
                         }
-                        const auto Hit = m_pRender ? m_pRender->Pick(m_pGameMgr.get(), Origin, Dir, MaxT, xlionrender::view::SCENE) : xecs::component::entity::invalid_entity_v;
+                        const auto Hit = m_pRender ? PickWithRoles(Origin, Dir, MaxT) : xecs::component::entity::invalid_entity_v;
 
                         xecs::scene::guid          HitScene{};
                         xecs::scene::permanent_id  HitId = xecs::scene::invalid_permanent_id_v;

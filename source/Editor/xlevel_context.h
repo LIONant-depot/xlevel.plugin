@@ -1,5 +1,6 @@
 #pragma once
 #include "dependencies/xLIONCore/src/game/xlioncore_game.h"
+#include "dependencies/xLIONCore/src/transform/xlioncore_hierarchy.h"
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -18,6 +19,20 @@ namespace xlevel
         // Scenes brought in to test the prefab against: loaded, so they play with it; they are not in m_OpenScenes, so nothing of them is picked, saved or edited,
         // and they are no part of the prefab. Not kept between editors.
         std::vector<xecs::scene::guid> m_ContextScenes;
+        // Editing in context (prefabs_plan.md, phase 7): this Prefab Editor was opened from an instance in a Level ("Edit in Context"). The Level's scenes are its context scenes, the instance is
+        // not drawn nor picked (its prefab, the document, is in its place), and the document's root is placed where the instance is. The root's Transform in context is the instance's place: it is
+        // not the prefab's, so a save writes the root as the prefab holds it (m_AsSaved) and never the placement.
+        struct context_edit
+        {
+            bool                        m_bActive = false;
+            xecs::level::guid           m_Level;                                    // the Level the instance is in (its scenes are the context scenes)
+            xecs::scene::guid           m_Scene;                                    // the scene of the instance
+            xecs::scene::permanent_id   m_Root = xecs::scene::invalid_permanent_id_v;    // the instance's root in that scene
+            xlioncore::world_pose       m_Placed;                                   // where the instance is (its world pose)
+            xlioncore::transform        m_AsSaved;                                  // the document's root Transform as the prefab holds it (read when the document was loaded)
+        };
+        context_edit m_ContextEdit;
+
         // The folders this editor owns that hold a state of the prefab document (what an undo step of a change that came from another editor goes back to or forward to). Removed when it closes.
         std::vector<std::wstring>      m_PrefabSnapshots;
 
@@ -114,6 +129,13 @@ namespace xlevel
         bool                 m_bPendingStartGameReloadAfterOpen = false;
     };
 
+    // The Game a prefab editor works under while it is open in context of a Level (Edit in Context, prefabs_plan.md phase 7), by prefab guid: the Level's, so that the scenes around it load whole. In memory only
+    // (nothing is written into the prefab); read by GameOfPrefab, erased when the editor closes.
+    inline std::unordered_map<std::uint64_t, std::uint64_t> g_PrefabGameOverride;
+
+    // Why a prefab edited in context cannot be played (it is drawn over the Level's own instance).
+    inline constexpr const char* kWhyNotPlayInContext = "this prefab is open in context of a Level (it is placed over the Level's own instance): play the Level, or open the prefab on its own";
+
     struct game_plugin_state;
 
     // A Level editor's context: the scene context plus access to its Level state. The scene code only ever sees the base.
@@ -132,6 +154,8 @@ namespace xlevel
         std::function<std::string()> m_DescribeTextDraw;            // what the last draw of the Texts of this Level did (the render module says it)
         std::function<std::string(std::uint64_t)> m_DescribeText;   // the layout of the Text of an entity (raw runtime entity value), as the render module of this Level says it, set by its session
         std::function<std::filesystem::path()> m_GameSolution;   // the Visual Studio solution of this Level's game project (empty: not made yet), set by its session
+        std::function<void(const xmath::fvec3&)> m_AimCamera;     // the viewport's camera looks at a point (the orbit target), set by its session
+        std::function<std::string()> m_DescribeRoleDraw;          // what the last draw did with the roles (the context drawn, the document drawn, whether it was faded), as the render module says it, set by its session
         std::function<void()> m_EndGizmoDrag;                     // a drag of the gizmo in progress ends now (its undo step is written), set by its session: what a live update of prefab instances does first
     };
 
@@ -141,6 +165,12 @@ namespace xlevel
     inline level_context*              g_pActiveLevelContext = nullptr;
 
     inline level_context* FindLevelContext() noexcept { return g_pActiveLevelContext; }
+
+    // A command a panel wants run on an editor at a clean point of the frame (before anything draws): the ones that open another editor (Edit in Context) cannot run while the panels draw, since the new editor
+    // builds a whole world and is added to the list that is being drawn. The shell runs them once a frame (PumpLevels), for the editors that are still open.
+    struct pending_level_command { level_context* m_pEditor = nullptr; std::string m_Command; };
+    inline std::vector<pending_level_command> g_PendingLevelCommands;
+    inline void QueueLevelCommand(level_context* pEditor, std::string Command) noexcept { g_PendingLevelCommands.push_back({ pEditor, std::move(Command) }); }
 
     // The game module of the active Level (null when there is none): what the commands that name no Level, and the Play gate, act on. Set with the active context.
     inline game_plugin_state* g_pGamePlugin = nullptr;

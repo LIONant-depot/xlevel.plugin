@@ -6,6 +6,8 @@
 // the Level: the prefab is open as a scene of its own guid (xecs::scene::instance::m_bPrefabDocument, which makes the scene manager read and write the prefab's folder, as a prefab), in
 // State.m_OpenScenes like any scene - selection, the scene commands, the inspector, the gizmos, undo and Save are the ones of a scene. What this file adds is opening it, the scenes
 // brought in to test against (context scenes), and the snapshots of the document that one writer per prefab needs.
+#include "dependencies/xLIONRender/src/xlionrender_api.h"
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 
@@ -14,6 +16,48 @@ namespace xlevel
     inline xresource::full_guid PrefabResourceGuid(const level_state& State) noexcept
     {
         return xresource::full_guid{ State.m_CurrentPrefab.m_Instance, xecs::prefab::type_guid_v };
+    }
+
+    // ---- editing in context (prefabs_plan.md, phase 7): where the document's root is ----------------------------------------------------------------------------------------------------
+
+    // The Transform of the document's root (the one entity of the prefab with no parent); null when the document is not loaded.
+    inline xlioncore::transform* DocumentRootTransform(xecs::game_mgr::instance& GameMgr, const level_state& State) noexcept
+    {
+        auto&       Ecs    = xlioncore::Ecs(GameMgr);
+        const auto* pScene = GameMgr.m_SceneMgr.Find(State.PrefabScene());
+        if (!pScene) return nullptr;
+        for (const auto& [Id, Entity] : pScene->m_LocalToRuntime)
+            if (!Ecs.ParentOf(Entity)) return xlioncore::ComponentOf<xlioncore::transform>(Ecs, Entity);
+        return nullptr;
+    }
+
+    // Editing in context: the document has just been loaded (as the prefab holds it), so its root's Transform is what a save has to write (kept), and the root takes the place of the instance. Not an undo step and
+    // not a change: the document stays as clean as it was.
+    inline void PlaceDocumentRoot(xecs::game_mgr::instance& GameMgr, level_state& State) noexcept
+    {
+        auto& Edit = State.m_ContextEdit;
+        if (!Edit.m_bActive) return;
+        auto* pRoot = DocumentRootTransform(GameMgr, State);
+        if (!pRoot) return;
+        Edit.m_AsSaved       = *pRoot;
+        pRoot->m_Position    = Edit.m_Placed.m_Position;
+        pRoot->m_Rotation    = Edit.m_Placed.m_Rotation;
+        pRoot->m_Scale       = Edit.m_Placed.m_Scale;
+        pRoot->m_EditorRotation = Edit.m_Placed.m_Rotation.ToEuler();
+        pRoot->MarkDirtyToPhysics();
+    }
+
+    // Runs Fn (a write of the document: a save, a snapshot) with the root's Transform as the prefab holds it, then puts the placement back: where the instance is belongs to the Level, not to the prefab.
+    template<typename T_FN>
+    inline auto WithRootAsSaved(xecs::game_mgr::instance& GameMgr, const level_state& State, T_FN&& Fn) noexcept
+    {
+        auto* pRoot = State.m_ContextEdit.m_bActive ? DocumentRootTransform(GameMgr, State) : nullptr;
+        if (!pRoot) return Fn();
+        const xlioncore::transform Placed = *pRoot;
+        *pRoot = State.m_ContextEdit.m_AsSaved;
+        auto Result = Fn();
+        if (auto* pAgain = DocumentRootTransform(GameMgr, State)) *pAgain = Placed;         // (a save can spawn instances again: the pools may have moved)
+        return Result;
     }
 
     // Opens a prefab as this editor's document: the scene of its guid, loaded from the prefab's folder, and the context scenes again when there are some (the world was rebuilt). "" or why not.
@@ -33,6 +77,7 @@ namespace xlevel
         for (const auto& Context : State.m_ContextScenes)
             if (auto Err = Ecs.RequestLoadScene(Context); Err)
                 xeditor::NotifyToast(std::format("Failed to load the context scene {:016X}: {}", Context.m_Instance.m_Value, Err.getMessage()));
+        PlaceDocumentRoot(GameMgr, State);          // editing in context: the document is opened again (a Play rebuild, a game module reload): its root goes back to the instance's place
         return {};
     }
 
@@ -105,7 +150,7 @@ namespace xlevel
         auto& Ecs   = xlioncore::Ecs(GameMgr);
         auto& Scene = Ecs.FindOrCreateScene(State.PrefabScene());
         Scene.m_FolderOverride = Folder;
-        const auto Err = Ecs.SaveScene(State.PrefabScene());
+        const auto Err = WithRootAsSaved(GameMgr, State, [&] { return Ecs.SaveScene(State.PrefabScene()); });
         Scene.m_FolderOverride.clear();
         return Err;
     }
@@ -120,6 +165,7 @@ namespace xlevel
         const auto Err = Ecs.RequestLoadScene(State.PrefabScene());
         Scene.m_FolderOverride.clear();
         Scene.m_PendingChanges.clear();
+        PlaceDocumentRoot(GameMgr, State);          // editing in context: the root of what was read is what a save writes; the root goes to the instance's place
 
         State.m_SelectedEntity = {};
         if (State.m_SelectedEntityId != xecs::scene::invalid_permanent_id_v && State.m_SelectedEntityScene == State.PrefabScene())
@@ -151,6 +197,101 @@ namespace xlevel
     {
         for (auto* pOther : g_LevelContexts)
             if (&pOther->State() != pExcept) LiveUpdatePrefab(*pOther, Prefab, /*bFromFile*/ true);
+    }
+
+    // ---- the roles of the entities of an editing session (prefabs_plan.md 3.7, phase 7) -------------------------------------------------------------------------------------------------------
+
+    // Which entities of this editor's world are context (the ones of the context scenes: drawn first and faded, never picked) and which are hidden (the instance being edited in context: its prefab, the
+    // document, is drawn in its place), as the raw runtime values the render takes, sorted. Nothing while playing: a play session shows the game as it is. Built when asked (the entities of one frame's
+    // draw): a context of tens of thousands of entities is a sort of that many numbers - the day that costs, the render DLL can be told the scenes instead.
+    struct role_sets
+    {
+        std::vector<std::uint64_t> m_Context;
+        std::vector<std::uint64_t> m_Hidden;
+
+        xlionrender::roles Roles(const float* Fade, float Alpha) const noexcept
+        {
+            xlionrender::roles R;
+            R.m_pContext = m_Context.data(); R.m_nContext = static_cast<int>(m_Context.size());
+            R.m_pHidden  = m_Hidden.data();  R.m_nHidden  = static_cast<int>(m_Hidden.size());
+            R.m_FadeAlpha = Alpha;
+            for (int i = 0; i < 3; ++i) R.m_FadeColor[i] = Fade[i];
+            return R;
+        }
+    };
+
+    inline void BuildRoleSets(xecs::game_mgr::instance& GameMgr, const level_state& State, role_sets& Out) noexcept
+    {
+        Out.m_Context.clear();
+        Out.m_Hidden.clear();
+        if (State.m_ContextScenes.empty() || State.isPlaying()) return;
+
+        for (const auto& Scene : State.m_ContextScenes)
+            if (const auto* pScene = GameMgr.m_SceneMgr.Find(Scene))
+                for (const auto& [Value, Id] : pScene->m_RuntimeToLocal) Out.m_Context.push_back(Value);
+        std::sort(Out.m_Context.begin(), Out.m_Context.end());
+
+        // The instance and everything under it (its members, and what was added under them in the scene).
+        if (State.m_ContextEdit.m_bActive)
+            if (const auto* pScene = GameMgr.m_SceneMgr.Find(State.m_ContextEdit.m_Scene))
+                if (const auto It = pScene->m_LocalToRuntime.find(State.m_ContextEdit.m_Root); It != pScene->m_LocalToRuntime.end())
+                {
+                    auto&                                     Ecs = xlioncore::Ecs(GameMgr);
+                    std::vector<xecs::component::entity>      Stack{ It->second };
+                    while (!Stack.empty())
+                    {
+                        const auto Entity = Stack.back();
+                        Stack.pop_back();
+                        Out.m_Hidden.push_back(Entity.m_Value);
+                        if (const auto* pChildren = Ecs.ChildrenOf(Entity)) Stack.insert(Stack.end(), pChildren->m_List.begin(), pChildren->m_List.end());
+                    }
+                    std::sort(Out.m_Hidden.begin(), Out.m_Hidden.end());
+                }
+    }
+
+    // ---- Edit in Context (prefabs_plan.md, phase 7) ---------------------------------------------------------------------------------------------------------------------------------------
+
+    // Doc is a Prefab Editor that has just been opened on the prefab of the instance (Root, in Scene) of Source's Level: the Level's scenes become its context scenes (as the Level has them saved), the
+    // document's root goes where the instance is, and the instance is left out of the draw and the pick. "" or why not (the prefab editor stays open as a plain one in that case).
+    inline std::string EnterContextEdit(level_context& Doc, level_context& Source, xecs::scene::guid Scene, xecs::scene::permanent_id Root, std::string& Note) noexcept
+    {
+        auto& PS = Doc.State();
+        auto& SS = Source.State();
+        if (!PS.isPrefabEditor())                                   return "the editor opened is not a Prefab Editor";
+        if (PS.m_ContextEdit.m_bActive)                             return "that prefab is already open in context";
+        if (SS.isPrefabEditor())                                    return "an instance inside a prefab is not edited in context yet (open the prefab it is in, and the inner prefab from its own instance)";
+        if (SS.m_CurrentLevel.empty())                              return "the instance is not in a Level";
+
+        const auto* pScene = Source.World().m_SceneMgr.Find(Scene);
+        if (!pScene || !pScene->m_LocalToRuntime.contains(Root))   return "the instance was not found";
+        auto& Ecs    = xlioncore::Ecs(Source.World());
+        const auto Entity = pScene->m_LocalToRuntime.at(Root);
+        auto* pT     = xlioncore::ComponentOf<xlioncore::transform>(Ecs, Entity);
+        if (!pT)                                                    return "the instance has no Transform to place the prefab at";
+
+        auto& Edit    = PS.m_ContextEdit;
+        Edit.m_Level  = SS.m_CurrentLevel;
+        Edit.m_Scene  = Scene;
+        Edit.m_Root   = Root;
+        Edit.m_Placed = xlioncore::WorldOf(*pT, Ecs.ParentOf(Entity));
+
+        int nContext = 0;
+        for (const auto& Open : SS.m_OpenScenes)
+        {
+            if (const auto* pOpen = Source.World().m_SceneMgr.Find(Open); pOpen && pOpen->m_bPrefabDocument) continue;
+            if (const auto Why = AddContextScene(Doc.World(), PS, Open); !Why.empty()) Note += std::format("{}context scene {:016X}: {}", Note.empty() ? "" : "; ", Open.m_Instance.m_Value, Why);
+            else ++nContext;
+        }
+        Edit.m_bActive = true;
+        PlaceDocumentRoot(Doc.World(), PS);
+
+        if (const auto It = pScene->m_PendingChanges.find(Root); It != pScene->m_PendingChanges.end() && It->second.m_New > 0)         // (the scene of the context is still loading here: ask the Level)
+            Note += std::format("{}the instance is not in the saved scene yet: it is not hidden in the context (save the Level and open it again)", Note.empty() ? "" : "; ");
+        if (nContext == 0) Note += std::format("{}the Level has no scene open", Note.empty() ? "" : "; ");
+
+        PS.m_bEntityInspectorDirty = true;
+        if (Doc.m_AimCamera) Doc.m_AimCamera(Edit.m_Placed.m_Position);
+        return {};
     }
 }
 

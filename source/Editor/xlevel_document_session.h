@@ -42,6 +42,8 @@ namespace xlevel
         for (const auto SceneGuid : State.m_ContextScenes)         // a Prefab Editor's context scenes go with it
             xlioncore::Ecs(GameMgr).ReleaseLoadScene(SceneGuid);
         State.m_ContextScenes.clear();
+        if (State.isPrefabEditor()) g_PrefabGameOverride.erase(State.m_CurrentPrefab.m_Instance.m_Value);        // (Edit in Context: the Game of the Level was this editor's only while it was open)
+        State.m_ContextEdit = {};
 
         State.m_bLevelEditorOpen = false;
         State.m_CurrentLevel = {};
