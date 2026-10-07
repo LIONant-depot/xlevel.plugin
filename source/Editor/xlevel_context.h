@@ -132,6 +132,7 @@ namespace xlevel
         std::function<std::string()> m_DescribeTextDraw;            // what the last draw of the Texts of this Level did (the render module says it)
         std::function<std::string(std::uint64_t)> m_DescribeText;   // the layout of the Text of an entity (raw runtime entity value), as the render module of this Level says it, set by its session
         std::function<std::filesystem::path()> m_GameSolution;   // the Visual Studio solution of this Level's game project (empty: not made yet), set by its session
+        std::function<void()> m_EndGizmoDrag;                     // a drag of the gizmo in progress ends now (its undo step is written), set by its session: what a live update of prefab instances does first
     };
 
     // Every Level editor that is open right now (one per Level, plus the session that stands in when none is), and the one the

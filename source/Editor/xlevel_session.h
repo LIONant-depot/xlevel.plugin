@@ -396,6 +396,9 @@ namespace xlevel
             return nullptr;
         }
         static bool TakesPrefab(void* pUser, xecs::prefab::guid Prefab) noexcept { return PrefabHeldElsewhere(pUser, Prefab) != nullptr; }
+        // This editor's world wrote the prefab's file (Apply Overrides, its undo, Make Prefab...): the other editors bring their instances of it up to date (live update, prefabs_plan.md
+        // phase 6). Its own world's are the writer's to update (Apply does).
+        static void PrefabSaved(void* pUser, xecs::prefab::guid Prefab) noexcept { xlevel::LiveUpdatePrefabElsewhere(&static_cast<session*>(pUser)->m_State, Prefab); }
         // The holder takes the saved state as one undoable step. When it cannot (its document breaks a rule of a prefab, so it has no snapshot to undo to; the command is refused or fails), the
         // file is the truth: the saved state is written to the prefab's own folder, and the editor is put in step with it - reloaded when it has nothing unsaved, left dirty (and told) when it has.
         // Never "clean, yet different from the file". False only when nobody wrote the state.
@@ -425,10 +428,10 @@ namespace xlevel
             // The fallback: the file takes it.
             const auto Own = xlevel::PrefabFolder(xlevel::ProjectRoot().wstring(), Prefab.m_Instance.m_Value);
             const bool bWritten = xlevel::CopyPrefabFolder(Folder, Own);
+            if (bWritten) PrefabSaved(pUser, Prefab);           // the other editors (the holder's context scenes too) bring their instances up to date
             if (bWritten && pHolder != nullptr)
             {
                 auto& State = pHolder->State();
-                xlioncore::Ecs(pHolder->World()).DropPrefabTemplate(Prefab);
                 if (!xlevel::HasUnsavedDocumentChanges(State, pHolder->m_Undo))
                     (void)xlevel::ReadPrefabDocumentFrom(pHolder->World(), State, Own);
                 else
@@ -453,7 +456,7 @@ namespace xlevel
             m_Document.Bind(m_CmdContext);
 
             m_pEcs->CreateWorld();
-            m_PrefabRedirect = { this, &session::TakesPrefab, &session::DeliverPrefab };
+            m_PrefabRedirect = { this, &session::TakesPrefab, &session::DeliverPrefab, &session::PrefabSaved };
             m_pEcs->SetPrefabSaveRedirect(&m_PrefabRedirect);
             RegisterHostComponents(*m_pGameMgr);
 
@@ -631,6 +634,7 @@ namespace xlevel
             // commands that act on "the Level the user is working on" reach this editor. The newest real Level becomes the
             // active one; the stand-in editor (no Level) only serves until there is one.
             m_CmdContext.m_pToolEditor = &m_ToolEditor;
+            m_CmdContext.m_EndGizmoDrag = [this]() noexcept { CommitGizmoDrag(); };
             m_CmdContext.m_pGame       = &m_Game;
             g_LevelContexts.push_back(&m_CmdContext);
             if (g_pActiveLevelContext == nullptr || !m_LevelGuid.m_Instance.empty())
@@ -730,6 +734,27 @@ namespace xlevel
         }
         xundo::system&      getUndo()     noexcept override { return m_Undo; }
         bool                isLoaded()  const noexcept override { return true; }   // a Level tool is always "loaded" - it may simply have nothing open yet
+
+        // A drag of the gizmo ends: one undo entry for the whole drag, and none at all for a click that did not change anything. On the release of the mouse, and before a live update
+        // of prefab instances (the entity under the gizmo may be made again: what the drag did so far is a step of its own, a drag that goes on is the next one).
+        void CommitGizmoDrag() noexcept
+        {
+            if (!m_bGizmoWasUsing) return;
+            m_bGizmoWasUsing = false;
+            auto* pXform = xscene::commands::ResolveTransform(m_CmdContext, m_State.m_SelectedEntityScene, m_State.m_SelectedEntityId);
+            if (pXform == nullptr) return;
+            const char* pCmd = m_SceneTool == 1 ? "Translate" : m_SceneTool == 2 ? "Rotate" : "Scale";
+            const auto Before = m_SceneTool == 1 ? xscene::commands::PackBlob(m_GizmoBeforePosition)
+                              : m_SceneTool == 2 ? xscene::commands::PackBlob(m_GizmoBeforeRotation)
+                              :                    xscene::commands::PackBlob(m_GizmoBeforeScale);
+            const auto After  = m_SceneTool == 1 ? xscene::commands::PackBlob(pXform->m_Position)
+                              : m_SceneTool == 2 ? xscene::commands::PackBlob(pXform->m_Rotation)
+                              :                    xscene::commands::PackBlob(pXform->m_Scale);
+            if (Before != After)
+                xeditor::Run(m_Undo, std::format("{} -Scene {} -Id {} -Before {} -After {}", pCmd
+                    , xscene::commands::FormatSceneGuid(m_State.m_SelectedEntityScene)
+                    , xscene::commands::FormatEntityId(m_State.m_SelectedEntityId), Before, After));
+        }
 
         // ---- World lifecycle (ported from LevelEditor_AppWorld.h's app:: methods) ----
         // The host's systems and then the game module's. A module that crashes while registering must not take the editor down: its half
@@ -1287,24 +1312,8 @@ namespace xlevel
 
                     bGizmoInteracting = ImGuizmo::IsOver(Operation) || ImGuizmo::IsUsing();
 
-                    if (m_bGizmoWasUsing && !ImGuizmo::IsUsing())
-                    {
-                        // Mouse just released - commit exactly one undo entry for the whole drag, and none
-                        // at all for a click that didn't actually change anything.
-                        const char* pCmd = m_SceneTool == 1 ? "Translate" : m_SceneTool == 2 ? "Rotate" : "Scale";
-                        const auto Before = m_SceneTool == 1 ? xscene::commands::PackBlob(m_GizmoBeforePosition)
-                                          : m_SceneTool == 2 ? xscene::commands::PackBlob(m_GizmoBeforeRotation)
-                                          :                    xscene::commands::PackBlob(m_GizmoBeforeScale);
-                        const auto After  = m_SceneTool == 1 ? xscene::commands::PackBlob(pXform->m_Position)
-                                          : m_SceneTool == 2 ? xscene::commands::PackBlob(pXform->m_Rotation)
-                                          :                    xscene::commands::PackBlob(pXform->m_Scale);
-                        if (Before != After)
-                        {
-                            xeditor::Run(m_Undo, std::format("{} -Scene {} -Id {} -Before {} -After {}", pCmd
-                                , xscene::commands::FormatSceneGuid(m_State.m_SelectedEntityScene)
-                                , xscene::commands::FormatEntityId(m_State.m_SelectedEntityId), Before, After));
-                        }
-                    }
+                    // Mouse just released - commit exactly one undo entry for the whole drag.
+                    if (m_bGizmoWasUsing && !ImGuizmo::IsUsing()) CommitGizmoDrag();
                     m_bGizmoWasUsing = ImGuizmo::IsUsing();
                 }
             }

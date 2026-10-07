@@ -32,6 +32,10 @@ namespace xlevel
             return;
         }
 
+        // A Prefab Editor that closes without saving may have held a change of the prefab another editor handed it (Apply Overrides, one writer per prefab): that editor
+        // still shows the change, the file does not have it. The others are brought back to the file (live update, prefabs_plan.md phase 6).
+        const auto Discarded = State.isPrefabEditor() && HasUnsavedDocumentChanges(State, Undo) ? State.m_CurrentPrefab : xecs::prefab::guid{};
+
         const auto Scenes = State.m_OpenScenes;
         for (const auto SceneGuid : Scenes)
             xscene::CloseScene(GameMgr, State, SceneGuid);
@@ -58,6 +62,8 @@ namespace xlevel
 
         Undo.Reset();
         State.m_CleanUndoIndex = 0;
+
+        if (!Discarded.empty()) LiveUpdatePrefabElsewhere(&State, Discarded);
     }
 
     // Applies Save/Don't Save resolution then Close and optional OpenLevel.

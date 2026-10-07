@@ -104,11 +104,10 @@ namespace xlevel
             }
         }
 
-        // A prefab saved from its editor changed on disk: the other editors that hold a template of it forget it, so that the next instance they place reads the file (the instances already placed
-        // are theirs: live update is phase 6 of the prefab plan).
+        // A prefab saved from its editor changed on disk: the other editors bring their instances of it up to date (live update, prefabs_plan.md phase 6). This editor's own world (its
+        // context scenes) was brought up to date by the save itself.
         if (State.isPrefabEditor() && bAllSaved)
-            for (auto* pOther : g_LevelContexts)
-                if (pOther != pEd) xlioncore::Ecs(pOther->World()).DropPrefabTemplate(State.m_CurrentPrefab);
+            LiveUpdatePrefabElsewhere(&State, State.m_CurrentPrefab);
 
         // Save is local: the Level and its Scenes. The renames and moves of the resource view are its own (its Save button), and Save All saves everything.
 

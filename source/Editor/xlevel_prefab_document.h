@@ -132,6 +132,26 @@ namespace xlevel
         State.m_bEntityInspectorDirty = true;
         return Err;
     }
+
+    // Live update (prefabs_plan.md 3.6, phase 6): the instances of a prefab in an editor's world (it is theirs, or one they nest) are spawned again from it with their recipes - same ids,
+    // overrides kept, nothing written, the editor not dirty (no undo step). A gizmo drag in progress ends first; the selection is found again by its id. Not while playing: a running game
+    // keeps what it started with (Stop reopens the world from the files). bFromFile: the prefab changed on disk (the template is read again); otherwise the template in memory is the new one.
+    inline int LiveUpdatePrefab(level_context& Ctx, xecs::prefab::guid Prefab, bool bFromFile) noexcept
+    {
+        auto& State = Ctx.State();
+        if (State.isPlaying() || !Ctx.m_pWorld) return 0;
+        if (Ctx.m_EndGizmoDrag) Ctx.m_EndGizmoDrag();
+        const int n = xlioncore::Ecs(Ctx.World()).LiveUpdatePrefab(Prefab, bFromFile);
+        xscene::ResolveSelection(Ctx.World(), State);
+        return n;
+    }
+
+    // The prefab's file changed: every other editor brings its instances of it up to date (its own world is the caller's to update).
+    inline void LiveUpdatePrefabElsewhere(const level_state* pExcept, xecs::prefab::guid Prefab) noexcept
+    {
+        for (auto* pOther : g_LevelContexts)
+            if (&pOther->State() != pExcept) LiveUpdatePrefab(*pOther, Prefab, /*bFromFile*/ true);
+    }
 }
 
 #endif // XLEVEL_PREFAB_DOCUMENT_H

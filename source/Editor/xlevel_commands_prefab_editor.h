@@ -145,6 +145,8 @@ namespace xlevel::commands
             if (Snapshot.empty() || !State().isPrefabEditor()) return;
             if (auto Err = ReadPrefabDocumentFrom(World(), State(), std::filesystem::path(Snapshot).wstring()); Err)
                 xeditor::NotifyToast(std::format("ReplacePrefabDocument Undo: {}", Err.getMessage()));
+            // The change is turned down: the editor that handed it over (its template has it) and the others are brought back to the file (live update, prefabs_plan.md phase 6).
+            LiveUpdatePrefabElsewhere(&State(), State().m_CurrentPrefab);
         }
 
         xcmdline::parser::handle m_hFolder;
