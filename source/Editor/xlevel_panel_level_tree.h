@@ -585,7 +585,7 @@ namespace xlevel
         if (bWindowVisible)
         {
             if (bReadOnly) ImGui::BeginDisabled();
-            if (State.m_CurrentLevel.empty())
+            if (!State.HasDocument())
             {
                 if (!g_PendingOpenLevels.empty())
                     ImGui::TextDisabled("Opening the Level as soon as Game.dll has finished building...");
@@ -611,10 +611,14 @@ namespace xlevel
                     ImGui::EndDragDropTarget();
                 }
             }
-            else if (auto* pLevel = GameMgr.m_LevelMgr.Find(State.m_CurrentLevel))
+            else if (auto* pLevel = State.isPrefabEditor() ? nullptr : GameMgr.m_LevelMgr.Find(State.m_CurrentLevel); pLevel || State.isPrefabEditor())
             {
+                // A Prefab Editor's tree is the Level's with the prefab in the place of the Level: its top row is the prefab (the Game it plays with, the scenes it is tested against) and the
+                // entities of the prefab hang from it directly - the prefab is the scene, so there is no Scene row of its own.
+                const bool                 bPrefabTree = State.isPrefabEditor();
+                const xresource::full_guid DocGuid     = bPrefabTree ? PrefabResourceGuid(State) : xresource::full_guid{ State.m_CurrentLevel.m_Instance, State.m_CurrentLevel.m_Type };
                 std::string LevelLabel;
-                xresource_editor::RemapGUIDToString(LevelLabel, xresource::full_guid{ State.m_CurrentLevel.m_Instance, State.m_CurrentLevel.m_Type });
+                xresource_editor::RemapGUIDToString(LevelLabel, DocGuid);
 
                 // Search box, visually matching the asset browser's own (RenderTreeSearchBar's own
                 // comment). Adding entities/folders is right-click-in-place on a Scene/Folder row now
@@ -681,7 +685,7 @@ namespace xlevel
 
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(kLevelTreeColumnName);
-                    const std::string LevelLabelWithIcon = std::format("{} {}", xlevel::LevelIcon(), LevelLabel);
+                    const std::string LevelLabelWithIcon = std::format("{} {}", bPrefabTree ? xlevel::PrefabIcon() : xlevel::LevelIcon(), LevelLabel);
                     const bool bLevelOpen = ImGui::TreeNodeEx(LevelLabelWithIcon.c_str(), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth
                         | (State.m_bRootSelected ?ImGuiTreeNodeFlags_Selected : 0));
                     // A click on the row (not its arrow) selects the Level: the Inspector shows its properties (its Game, its scenes). A right-click opens the menu below, and selects it too.
@@ -696,19 +700,40 @@ namespace xlevel
                         // The Game this Level runs under: one of the project's Games, or none (SetLevelGame: refused when the Game lacks a module the scenes need).
                         if (ImGui::BeginMenu("Game"))
                         {
-                            const auto LevelValue = State.m_CurrentLevel.m_Instance.m_Value;
-                            const auto Named      = xlevel::ReadLevelGame(xlevel::ProjectRoot().wstring(), LevelValue);
+                            const auto LevelValue = DocGuid.m_Instance.m_Value;
+                            const auto Named      = bPrefabTree ? xlevel::ReadPrefabGame(xlevel::ProjectRoot().wstring(), LevelValue) : xlevel::ReadLevelGame(xlevel::ProjectRoot().wstring(), LevelValue);
+                            const char* pSetGame  = bPrefabTree ? "SetPrefabGame -Prefab" : "SetLevelGame -Level";
                             if (ImGui::MenuItem("(no Game)", nullptr, Named == 0, !State.isPlaying()))
-                                xeditor::Run(Undo, std::format("SetLevelGame -Level {:016X}", LevelValue));
+                                xeditor::Run(Undo, std::format("{} {:016X}", pSetGame, LevelValue));
                             for (const auto& [Game, Name] : xlevel::commands::BuildAssetNameMap(xgame::type_guid_v))
                                 if (ImGui::MenuItem(Name.c_str(), nullptr, Named == Game, !State.isPlaying()))
-                                    xeditor::Run(Undo, std::format("SetLevelGame -Level {:016X} -Game {:016X}{:016X}", LevelValue, Game, xgame::type_guid_v.m_Value));
+                                    xeditor::Run(Undo, std::format("{} {:016X} -Game {:016X}{:016X}", pSetGame, LevelValue, Game, xgame::type_guid_v.m_Value));
                             ImGui::EndMenu();
                         }
+                        if (bPrefabTree)
+                        {
+                            // The prefab has no Scene row to add an entity from: this is where a prefab with no root gets one, and where a child of the root is added.
+                            if (auto* pDocScene = GameMgr.m_SceneMgr.Find(State.PrefabScene()))
+                            {
+                                ImGui::BeginDisabled(State.isPlaying());
+                                if (ImGui::MenuItem("New Entity"))
+                                {
+                                    xecs::scene::permanent_id Root = xecs::scene::invalid_permanent_id_v;
+                                    for (auto& [Id, Entity] : pDocScene->m_LocalToRuntime)
+                                        if (!pDocScene->m_InstanceMembers.contains(Id) && !xlioncore::Ecs(GameMgr).ParentOf(Entity)) { Root = Id; break; }
+                                    const auto NewId = xscene::NextFreeEntityId(*pDocScene);
+                                    xeditor::Run(Ed.m_Undo, Root == xecs::scene::invalid_permanent_id_v
+                                        ? std::format("CreateEntity -Scene {} -Id {} -Folder {:08X}", xscene::commands::FormatSceneGuid(State.PrefabScene()), xscene::commands::FormatEntityId(NewId), static_cast<std::uint32_t>(xecs::scene::invalid_folder_id_v))
+                                        : std::format("CreateEntity -Scene {} -Id {} -Folder {:08X} -Parent {}", xscene::commands::FormatSceneGuid(State.PrefabScene()), xscene::commands::FormatEntityId(NewId), static_cast<std::uint32_t>(xecs::scene::invalid_folder_id_v), xscene::commands::FormatEntityId(Root)));
+                                }
+                                ImGui::EndDisabled();
+                            }
+                        }
                         ImGui::Separator();
-                        RenderLevelTreeSCRevertMenuItem(Undo, xresource::full_guid{ State.m_CurrentLevel.m_Instance, State.m_CurrentLevel.m_Type }
+                        RenderLevelTreeSCRevertMenuItem(Undo, DocGuid
                             , /*bWholeFolder*/ true
-                            , "Discard ALL local changes in this Level resource's folder (info.txt, Descriptor.txt, dependencies.txt)?\nThis cannot be undone.");
+                            , bPrefabTree ? "Discard ALL local changes in this Prefab resource's folder (info.txt, Descriptor.txt, the entity files)?\nThis cannot be undone."
+                                          : "Discard ALL local changes in this Level resource's folder (info.txt, Descriptor.txt, dependencies.txt)?\nThis cannot be undone.");
                         ImGui::EndPopup();
                     }
 
@@ -730,7 +755,9 @@ namespace xlevel
                             if (Dropped.m_Source.m_Type == xecs::scene::type_guid_v)
                             {
                                 const xecs::scene::guid NewSceneGuid{ .m_Instance = Dropped.m_Source.m_Instance };
-                                if (std::find(pLevel->m_Scenes.begin(), pLevel->m_Scenes.end(), NewSceneGuid) == pLevel->m_Scenes.end())
+                                if (bPrefabTree)        // a scene dropped on a prefab is brought in to test it against: it plays, it is not part of the prefab
+                                    xeditor::RunQuery(Ed.m_Undo, std::format("AddContextScene -Scene {}", xscene::commands::FormatSceneGuid(NewSceneGuid)));
+                                else if (std::find(pLevel->m_Scenes.begin(), pLevel->m_Scenes.end(), NewSceneGuid) == pLevel->m_Scenes.end())
                                     xeditor::Run(Ed.m_Undo, std::format("AddScene -Level {:016X} -Scene {}"
                                         , State.m_CurrentLevel.m_Instance.m_Value
                                         , xscene::commands::FormatSceneGuid(NewSceneGuid)));
@@ -746,16 +773,19 @@ namespace xlevel
                     // badge "seemed missing"). Routed through *Column (not the plain helper) - it also
                     // neutralizes ImGui's own indent-into-column-0 table quirk, see that helper's own
                     // comment.
-                    RenderLevelTreeSourceControlBadgeColumn(xresource::full_guid{ State.m_CurrentLevel.m_Instance, State.m_CurrentLevel.m_Type });
-                    RenderLevelTreeContainerMarkers(State.m_CurrentLevel.m_Instance.m_Value, State.m_EditorDisabledCount > 0, State.m_EditorHiddenCount > 0, "Level");
+                    RenderLevelTreeSourceControlBadgeColumn(DocGuid);
+                    RenderLevelTreeContainerMarkers(DocGuid.m_Instance.m_Value, State.m_EditorDisabledCount > 0, State.m_EditorHiddenCount > 0, bPrefabTree ? "Prefab" : "Level");
                     if (!bLevelOpen) State.m_TreeExpandedScenes.clear();               // its Scene rows are not drawn: none of them is showing expanded
 
                     if (bLevelOpen)
                     {
-                        for (std::size_t iScene = 0; iScene < pLevel->m_Scenes.size(); ++iScene)
+                        // A copy: a row that removes a Scene changes the Level's list while this walks it (it leaves the loop right after).
+                        const std::vector<xecs::scene::guid> SceneList = bPrefabTree ? std::vector<xecs::scene::guid>{ State.PrefabScene() } : pLevel->m_Scenes;
+                        for (std::size_t iScene = 0; iScene < SceneList.size(); ++iScene)
                         {
                             ImGui::PushID(static_cast<int>(iScene));
-                            const auto SceneGuid = pLevel->m_Scenes[iScene];
+                            const auto SceneGuid = SceneList[iScene];
+                            const bool bDocumentScene = bPrefabTree && SceneGuid == State.PrefabScene();       // the prefab itself: its entities hang from the prefab's row, with no Scene row of their own
 
                             std::string SceneLabel;
                             xresource_editor::RemapGUIDToString(SceneLabel, xresource::full_guid{ SceneGuid.m_Instance, SceneGuid.m_Type });
@@ -767,6 +797,9 @@ namespace xlevel
                             const bool        bSceneLocked = xlevel::IsSceneLockedByOther(Ed, SceneGuid);
                             const std::string LockOwner    = bSceneLocked ? xlevel::SceneOwnerName(SceneGuid) : std::string{};
 
+                            bool bSceneExpanded = true;
+                            if (!bDocumentScene)
+                            {
                             ImGui::TableNextRow();
                             ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                             const std::string SceneLabelWithIcon = bSceneLocked
@@ -791,7 +824,7 @@ namespace xlevel
                             // A Scene that was showing expanded and is no longer open (CloseScene, a reload) collapses: "expanded" means "open" below, so left expanded it would be loaded again at once.
                             if (!bIsOpenScene && std::find(State.m_TreeExpandedScenes.begin(), State.m_TreeExpandedScenes.end(), SceneGuid) != State.m_TreeExpandedScenes.end())
                                 ImGui::SetNextItemOpen(false, ImGuiCond_Always);
-                            const bool bSceneExpanded = ImGui::TreeNodeEx(SceneLabelWithIcon.c_str(), ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth | (bIsOpenScene ? ImGuiTreeNodeFlags_Selected : 0));
+                            bSceneExpanded = ImGui::TreeNodeEx(SceneLabelWithIcon.c_str(), ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth | (bIsOpenScene ? ImGuiTreeNodeFlags_Selected : 0));
                             {
                                 auto& Expanded = State.m_TreeExpandedScenes;
                                 const auto It = std::find(Expanded.begin(), Expanded.end(), SceneGuid);
@@ -911,6 +944,8 @@ namespace xlevel
                                 const std::uint8_t Flags = FlagsIt == State.m_EditorSceneFlags.end() ? 0 : FlagsIt->second;
                                 RenderLevelTreeContainerMarkers(SceneGuid.m_Instance.m_Value, (Flags & 1) != 0, (Flags & 2) != 0, "Scene");
                             }
+
+                            }   // !bDocumentScene
 
                             if (bSceneExpanded)
                             {
@@ -1363,6 +1398,7 @@ namespace xlevel
                                         // touched", so no delete/drag-source on the folder row, only a
                                         // drop target (drag a Scene from the asset browser OR from this Level Tree onto it to add a dependency)
                                         // and a per-entry delete button below.
+                                        if (!bDocumentScene)
                                         {
                                             ImGui::PushID("Dependencies");
                                             ImGui::TableNextRow();
@@ -1501,9 +1537,34 @@ namespace xlevel
                                     ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                                     ImGui::TextDisabled("(click to open)");
                                 }
-                                ImGui::TreePop();
+                                if (!bDocumentScene) ImGui::TreePop();
                             }
                             ImGui::PopID();
+                        }
+
+                        // The scenes a Prefab Editor brought in to test the prefab against: they play with it, they are not part of it, and nothing in them is picked or edited.
+                        if (bPrefabTree)
+                        {
+                            const auto Contexts = State.m_ContextScenes;
+                            const auto Names    = xlevel::commands::BuildAssetNameMap(xecs::scene::type_guid_v);
+                            for (const auto& Context : Contexts)
+                            {
+                                ImGui::PushID(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(Context.m_Instance.m_Value)));
+                                ImGui::TableNextRow();
+                                ImGui::TableSetColumnIndex(kLevelTreeColumnName);
+                                const auto It = Names.find(Context.m_Instance.m_Value);
+                                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                                ImGui::TreeNodeEx("##context", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanFullWidth, "%s %s  (context: it plays, it is not part of the prefab)"
+                                    , xlevel::SceneIcon(), It == Names.end() ? "(unnamed)" : It->second.c_str());
+                                ImGui::PopStyleColor();
+                                if (ImGui::BeginPopupContextItem())
+                                {
+                                    if (ImGui::MenuItem("Remove Context Scene", nullptr, false, !State.isPlaying()))
+                                        xeditor::RunQuery(Ed.m_Undo, std::format("RemoveContextScene -Scene {}", xscene::commands::FormatSceneGuid(Context)));
+                                    ImGui::EndPopup();
+                                }
+                                ImGui::PopID();
+                            }
                         }
 
                         // "Runtime" - a read-only row, sibling to this Level's own Scene rows, listing every
@@ -1524,6 +1585,9 @@ namespace xlevel
                                 for (auto& OpenSceneGuid : State.m_OpenScenes)
                                     if (auto* pOpenScene = GameMgr.m_SceneMgr.Find(OpenSceneGuid); pOpenScene && pOpenScene->m_RuntimeToLocal.contains(E.m_Value))
                                         return true;
+                                for (auto& ContextGuid : State.m_ContextScenes)           // the scenes of a Prefab Editor's context: rows of their own
+                                    if (auto* pContext = GameMgr.m_SceneMgr.Find(ContextGuid); pContext && pContext->m_RuntimeToLocal.contains(E.m_Value))
+                                        return true;
                                 return false;
                             };
 
@@ -1535,6 +1599,9 @@ namespace xlevel
                             for (auto& OpenSceneGuid : State.m_OpenScenes)
                                 if (auto* pOpenScene = GameMgr.m_SceneMgr.Find(OpenSceneGuid))
                                     Count[SPAWNED] -= static_cast<int>(pOpenScene->m_LocalToRuntime.size());
+                            for (auto& ContextGuid : State.m_ContextScenes)
+                                if (auto* pContext = GameMgr.m_SceneMgr.Find(ContextGuid))
+                                    Count[SPAWNED] -= static_cast<int>(pContext->m_LocalToRuntime.size());
                             Count[SPAWNED] = std::max(0, Count[SPAWNED]);
 
                             const int RuntimeCount = Count[SPAWNED] + Count[SHARE];

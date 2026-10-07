@@ -87,7 +87,9 @@ namespace xlevel::commands
         {
             auto& State = get<level_context>().State();
             if (State.isPlaying()) return "Save: blocked while Play/Paused";
-            xlevel::SaveEverything(World(), State);
+            // A prefab that breaks a rule of a prefab (one root, references inside) is not written, and stays unsaved: the document is not clean.
+            if (!xlevel::SaveEverything(World(), State) && State.isPrefabEditor())
+                return "Save: the prefab was not saved (a prefab has one root, and references only its own entities); it stays unsaved";
             xlevel::MarkDocumentClean(State, LevelContext().m_Undo);
             return "Saved";
         }
@@ -114,7 +116,7 @@ namespace xlevel::commands
         {
             auto& State = get<level_context>().State();
             if (State.isPlaying()) return "Close: blocked while Play/Paused";
-            if (State.m_CurrentLevel.empty() && State.m_OpenScenes.empty())
+            if (!State.HasDocument() && State.m_OpenScenes.empty())
                 return "Close: nothing open";
 
             std::optional<bool> SaveOverride;
@@ -130,7 +132,9 @@ namespace xlevel::commands
 
             if (bDirty && SaveOverride.value())
             {
-                xlevel::SaveEverything(World(), State);
+                // A prefab that breaks a rule of a prefab is not written: the editor stays open (and unsaved) and says so, instead of closing on a save that did not happen.
+                if (!xlevel::SaveEverything(World(), State) && State.isPrefabEditor())
+                    return "Close: the prefab was not saved (a prefab has one root, and references only its own entities); the editor stays open and unsaved";
                 xlevel::MarkDocumentClean(State, LevelContext().m_Undo);
                 xlevel::CloseLevel(World(), State, LevelContext().m_Undo);
                 return "Saved and closed";

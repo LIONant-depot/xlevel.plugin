@@ -114,7 +114,9 @@ namespace xlevel
     ) noexcept
     {
         std::vector<std::unique_ptr<xecs::scene::instance>> Captured;
-        for (auto& SceneGuid : State.m_OpenScenes)
+        std::vector<xecs::scene::guid> ToCapture = State.m_OpenScenes;
+        ToCapture.insert(ToCapture.end(), State.m_ContextScenes.begin(), State.m_ContextScenes.end());          // a Prefab Editor's context scenes are loaded scenes too
+        for (auto& SceneGuid : ToCapture)
         {
             if (auto* pScene = GameMgr.m_SceneMgr.Find(SceneGuid))
             {
@@ -127,7 +129,7 @@ namespace xlevel
                 LogGamePlugin(std::format("Game.dll: [Vn capture] scene {:016X} NOT FOUND in SceneMgr", SceneGuid.m_Instance.m_Value));
             }
         }
-        LogGamePlugin(std::format("Game.dll: [Vn capture] {} of {} open scene(s) captured", Captured.size(), State.m_OpenScenes.size()));
+        LogGamePlugin(std::format("Game.dll: [Vn capture] {} of {} open scene(s) captured", Captured.size(), ToCapture.size()));
         return Captured;
     }
 

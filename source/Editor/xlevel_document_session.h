@@ -17,7 +17,7 @@ namespace xlevel
 
     inline bool HasUnsavedDocumentChanges(const level_state& State, const xundo::system& Undo) noexcept
     {
-        if (State.m_CurrentLevel.empty() && State.m_OpenScenes.empty()) return false;
+        if (!State.HasDocument() && State.m_OpenScenes.empty()) return false;
         return Undo.GetUndoIndex() != State.m_CleanUndoIndex;
     }
 
@@ -25,7 +25,7 @@ namespace xlevel
     // refer to a live document - see xundo::system::Reset).
     inline void CloseLevel(xecs::game_mgr::instance& GameMgr, level_state& State, xundo::system& Undo) noexcept
     {
-        if (State.m_CurrentLevel.empty() && State.m_OpenScenes.empty())
+        if (!State.HasDocument() && State.m_OpenScenes.empty())
         {
             Undo.Reset();
             State.m_CleanUndoIndex = 0;
@@ -35,9 +35,13 @@ namespace xlevel
         const auto Scenes = State.m_OpenScenes;
         for (const auto SceneGuid : Scenes)
             xscene::CloseScene(GameMgr, State, SceneGuid);
+        for (const auto SceneGuid : State.m_ContextScenes)         // a Prefab Editor's context scenes go with it
+            xlioncore::Ecs(GameMgr).ReleaseLoadScene(SceneGuid);
+        State.m_ContextScenes.clear();
 
         State.m_bLevelEditorOpen = false;
         State.m_CurrentLevel = {};
+        State.m_CurrentPrefab = {};
         State.m_SelectedEntityId    = xecs::scene::invalid_permanent_id_v;
         State.m_SelectedEntity      = {};
         State.m_SelectedEntityScene = {};
@@ -61,7 +65,16 @@ namespace xlevel
     {
         if (bSaveFirst)
         {
-            SaveEverything(GameMgr, State);
+            // A prefab that breaks a rule of a prefab is not written: the editor stays open and unsaved (nothing closes on a save that did not happen).
+            if (!SaveEverything(GameMgr, State) && State.isPrefabEditor())
+            {
+                State.m_PendingOpenLevelAfterClose = {};
+                State.m_bPendingOpenWantsGameReload = false;
+                State.m_bPendingStartGameReloadAfterOpen = false;
+                State.m_bLevelEditorOpen = true;
+                xeditor::NotifyToast("The prefab was not saved (a prefab has one root, and references only its own entities): the editor stays open");
+                return;
+            }
             MarkDocumentClean(State, Undo);
         }
 
@@ -89,7 +102,7 @@ namespace xlevel
     inline void RequestCloseLevel(xecs::game_mgr::instance& GameMgr, level_state& State, xundo::system& Undo) noexcept
     {
         if (State.isPlaying()) return;
-        if (State.m_CurrentLevel.empty() && State.m_OpenScenes.empty()) return;
+        if (!State.HasDocument() && State.m_OpenScenes.empty()) return;
         if (State.m_bAwaitingSaveBeforeClose) return;
 
         State.m_PendingOpenLevelAfterClose = {};
@@ -112,7 +125,7 @@ namespace xlevel
 
     inline void QueueOpenLevel(xresource::full_guid LevelGuid) noexcept
     {
-        if (LevelGuid.m_Type != xecs::level::type_guid_v) return;
+        if (LevelGuid.m_Type != xecs::level::type_guid_v && LevelGuid.m_Type != xecs::prefab::type_guid_v) return;      // a prefab opens in its own editor too (a Prefab Editor)
         if (std::find(g_PendingOpenLevels.begin(), g_PendingOpenLevels.end(), LevelGuid) == g_PendingOpenLevels.end())
             g_PendingOpenLevels.push_back(LevelGuid);
     }
@@ -126,9 +139,9 @@ namespace xlevel
         if (xeditor::BeginModal("Save changes?##LevelDocument", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings, pCenter))
         {
             const bool bOpeningOther = !State.m_PendingOpenLevelAfterClose.empty();
-            ImGui::TextUnformatted(State.m_CurrentLevel.empty()
-                ? "The open scene(s) have unsaved changes."
-                : "The current Level has unsaved changes.");
+            ImGui::TextUnformatted(State.isPrefabEditor() ? "The prefab has unsaved changes."
+                : State.m_CurrentLevel.empty()           ? "The open scene(s) have unsaved changes."
+                                                         : "The current Level has unsaved changes.");
             ImGui::TextWrapped(bOpeningOther
                 ? "Save before opening the other Level?"
                 : "Save before closing?");

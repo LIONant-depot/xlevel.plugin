@@ -228,11 +228,12 @@ namespace xlevel
         std::string     m_Issue;                    // what is wrong with it, "" when nothing is
     };
 
-    inline level_game_status StatusOfLevelGame( std::uint64_t Level, const std::vector<std::uint64_t>& Scenes ) noexcept
+    // What a document (a Level, or a prefab in its Prefab Editor) names as its Game and whether that Game can run what the document needs.
+    inline level_game_status StatusOfGameOf( std::uint64_t Named, const std::vector<std::uint64_t>& Scenes, bool bPrefab ) noexcept
     {
         level_game_status S;
         const std::wstring Project = ProjectRoot().wstring();
-        S.m_Game   = ReadLevelGame(Project, Level);
+        S.m_Game   = Named;
         S.m_bNamed = S.m_Game != 0;
         const auto Names = commands::BuildAssetNameMap(xgame::type_guid_v);
         auto Label = [&](std::uint64_t Game) { const auto It = Names.find(Game); return It == Names.end() ? std::format("{:X}", Game) : It->second; };
@@ -246,10 +247,23 @@ namespace xlevel
             const auto Modules = commands::BuildAssetNameMap(xscript::module::type_guid_v);
             std::string List;
             for (const auto& [Module, Need] : Gaps) { const auto It = Modules.find(Module); List += (List.empty() ? "" : ", ") + (It == Modules.end() ? std::format("{:X}", Module) : It->second); }
-            S.m_Issue = S.m_bNamed ? std::format("The Game '{}' does not list the module(s) these scenes need: {}.", S.m_Name, List)
-                                   : std::format("This Level names no Game, so nothing provides the module(s) its scenes need: {}. Give it a Game that lists them.", List);
+            if (bPrefab) S.m_Issue = S.m_bNamed ? std::format("The Game '{}' does not list the module(s) this prefab (and the scenes brought in with it) need: {}.", S.m_Name, List)
+                                                : std::format("This prefab names no Game, so nothing provides the module(s) it needs: {}. Give it a Game that lists them (SetPrefabGame).", List);
+            else         S.m_Issue = S.m_bNamed ? std::format("The Game '{}' does not list the module(s) these scenes need: {}.", S.m_Name, List)
+                                                : std::format("This Level names no Game, so nothing provides the module(s) its scenes need: {}. Give it a Game that lists them.", List);
         }
         return S;
+    }
+
+    inline level_game_status StatusOfLevelGame( std::uint64_t Level, const std::vector<std::uint64_t>& Scenes ) noexcept
+    {
+        return StatusOfGameOf(ReadLevelGame(ProjectRoot().wstring(), Level), Scenes, /*bPrefab*/ false);
+    }
+
+    // The prefab and the context scenes of its editor (the prefab is read as the scene of its guid: its ComponentDeps.txt is the prefab's).
+    inline level_game_status StatusOfPrefabGame( std::uint64_t Prefab, const std::vector<std::uint64_t>& Scenes ) noexcept
+    {
+        return StatusOfGameOf(ReadPrefabGame(ProjectRoot().wstring(), Prefab), Scenes, /*bPrefab*/ true);
     }
 
     // The modules a Game resource lists (read from its Descriptor.txt: the Game does not have to be the project's, or loaded). Empty and false when the Game is not in the project.

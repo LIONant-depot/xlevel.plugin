@@ -81,7 +81,8 @@ namespace xlevel
 
         std::vector<xecs::scene::permanent_id> ActiveEntities;
         ActiveEntities.reserve(pScene->m_LocalToRuntime.size());
-        for (auto& Pair : pScene->m_LocalToRuntime) ActiveEntities.push_back(Pair.first);
+        for (auto& Pair : pScene->m_LocalToRuntime)
+            if (!pScene->m_InstanceMembers.contains(Pair.first)) ActiveEntities.push_back(Pair.first);          // a member of a prefab instance has no file of its own: its instance does
 
         std::string Description = std::format("{:016X}", SceneGuid.m_Instance.m_Value);
         if (auto Names = xlevel::commands::BuildAssetNameMap(xecs::scene::type_guid_v); true)

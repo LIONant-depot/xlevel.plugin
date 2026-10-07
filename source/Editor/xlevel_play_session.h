@@ -43,7 +43,15 @@ namespace xlevel
             xeditor::NotifyToast(std::format("Play cancelled: {} entities of the open scene(s) are not in the world (the scene is out of step with it). Reopen the Level.", Unknown));
             return;
         }
-        SaveEverything(Ed.World(), Ed.State());
+        // A prefab that cannot be saved (it breaks a rule of a prefab: one root, references inside) cannot be played either: the world is rebuilt from what was saved, and Play would show the
+        // prefab as it was, not as it is in the editor.
+        if (!SaveEverything(Ed.World(), Ed.State()) && Ed.State().isPrefabEditor())
+        {
+            Ed.State().m_bPlayRequested = false;
+            Ed.State().m_bStepOneFrame  = false;
+            xeditor::NotifyToast("Play cancelled: the prefab could not be saved (see the message above), and Play plays what is saved.");
+            return;
+        }
         Ed.State().m_PlayHistoryBoundary        = Ed.m_Undo.GetUndoIndex();
         Ed.State().m_bPlayWorldRebuildRequested = true;
     }

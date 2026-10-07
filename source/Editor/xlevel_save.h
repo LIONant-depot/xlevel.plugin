@@ -51,8 +51,10 @@ namespace xlevel
 
     // The Level's Save. Saves the Level and every open Scene this editor may write - a Scene another Level editor owns is left alone (its
     // edits are that editor's to save). The other editors that have one of the Scenes this editor owned open reload it.
-    void SaveEverything(xecs::game_mgr::instance& GameMgr, level_state& State) noexcept
+    // Returns false when something that had to be saved was not (the toast says what).
+    bool SaveEverything(xecs::game_mgr::instance& GameMgr, level_state& State) noexcept
     {
+        bool              bAllSaved = true;
         auto*             pHost = xeditor::host::current();
         auto*             pEd   = FindContextOf(State);
         xeditor::session* pMe   = pEd ? FindHostSession(pEd->m_Undo) : nullptr;
@@ -61,7 +63,10 @@ namespace xlevel
         if (!State.m_CurrentLevel.empty() && GameMgr.m_LevelMgr.Find(State.m_CurrentLevel))
         {
             if (auto Err = xlioncore::Ecs(GameMgr).SaveLevel(State.m_CurrentLevel); Err)
+            {
+                bAllSaved = false;
                 xeditor::NotifyToast(std::format("Failed to save Level: {}", Err.getMessage()));
+            }
         }
 
         // The system registry of the Level's game (what is placed where, the order, what is enabled) is part of the Level: its edits are in the undo history and are written with it. (Not while
@@ -89,18 +94,21 @@ namespace xlevel
                 if (const auto Unknown = CountUnknownEntities(GameMgr, *pScene); Unknown)
                 {
                     xeditor::NotifyToast(std::format("Scene {:016X} was not saved: {} of its entities are not in the world (the scene is out of step with it). Reopen the Level.", SceneGuid.m_Instance.m_Value, Unknown));
-                    continue;
-                }
-            // A scene out of step with its world would be saved from entities that are not there: refuse, and say why (the file on disk stays as it was).
-            if (auto* pScene = GameMgr.m_SceneMgr.Find(SceneGuid))
-                if (const auto Unknown = CountUnknownEntities(GameMgr, *pScene); Unknown)
-                {
-                    xeditor::NotifyToast(std::format("Scene {:016X} was not saved: {} of its entities are not in the world (the scene is out of step with it). Reopen the Level.", SceneGuid.m_Instance.m_Value, Unknown));
+                    bAllSaved = false;
                     continue;
                 }
             if (auto Err = xlioncore::Ecs(GameMgr).SaveScene(SceneGuid); Err)
-                xeditor::NotifyToast(std::format("Failed to save Scene: {}", Err.getMessage()));
+            {
+                bAllSaved = false;
+                xeditor::NotifyToast(std::format("{}: {}", State.isPrefabEditor() && SceneGuid == State.PrefabScene() ? "Failed to save the Prefab" : "Failed to save Scene", Err.getMessage()));
+            }
         }
+
+        // A prefab saved from its editor changed on disk: the other editors that hold a template of it forget it, so that the next instance they place reads the file (the instances already placed
+        // are theirs: live update is phase 6 of the prefab plan).
+        if (State.isPrefabEditor() && bAllSaved)
+            for (auto* pOther : g_LevelContexts)
+                if (pOther != pEd) xlioncore::Ecs(pOther->World()).DropPrefabTemplate(State.m_CurrentPrefab);
 
         // Save is local: the Level and its Scenes. The renames and moves of the resource view are its own (its Save button), and Save All saves everything.
 
@@ -113,5 +121,6 @@ namespace xlevel
                     && std::find(OtherState.m_ScenesToReload.begin(), OtherState.m_ScenesToReload.end(), SceneGuid) == OtherState.m_ScenesToReload.end())
                     OtherState.m_ScenesToReload.push_back(SceneGuid);
         }
+        return bAllSaved;
     }
 }

@@ -25,7 +25,9 @@ namespace xlevel
 
         xresource::full_guid CurrentGuid() const noexcept
         {
-            if (!m_pEd || m_pEd->State().m_CurrentLevel.empty()) return {};
+            if (!m_pEd) return {};
+            if (m_pEd->State().isPrefabEditor()) return PrefabResourceGuid(m_pEd->State());         // a Prefab Editor's document is the prefab
+            if (m_pEd->State().m_CurrentLevel.empty()) return {};
             return xresource::full_guid{ m_pEd->State().m_CurrentLevel.m_Instance, xecs::level::type_guid_v };
         }
 
@@ -33,15 +35,15 @@ namespace xlevel
 
         std::string getDisplayName() const noexcept override
         {
-            if (!m_pEd || m_pEd->State().m_CurrentLevel.empty()) return {};
+            if (!m_pEd || !m_pEd->State().HasDocument()) return {};
             std::string Name;
             xresource_editor::RemapGUIDToString(Name, CurrentGuid());
-            return Name.empty() ? std::string("Level") : Name;
+            return Name.empty() ? std::string(m_pEd->State().isPrefabEditor() ? "Prefab" : "Level") : Name;
         }
 
         bool Load() noexcept override
         {
-            return m_pEd && !m_pEd->State().m_CurrentLevel.empty();
+            return m_pEd && m_pEd->State().HasDocument();
         }
 
         std::string Save() noexcept override
@@ -50,7 +52,7 @@ namespace xlevel
             auto& State = m_pEd->State();
             if (State.m_CurrentLevel.empty() && State.m_OpenScenes.empty())
                 return "LevelDocument: nothing open";
-            SaveEverything(m_pEd->World(), State);
+            if (!SaveEverything(m_pEd->World(), State) && State.isPrefabEditor()) return "the prefab was not saved (it breaks a rule of a prefab: one root, references inside)";
             MarkDocumentClean(State, m_pEd->m_Undo);
             // Save restores just-loaded: drop write locks so peers can edit again.
             if (auto* pHost = xeditor::host::current())
@@ -165,7 +167,7 @@ namespace xlevel
 
         void Sync(xeditor::host& Host, level_state& State) noexcept
         {
-            const bool bWant = !State.m_CurrentLevel.empty();
+            const bool bWant = State.HasDocument();
 
             if (bWant && !bInHost)
             {
@@ -209,6 +211,25 @@ namespace xlevel
         if (pMe == nullptr) return true;
 
         const auto Name = Cmd.substr(0, Cmd.find(' '));
+
+        // A context scene of a Prefab Editor (a scene brought in to test the prefab against) is never edited or picked: its entities are there to play with, not part of the document.
+        if (!pEd->State().m_ContextScenes.empty())
+        {
+            const auto Tokens = xcmdline::parser::Tokenize(Cmd);
+            for (std::size_t i = 0; i + 1 < Tokens.size(); ++i)
+            {
+                if (Tokens[i].m_bQuoted || Tokens[i].m_Text != "-Scene") continue;
+                const auto Scene = xscene::commands::ParseSceneGuid(Tokens[i + 1].m_Text);
+                const auto& Contexts = pEd->State().m_ContextScenes;
+                if (!Scene.empty() && std::find(Contexts.begin(), Contexts.end(), Scene) != Contexts.end())
+                {
+                    xeditor::NotifyToast("Read-only: this scene is a context of the Prefab Editor (it plays with the prefab; it is never edited, picked or saved)");
+                    return false;
+                }
+                break;
+            }
+        }
+
         if (Name == "Select" || Name == "SelectLevel" || Name == "ToggleMultiSelect" || Name == "ClearSelection") return true;
 
         // Adding/removing a Scene names it but changes the Level's membership list, not the Scene.

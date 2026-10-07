@@ -12,6 +12,20 @@ namespace xlevel
     {
         xecs::level::guid   m_CurrentLevel  = {};
 
+        // The Prefab Editor (prefabs_plan.md, phase 5): this editor's document is a prefab, not a Level. The prefab is open as a scene of its own guid
+        // (xecs::scene::instance::m_bPrefabDocument), in m_OpenScenes like any scene; the Level fields above stay empty.
+        xecs::prefab::guid  m_CurrentPrefab = {};
+        // Scenes brought in to test the prefab against: loaded, so they play with it; they are not in m_OpenScenes, so nothing of them is picked, saved or edited,
+        // and they are no part of the prefab. Not kept between editors.
+        std::vector<xecs::scene::guid> m_ContextScenes;
+        // The folders this editor owns that hold a state of the prefab document (what an undo step of a change that came from another editor goes back to or forward to). Removed when it closes.
+        std::vector<std::wstring>      m_PrefabSnapshots;
+
+        // A Level or a prefab is open: the editor has a document (a scene opened alone, with neither, is not one).
+        bool HasDocument() const noexcept { return !m_CurrentLevel.empty() || !m_CurrentPrefab.empty(); }
+        bool isPrefabEditor() const noexcept { return !m_CurrentPrefab.empty(); }
+        xecs::scene::guid PrefabScene() const noexcept { return xecs::scene::guid{ .m_Instance = m_CurrentPrefab.m_Instance }; }
+
         std::string m_TreeSearchString;
 
         // What the editor has turned off in the entities of the open scenes (editor_disable, editor_no_render) - counted every few frames for the note of the Level Tree.

@@ -19,6 +19,8 @@ namespace xlevel
     // trustworthy for this specific font).
     constexpr const char* LevelIcon() noexcept { return "\xEE\x9D\xB4"; }
     constexpr const char* SceneIcon() noexcept { return "\xEE\xA4\x9B"; }
+    // The Prefab Editor's top row: Segoe MDL2 Assets "Package" (U+E7B8), the one thing a prefab is - a package of entities.
+    constexpr const char* PrefabIcon() noexcept { return "\xEE\x9E\xB8"; }
 
     // Dependencies folder - Segoe MDL2 Assets "Link" (U+E71B). Same E7xx band as Search
     // (\xEE\x9C\xA1) / Refresh (\xEE\x9C\xAC), which already render in this atlas; deliberately

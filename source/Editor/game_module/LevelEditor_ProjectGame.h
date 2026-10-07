@@ -71,6 +71,51 @@ namespace xlevel
     // The Game a Level runs under: the one it names. A Level has to name one (0: it does not, and does not know what to run).
     inline std::uint64_t GameOfLevel( std::uint64_t Level ) noexcept { return ReadLevelGame(ProjectRoot().wstring(), Level); }
 
+    // The Game a prefab plays with in its Prefab Editor (prefabs_plan.md, D2), as the prefab's Descriptor.txt says (0: it names none: no scripts, components or systems of any module, as a Level that
+    // names none). Read from disk, which is where SetPrefabGame writes at once; every save of the prefab keeps it.
+    inline std::wstring PrefabFolder( const std::wstring& Project, std::uint64_t Prefab ) noexcept
+    {
+        return std::format(L"{}/Descriptors/Prefab/{:02X}/{:02X}/{:X}.desc", Project, Prefab & 0xFF, (Prefab >> 8) & 0xFF, Prefab);
+    }
+    inline std::uint64_t ReadPrefabGame( const std::wstring& Project, std::uint64_t Prefab ) noexcept
+    {
+        xecs::prefab::descriptor D;
+        xproperty::settings::context Context{};
+        if (auto Err = D.Serialize(true, PrefabFolder(Project, Prefab) + L"/Descriptor.txt", Context); Err) return 0;
+        return D.m_Game.m_Instance.m_Value;
+    }
+    inline std::uint64_t GameOfPrefab( std::uint64_t Prefab ) noexcept { return ReadPrefabGame(ProjectRoot().wstring(), Prefab); }
+
+    // The Game of the Level or the prefab a Level editor is opened for.
+    inline std::uint64_t GameOfDocument( xresource::full_guid Guid ) noexcept
+    {
+        return Guid.m_Type == xecs::prefab::type_guid_v ? GameOfPrefab(Guid.m_Instance.m_Value) : GameOfLevel(Guid.m_Instance.m_Value);
+    }
+
+    // Names the Game a prefab plays with: its Descriptor.txt rewritten with it (the members stay as they are on disk). "" or why not. A prefab in the old format has no descriptor of the new one to
+    // write into: UpgradeProject first.
+    inline std::string WritePrefabGame( const std::wstring& Project, std::uint64_t Prefab, std::uint64_t Game ) noexcept
+    {
+        const auto Folder = PrefabFolder(Project, Prefab);
+        std::error_code Ec;
+        if (!std::filesystem::is_directory(std::filesystem::path(Folder), Ec)) return "the prefab is not in the project";
+        xecs::prefab::descriptor D;
+        xproperty::settings::context Context{};
+        const auto File = Folder + L"/Descriptor.txt";
+        if (!std::filesystem::exists(std::filesystem::path(File), Ec)) return "the prefab has no Descriptor.txt yet (it was never saved)";
+        if (auto Err = D.Serialize(true, File, Context); Err) return std::format("the descriptor of the prefab cannot be read: {}", Err.getMessage());
+        if (D.m_Root == xecs::scene::invalid_permanent_id_v) return "the prefab is in the old format (one Entity.txt): UpgradeProject converts it first";
+        D.m_Game = xecs::level::game_ref{ xresource::instance_guid{ Game } };
+        std::string Why;
+        const bool bWritten = xscript::module::Retry([&]
+        {
+            xproperty::settings::context WriteContext{};
+            if (auto Err = D.Serialize(false, File, WriteContext); Err) { Why = std::string(Err.getMessage()); return false; }
+            return true;
+        });
+        return bWritten ? std::string{} : "the prefab could not be saved: " + Why;
+    }
+
     //------------------------------------------------------------------------------------------------
     // What the thread that builds Game.dll needs to know about the Game project, as files. The Game resource and each of its modules are compiled by the resource pipeline
     // (the modules first, then the Game, which writes <project>/Cache/Script/<Game guid>/CMakeLists.txt); the build waits for that to be over, and has to be able to tell a compile that has
