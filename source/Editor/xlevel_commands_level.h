@@ -267,9 +267,9 @@ namespace xlevel::commands
             std::string Out;
             for (auto& [Id, Entity] : pScene->m_LocalToRuntime)
             {
-                std::string Label = std::format("Entity #{:08X}", Id);
+                std::string Label = std::format("Entity #{}", xecs::scene::FormatPermanentId(Id));
                 if (auto* pName = xscene::FindEntityName(*pScene, Id)) Label = *pName;
-                Out += std::format("{:08X}  {}\n", Id, Label);
+                Out += std::format("{}  {}\n", xecs::scene::FormatPermanentId(Id), Label);
             }
             return Out;
         }
@@ -321,7 +321,7 @@ namespace xlevel::commands
                 {
                     Out += std::format("[{}] {:08X} ({} entities)\n", It->m_Name, static_cast<std::uint32_t>(It->m_Id), It->m_Entities.size());
                     for (auto Id : It->m_Entities)
-                        Out += std::format("  - {:08X}\n", Id);
+                        Out += std::format("  - {}\n", xecs::scene::FormatPermanentId(Id));
                 }
                 else
                 {
@@ -337,7 +337,7 @@ namespace xlevel::commands
                     const std::string Indent(static_cast<std::size_t>(Depth) * 2, ' ');
                     Out += std::format("{}[{}] {:08X} ({} entities)\n", Indent, F.m_Name, static_cast<std::uint32_t>(F.m_Id), F.m_Entities.size());
                     for (auto Id : F.m_Entities)
-                        Out += std::format("{}  - {:08X}\n", Indent, Id);
+                        Out += std::format("{}  - {}\n", Indent, xecs::scene::FormatPermanentId(Id));
                     Walk(F.m_Id, Depth + 1);
                 }
             };

@@ -292,10 +292,10 @@ namespace xlevel
     {
         auto& Ecs = xlioncore::Ecs(GameMgr);
         std::vector<tree_entity> Out;
-        std::set<std::pair<std::uint64_t, std::uint32_t>> Seen;
+        std::set<std::pair<std::uint64_t, xecs::scene::permanent_id>> Seen;
         std::function<void(xecs::scene::guid, xecs::scene::permanent_id)> Walk = [&](xecs::scene::guid Scene, xecs::scene::permanent_id Id) noexcept
         {
-            if (!Seen.insert({ Scene.m_Instance.m_Value, static_cast<std::uint32_t>(Id) }).second) return;
+            if (!Seen.insert({ Scene.m_Instance.m_Value, Id }).second) return;
             auto* pScene = GameMgr.m_SceneMgr.Find(Scene);
             if (!pScene) return;
             auto It = pScene->m_LocalToRuntime.find(Id);
@@ -972,7 +972,7 @@ namespace xlevel
                                             if (!State.m_TreeSearchString.empty() && !xeditor::ContainsCaseInsensitive(EntityLabel, State.m_TreeSearchString))
                                                 return false;
 
-                                            ImGui::PushID(static_cast<int>(Id));
+                                            ImGui::PushID(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(Id)));      // the whole id (an int would drop its high half)
                                             ImGui::TableNextRow();
                                             ImGui::TableSetColumnIndex(kLevelTreeColumnName);
                                             const bool bEntitySelected = (State.m_SelectedEntityId == Id);
@@ -1509,14 +1509,14 @@ namespace xlevel
                         // "Runtime" - a read-only row, sibling to this Level's own Scene rows, listing every
                         // live ECS entity that belongs to no open Scene. Entities spawned while the game runs
                         // sit directly under it (direct user request: "those entities don't belong in any
-                        // scene"); the ECS's own system entities go in sub-folders - "Prefabs" (the prefab
-                        // templates instances are copied from) and "Share Components" (the entity holding
-                        // each distinct share-component value). Still no drag-drop, context menu or delete -
-                        // read-only, synthesized every frame. Counts are per-archetype sums; the entity
-                        // lists are only walked while their folder is expanded.
+                        // scene"); the share-entities (the entity holding each distinct share-component value)
+                        // go in a "Share Components" sub-folder. The prefab templates are not listed: they are
+                        // the prefab manager's, not the world's content (prefabs_plan.md, phase 1). Still no
+                        // drag-drop, context menu or delete - read-only, synthesized every frame. Counts are
+                        // per-archetype sums; the entity lists are only walked while their folder is expanded.
                         {
                             using runtime_kind = xlioncore::xECSEditor;
-                            constexpr auto SPAWNED = xlioncore::xECSEditor::SPAWNED, PREFAB = xlioncore::xECSEditor::PREFAB, SHARE = xlioncore::xECSEditor::SHARE;
+                            constexpr auto SPAWNED = xlioncore::xECSEditor::SPAWNED, SHARE = xlioncore::xECSEditor::SHARE;
                             constexpr int  KIND_COUNT = xlioncore::xECSEditor::KIND_COUNT;
 
                             const auto IsInOpenScene = [&](xecs::component::entity E) noexcept
@@ -1537,7 +1537,7 @@ namespace xlevel
                                     Count[SPAWNED] -= static_cast<int>(pOpenScene->m_LocalToRuntime.size());
                             Count[SPAWNED] = std::max(0, Count[SPAWNED]);
 
-                            const int RuntimeCount = Count[SPAWNED] + Count[PREFAB] + Count[SHARE];
+                            const int RuntimeCount = Count[SPAWNED] + Count[SHARE];
 
                             const auto RenderEntities = [&](xlioncore::xECSEditor::runtime_kind Kind) noexcept
                             {
@@ -1583,7 +1583,6 @@ namespace xlevel
 
                             if (bRuntimeOpen)
                             {
-                                RenderSubFolder("Prefabs",          PREFAB);
                                 RenderSubFolder("Share Components", SHARE);
                                 RenderEntities(SPAWNED);
                                 ImGui::TreePop();

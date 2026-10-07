@@ -196,11 +196,11 @@ namespace xlevel::commands
             File.Write(nHits);
             for (auto& Hit : Hits)
             {
-                File.Write(static_cast<std::uint32_t>(Hit.m_HolderId));
+                File.Write(Hit.m_HolderId);
                 File.Write(Hit.m_ComponentGuid);
                 xeditor::WriteString(File, Hit.m_Path);
                 File.Write(Hit.m_BeforeScene.m_Instance.m_Value);
-                File.Write(static_cast<std::uint32_t>(Hit.m_BeforeId));
+                File.Write(Hit.m_BeforeId);
             }
         }
 
@@ -211,7 +211,7 @@ namespace xlevel::commands
             std::uint32_t Index = 0; File.Read(Index);
             std::uint32_t bHadClear = 0; File.Read(bHadClear);
             std::uint32_t nHits = 0; File.Read(nHits);
-            struct hit_rec { std::uint32_t HolderId; std::uint64_t Comp; std::string Path; std::uint64_t BeforeScene; std::uint32_t BeforeId; };
+            struct hit_rec { xecs::scene::permanent_id HolderId; std::uint64_t Comp; std::string Path; std::uint64_t BeforeScene; xecs::scene::permanent_id BeforeId; };
             std::vector<hit_rec> Hits;
             Hits.reserve(nHits);
             for (std::uint32_t i = 0; i < nHits; ++i)
