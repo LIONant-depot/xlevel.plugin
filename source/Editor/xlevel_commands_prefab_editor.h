@@ -38,6 +38,33 @@ namespace xlevel::commands
     };
 
     //================================================================================================
+    // OpenScene - opens a Scene in its own editor (a Scene Editor: the same editor as a Level's, with the Scene as its document), next to the ones already open. The Scene is not added to any Level (that is
+    // dropping it on a Level, or AddScene). One writer per Scene: a Scene that a Level or another Scene Editor has open is not opened again: that editor is brought to the front and the reply says so.
+    //================================================================================================
+    struct open_scene_cmd : level_query_command
+    {
+        open_scene_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "OpenScene", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override
+        {
+            return "Opens a Scene in its own editor (a Scene Editor: its tree, inspector, viewport, undo, Save and Play), next to the ones already open; it is not added to any Level. A Scene that a Level or another editor already has open is not opened again: that editor is brought to the front. The commands of the scene editor then go to it as Name\\Command. Usage: OpenScene -Scene hexguid";
+        }
+        void RegisterArguments() noexcept override
+        {
+            m_hScene = m_Parser.addOption("Scene", "Scene guid, 16 hex digits", true, 1);
+        }
+
+        std::string Query() noexcept override
+        {
+            auto Arg = m_Parser.getOptionArgAs<std::string>(m_hScene, 0);
+            if (std::holds_alternative<xerr>(Arg)) return "OpenScene: bad arguments";
+            if (!g_OpenLevelSession) return "OpenScene: no editor available";
+            const std::uint64_t Value = std::strtoull(std::get<std::string>(Arg).c_str(), nullptr, 16);
+            return g_OpenLevelSession(xresource::full_guid{ .m_Instance = { Value }, .m_Type = xecs::scene::type_guid_v });
+        }
+        xcmdline::parser::handle m_hScene;
+    };
+
+    //================================================================================================
     // AddContextScene / RemoveContextScene / ListContextScenes - the scenes a Prefab Editor has brought in to test the prefab against. They are loaded, so they play with it;
     // they are never picked, edited or saved, and they are no part of the prefab (a reference from the prefab to one of them is refused when it is saved). Not undoable (they
     // are the editor's, not the document's) and not kept when the editor closes.

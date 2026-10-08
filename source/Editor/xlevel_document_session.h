@@ -57,12 +57,14 @@ namespace xlevel
         for (const auto SceneGuid : State.m_ContextScenes)         // a Prefab Editor's context scenes go with it
             xlioncore::Ecs(GameMgr).ReleaseLoadScene(SceneGuid);
         State.m_ContextScenes.clear();
-        if (State.isPrefabEditor()) ErasePrefabGameOverride(State.m_CurrentPrefab.m_Instance.m_Value);        // (Edit in Context: the Game of the Level was this editor's only while it was open)
+        if (State.isPrefabEditor()) ErasePrefabGameOverride(State.m_CurrentPrefab.m_Instance.m_Value);
+        if (State.isSceneEditor()) ErasePrefabGameOverride(State.m_CurrentScene.m_Instance.m_Value);        // (the Game a Scene Editor borrowed, GiveSceneAGameIfNone)        // (Edit in Context: the Game of the Level was this editor's only while it was open)
         State.m_ContextEdit = {};
 
         State.m_bLevelEditorOpen = false;
         State.m_CurrentLevel = {};
         State.m_CurrentPrefab = {};
+        State.m_CurrentScene  = {};
         State.m_SelectedEntityId    = xecs::scene::invalid_permanent_id_v;
         State.m_SelectedEntity      = {};
         State.m_SelectedEntityScene = {};
@@ -148,7 +150,7 @@ namespace xlevel
 
     inline void QueueOpenLevel(xresource::full_guid LevelGuid) noexcept
     {
-        if (LevelGuid.m_Type != xecs::level::type_guid_v && LevelGuid.m_Type != xecs::prefab::type_guid_v) return;      // a prefab opens in its own editor too (a Prefab Editor)
+        if (LevelGuid.m_Type != xecs::level::type_guid_v && LevelGuid.m_Type != xecs::prefab::type_guid_v && LevelGuid.m_Type != xecs::scene::type_guid_v) return;      // a prefab opens in its own editor too (a Prefab Editor)
         if (std::find(g_PendingOpenLevels.begin(), g_PendingOpenLevels.end(), LevelGuid) == g_PendingOpenLevels.end())
             g_PendingOpenLevels.push_back(LevelGuid);
     }
@@ -159,7 +161,7 @@ namespace xlevel
         // One question per editor: the id carries the document's guid. Two editors asked at once (the dock's close button closes every tab of the window) must not share one popup, or the buttons of one
         // answer for the other.
         char Title[96];
-        std::snprintf(Title, sizeof(Title), "Save changes?###LevelDocument%016llX", static_cast<unsigned long long>(State.isPrefabEditor() ? State.m_CurrentPrefab.m_Instance.m_Value : State.m_CurrentLevel.m_Instance.m_Value));
+        std::snprintf(Title, sizeof(Title), "Save changes?###LevelDocument%016llX", static_cast<unsigned long long>(State.isPrefabEditor() ? State.m_CurrentPrefab.m_Instance.m_Value : State.isSceneEditor() ? State.m_CurrentScene.m_Instance.m_Value : State.m_CurrentLevel.m_Instance.m_Value));
         if (State.m_bAwaitingSaveBeforeClose)
             ImGui::OpenPopup(Title);
 
@@ -167,6 +169,7 @@ namespace xlevel
         {
             const bool bOpeningOther = !State.m_PendingOpenLevelAfterClose.empty();
             ImGui::TextUnformatted(State.isPrefabEditor() ? "The prefab has unsaved changes."
+                : State.isSceneEditor()                  ? "The scene has unsaved changes."
                 : State.m_CurrentLevel.empty()           ? "The open scene(s) have unsaved changes."
                                                          : "The current Level has unsaved changes.");
             ImGui::TextWrapped(bOpeningOther

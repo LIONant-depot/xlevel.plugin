@@ -34,11 +34,12 @@ namespace xlevel::editor_tabs
         char m_Inspector[64]       = {};
         char m_SystemRegistry[64]  = {};
 
-        void Init( std::uint64_t Key, bool bPrefab = false ) noexcept
+        void Init( std::uint64_t Key, bool bPrefab = false, bool bScene = false ) noexcept
         {
             std::snprintf(m_RootId,         sizeof(m_RootId),         "LevelEditor.%016llX",                    static_cast<unsigned long long>(Key));
             std::snprintf(m_Editor,         sizeof(m_Editor),         "Editor###LevelEditor.Editor.%016llX",    static_cast<unsigned long long>(Key));
-            if (bPrefab) std::snprintf(m_LevelTree, sizeof(m_LevelTree), "Prefab Tree###LevelEditor.LevelTree.%016llX", static_cast<unsigned long long>(Key));     // the same id: only the title is the prefab's
+            if (bScene)  std::snprintf(m_LevelTree, sizeof(m_LevelTree), "Scene Tree###LevelEditor.LevelTree.%016llX",  static_cast<unsigned long long>(Key));
+            else if (bPrefab) std::snprintf(m_LevelTree, sizeof(m_LevelTree), "Prefab Tree###LevelEditor.LevelTree.%016llX", static_cast<unsigned long long>(Key));     // the same id: only the title is the prefab's
             else         std::snprintf(m_LevelTree, sizeof(m_LevelTree), "Level Tree###LevelEditor.LevelTree.%016llX",  static_cast<unsigned long long>(Key));
             std::snprintf(m_Inspector,      sizeof(m_Inspector),      "Inspector###LevelEditor.Inspector.%016llX", static_cast<unsigned long long>(Key));
             std::snprintf(m_SystemRegistry, sizeof(m_SystemRegistry), "System Registry###LevelEditor.SystemRegistry.%016llX", static_cast<unsigned long long>(Key));

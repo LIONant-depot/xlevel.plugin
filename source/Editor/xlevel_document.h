@@ -27,6 +27,7 @@ namespace xlevel
         {
             if (!m_pEd) return {};
             if (m_pEd->State().isPrefabEditor()) return PrefabResourceGuid(m_pEd->State());         // a Prefab Editor's document is the prefab
+            if (m_pEd->State().isSceneEditor()) return xresource::full_guid{ m_pEd->State().m_CurrentScene.m_Instance, xecs::scene::type_guid_v };      // a Scene Editor's, the scene
             if (m_pEd->State().m_CurrentLevel.empty()) return {};
             return xresource::full_guid{ m_pEd->State().m_CurrentLevel.m_Instance, xecs::level::type_guid_v };
         }
@@ -38,7 +39,7 @@ namespace xlevel
             if (!m_pEd || !m_pEd->State().HasDocument()) return {};
             std::string Name;
             xresource_editor::RemapGUIDToString(Name, CurrentGuid());
-            return Name.empty() ? std::string(m_pEd->State().isPrefabEditor() ? "Prefab" : "Level") : Name;
+            return Name.empty() ? std::string(m_pEd->State().isPrefabEditor() ? "Prefab" : m_pEd->State().isSceneEditor() ? "Scene" : "Level") : Name;
         }
 
         bool Load() noexcept override

@@ -36,9 +36,14 @@ namespace xlevel
         // The folders this editor owns that hold a state of the prefab document (what an undo step of a change that came from another editor goes back to or forward to). Removed when it closes.
         std::vector<std::wstring>      m_PrefabSnapshots;
 
-        // A Level or a prefab is open: the editor has a document (a scene opened alone, with neither, is not one).
-        bool HasDocument() const noexcept { return !m_CurrentLevel.empty() || !m_CurrentPrefab.empty(); }
+        // The Scene Editor: this editor's document is a Scene opened by itself (a double click on it in the Asset Browser, OpenScene), not part of any Level. It is the one scene in m_OpenScenes; the Level
+        // and prefab fields stay empty.
+        xecs::scene::guid   m_CurrentScene = {};
+
+        // A Level, a prefab or a Scene is open: the editor has a document.
+        bool HasDocument() const noexcept { return !m_CurrentLevel.empty() || !m_CurrentPrefab.empty() || !m_CurrentScene.empty(); }
         bool isPrefabEditor() const noexcept { return !m_CurrentPrefab.empty(); }
+        bool isSceneEditor() const noexcept { return !m_CurrentScene.empty(); }
         xecs::scene::guid PrefabScene() const noexcept { return xecs::scene::guid{ .m_Instance = m_CurrentPrefab.m_Instance }; }
 
         std::string m_TreeSearchString;

@@ -273,18 +273,18 @@ namespace xlevel
         return S;
     }
 
-    // A prefab that names no Game would open with no module of any Game: none of the components of the Soccer prefabs, say, load. It works under another Game while its editor is open, in memory (nothing is
-    // written into the prefab: SetPrefabGame keeps it), chosen in this order: the one the prefab names (then nothing is done); the Game of the Level (or prefab) the person is working in; the project's only
-    // Game. None of those: it stays as it was, with the message that says so.
-    inline void GivePrefabAGameIfNone( std::uint64_t Prefab ) noexcept
+    // A document that names no Game would open with no module of any Game: none of the components of the Soccer prefabs, say, load. It works under another Game while its editor is open, in memory (nothing is
+    // written into the prefab: SetPrefabGame keeps it), chosen in this order: the one it names (then nothing is done); the Game of the Level (or prefab, or Scene) the person is working in; the project's only
+    // Game. None of those: it stays as it was, with the message that says so. A Scene names no Game of its own: it always borrows.
+    inline void BorrowAGame( std::uint64_t Doc ) noexcept
     {
-        if( g_PrefabGameOverride.contains(Prefab) || ReadPrefabGame(ProjectRoot().wstring(), Prefab) != 0 ) return;
         std::uint64_t Game = 0;
         const char*   From = "";
         if( auto* pActive = g_pActiveLevelContext )
         {
             auto& S = pActive->State();
-            if( S.isPrefabEditor() )           Game = GameOfPrefab(S.m_CurrentPrefab.m_Instance.m_Value);
+            if( S.isPrefabEditor() )             Game = GameOfPrefab(S.m_CurrentPrefab.m_Instance.m_Value);
+            else if( S.isSceneEditor() )         Game = GameOfScene(S.m_CurrentScene.m_Instance.m_Value);
             else if( !S.m_CurrentLevel.empty() ) Game = GameOfLevel(S.m_CurrentLevel.m_Instance.m_Value);
             From = "the Level";
         }
@@ -294,8 +294,33 @@ namespace xlevel
             if( Games.size() == 1 ) { Game = Games.begin()->first; From = "the project's only Game"; }
         }
         if( Game == 0 ) return;
-        g_PrefabGameOverride[Prefab] = Game;
-        g_PrefabGameFrom[Prefab]     = From;
+        g_PrefabGameOverride[Doc] = Game;
+        g_PrefabGameFrom[Doc]     = From;
+    }
+
+    inline void GivePrefabAGameIfNone( std::uint64_t Prefab ) noexcept
+    {
+        if( g_PrefabGameOverride.contains(Prefab) || ReadPrefabGame(ProjectRoot().wstring(), Prefab) != 0 ) return;
+        BorrowAGame(Prefab);
+    }
+
+    inline void GiveSceneAGameIfNone( std::uint64_t Scene ) noexcept
+    {
+        if( g_PrefabGameOverride.contains(Scene) ) return;
+        BorrowAGame(Scene);
+    }
+
+    // The Scene of a Scene Editor and the Game it works under: always borrowed (see BorrowAGame), so the status says where it came from.
+    inline level_game_status StatusOfSceneGame( std::uint64_t Scene ) noexcept
+    {
+        auto S = StatusOfGameOf(GameOfScene(Scene), { Scene }, /*bPrefab*/ false);
+        if( const auto It = g_PrefabGameFrom.find(Scene); It != g_PrefabGameFrom.end() && g_PrefabGameOverride.contains(Scene) )
+        {
+            S.m_UsingFrom = It->second;
+            S.m_bNamed    = false;
+        }
+        else S.m_Issue = S.m_Issue.empty() ? std::string("This Scene has no Game to run under: open a Level that has one (or give the project one).") : S.m_Issue;
+        return S;
     }
 
     // The modules a Game resource lists (read from its Descriptor.txt: the Game does not have to be the project's, or loaded). Empty and false when the Game is not in the project.

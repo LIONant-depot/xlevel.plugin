@@ -297,6 +297,7 @@ namespace xlevel
         std::uint32_t                              m_SeenBuildSeq = 0;                 // the last finished Game.dll build this editor reacted to
         bool                                       m_bOpenRequested = false;           // a Level was asked for (closing it closes this editor)
         std::string                                m_OpenError;                        // why a prefab could not be opened as the document (the OpenPrefab command says it)
+        bool isScene() const noexcept { return m_LevelGuid.m_Type == xecs::scene::type_guid_v && !m_LevelGuid.m_Instance.empty(); }     // a Scene Editor: its document is a Scene opened by itself
         bool isPrefab() const noexcept { return m_LevelGuid.m_Type == xecs::prefab::type_guid_v && !m_LevelGuid.m_Instance.empty(); }     // a Prefab Editor: its document is a prefab
         xecs::prefab::mgr::save_redirect           m_PrefabRedirect;                   // one writer per prefab: what the core asks before it writes a prefab, and hands the saved state to
 
@@ -453,7 +454,7 @@ namespace xlevel
             : m_pDevice(pDevice)
         {
             m_LevelGuid = Guid;
-            m_Names.Init(Guid.m_Instance.m_Value, Guid.m_Type == xecs::prefab::type_guid_v);
+            m_Names.Init(Guid.m_Instance.m_Value, Guid.m_Type == xecs::prefab::type_guid_v, Guid.m_Type == xecs::scene::type_guid_v);
 
             if (auto Err = m_Undo.Init({}, false); !Err.empty())
                 xeditor::NotifyModal(std::format("Level session xundo Init failed: {}", Err));
@@ -475,6 +476,7 @@ namespace xlevel
             m_GamePlugin.m_CoreModule   = CoreModule();
             m_GamePlugin.m_RenderModule = RenderModule();
             m_GamePlugin.m_pCoreSet     = m_pSet;                                           // keeps the copies alive for as long as the Game.dll bound to them
+            if (isScene()) xlevel::GiveSceneAGameIfNone(m_LevelGuid.m_Instance.m_Value);          // a Scene names no Game: it works under the Level's (or the project's only one), in memory
             if (isPrefab()) xlevel::GivePrefabAGameIfNone(m_LevelGuid.m_Instance.m_Value);          // a prefab that names none works under the Level's Game (or the project's only one), in memory
             m_GamePlugin.m_Game         = m_LevelGuid.m_Instance.empty() ? 0 : xlevel::GameOfDocument(m_LevelGuid);          // the Game the Level names, or the one the prefab plays with
 #if defined(XECS_BUILD_SHARED)
@@ -489,6 +491,7 @@ namespace xlevel
                     {
                         std::vector<std::uint64_t> Scenes;
                         for (auto& S : State.m_OpenScenes) Scenes.push_back(S.m_Instance.m_Value);
+                        if (State.isSceneEditor()) return xlevel::StatusOfSceneGame(State.m_CurrentScene.m_Instance.m_Value).m_Issue;
                         if (State.isPrefabEditor())          // the prefab and the scenes it is tested against: the Game the prefab names has to list what they need
                         {
                             for (auto& S : State.m_ContextScenes) Scenes.push_back(S.m_Instance.m_Value);
@@ -595,7 +598,8 @@ namespace xlevel
             // A prefab made here plays with the Game this editor works under: the Game of its Level (or of the prefab it was made in), until it is given another (SetPrefabGame).
             m_CmdContext.m_OnPrefabMade = [this](xresource::full_guid Prefab) noexcept
             {
-                const auto Game = m_State.isPrefabEditor() ? xlevel::GameOfPrefab(m_State.m_CurrentPrefab.m_Instance.m_Value)
+                const auto Game = m_State.isSceneEditor() ? xlevel::GameOfScene(m_State.m_CurrentScene.m_Instance.m_Value)
+                                : m_State.isPrefabEditor() ? xlevel::GameOfPrefab(m_State.m_CurrentPrefab.m_Instance.m_Value)
                                 : m_State.m_CurrentLevel.empty() ? std::uint64_t{ 0 } : xlevel::GameOfLevel(m_State.m_CurrentLevel.m_Instance.m_Value);
                 if (Game) if (auto Why = xlevel::WritePrefabGame(xlevel::ProjectRoot().wstring(), Prefab.m_Instance.m_Value, Game); !Why.empty())
                     xeditor::NotifyToast(std::format("The new prefab could not be given the Game it was made under: {}", Why));
@@ -688,6 +692,15 @@ namespace xlevel
                 xlevel::MarkDocumentClean(m_State, m_Undo);
                 m_State.m_bPendingStartGameReloadAfterOpen = true;
             }
+            else if (isScene())
+            {
+                // A Scene Editor: the document is the scene, opened by itself (xlevel_scene_document.h).
+                m_bOpenRequested = true;
+                m_OpenError      = xlevel::OpenSceneDocument(*m_pGameMgr, m_State, m_LevelGuid);
+                if (!m_OpenError.empty()) xeditor::NotifyToast(std::format("Failed to open the scene: {}", m_OpenError));
+                xlevel::MarkDocumentClean(m_State, m_Undo);
+                m_State.m_bPendingStartGameReloadAfterOpen = true;
+            }
             else if (!m_LevelGuid.m_Instance.empty())
             {
                 m_bOpenRequested = true;
@@ -734,6 +747,7 @@ namespace xlevel
             m_pEcs->SetPrefabSaveRedirect(nullptr);        // the core keeps the pointer for the worlds it makes: not one into an editor that is going
             m_pEcs->DestroyWorld();
             xlevel::ReleasePrefabSnapshots(m_State);
+            if (m_State.isSceneEditor()) xlevel::ErasePrefabGameOverride(m_State.m_CurrentScene.m_Instance.m_Value);
             if (m_State.isPrefabEditor()) xlevel::ErasePrefabGameOverride(m_State.m_CurrentPrefab.m_Instance.m_Value);        // (Edit in Context: the Game of the Level was this editor's only while it was open)
             m_Grid.Release();
 
@@ -750,7 +764,7 @@ namespace xlevel
         xeditor::IDocument& getDocument() noexcept override { return m_Document; }
         // What the editor menu asks of a Level editor: its unsaved changes are the Level's, its save is the toolbar's, and its close is the one that asks (save-before-close) when a Level is open.
         bool                HasPendingChanges() noexcept override { return xlevel::HasUnsavedDocumentChanges(m_State, m_Undo); }
-        std::string         DisplayName()       noexcept override { return m_State.isPrefabEditor() ? xeditor::ResolveResourceDisplayName(xlevel::PrefabResourceGuid(m_State), "Prefab") : xeditor::ResolveResourceDisplayName(m_State.m_CurrentLevel, "Level"); }
+        std::string         DisplayName()       noexcept override { return m_State.isSceneEditor() ? xeditor::ResolveResourceDisplayName(xresource::full_guid{ m_State.m_CurrentScene.m_Instance, xecs::scene::type_guid_v }, "Scene") : m_State.isPrefabEditor() ? xeditor::ResolveResourceDisplayName(xlevel::PrefabResourceGuid(m_State), "Prefab") : xeditor::ResolveResourceDisplayName(m_State.m_CurrentLevel, "Level"); }
         void                SaveChanges()       noexcept override { m_Actions.Save(); }
         void                RequestClose()      noexcept override
         {
@@ -846,6 +860,10 @@ namespace xlevel
                     xlioncore::Ecs(*m_pGameMgr).EnableBuilders(m_State.isPlaying());
                     if (!Level.empty())
                         xlevel::OpenLevel(*m_pGameMgr, m_State, xresource::full_guid{ Level.m_Instance, Level.m_Type });
+                    else if (m_State.isSceneEditor())
+                    {
+                        if (auto Why = xlevel::OpenSceneDocument(*m_pGameMgr, m_State, xresource::full_guid{ m_State.m_CurrentScene.m_Instance, xecs::scene::type_guid_v }); !Why.empty()) xeditor::NotifyToast(std::format("Failed to reopen the scene: {}", Why));
+                    }
                     else if (m_State.isPrefabEditor())
                         if (auto Why = xlevel::OpenPrefabDocument(*m_pGameMgr, m_State, xlevel::PrefabResourceGuid(m_State)); !Why.empty()) xeditor::NotifyToast(std::format("Failed to reopen the prefab: {}", Why));
                 }
@@ -853,6 +871,10 @@ namespace xlevel
             else if (!m_State.m_CurrentLevel.empty())
             {
                 xlevel::OpenLevel(*m_pGameMgr, m_State, xresource::full_guid{ m_State.m_CurrentLevel.m_Instance, m_State.m_CurrentLevel.m_Type });
+            }
+            else if (m_State.isSceneEditor())
+            {
+                if (auto Why = xlevel::OpenSceneDocument(*m_pGameMgr, m_State, xresource::full_guid{ m_State.m_CurrentScene.m_Instance, xecs::scene::type_guid_v }); !Why.empty()) xeditor::NotifyToast(std::format("Failed to reopen the scene: {}", Why));
             }
             else if (m_State.isPrefabEditor())
             {
@@ -968,7 +990,8 @@ namespace xlevel
                 std::vector<std::uint64_t> Scenes;
                 for (auto& S : m_State.m_OpenScenes) Scenes.push_back(S.m_Instance.m_Value);
                 for (auto& S : m_State.m_ContextScenes) Scenes.push_back(S.m_Instance.m_Value);
-                m_GameStatus = m_State.isPrefabEditor() ? xlevel::StatusOfPrefabGame(m_State.m_CurrentPrefab.m_Instance.m_Value, Scenes)
+                m_GameStatus = m_State.isSceneEditor() ? xlevel::StatusOfSceneGame(m_State.m_CurrentScene.m_Instance.m_Value)
+                                                        : m_State.isPrefabEditor() ? xlevel::StatusOfPrefabGame(m_State.m_CurrentPrefab.m_Instance.m_Value, Scenes)
                                                         : xlevel::StatusOfLevelGame(m_State.m_CurrentLevel.m_Instance.m_Value, Scenes);
                 m_State.m_WhyNotPlay = m_GameStatus.m_Issue;
             }
@@ -1017,7 +1040,7 @@ namespace xlevel
             Bar.m_OnCenter          = &session::CenterPlay;
             Bar.m_pEditor           = this;
             Bar.m_pDevice           = m_pDevice;
-            Bar.m_IconType          = isPrefab() ? xecs::prefab::type_guid_v : xecs::level::type_guid_v;
+            Bar.m_IconType          = isScene() ? xecs::scene::type_guid_v : isPrefab() ? xecs::prefab::type_guid_v : xecs::level::type_guid_v;
             xeditor::RenderEditorToolbar(Bar);
         }
 
@@ -1450,6 +1473,31 @@ namespace xlevel
             m_ToolEditor.RenderOverlay(ToolView);
         }
 
+        // What the Inspector shows while the Scene (the top row of the tree) is selected in a Scene Editor: the scene and the Game it works under. A Scene names no Game of its own: the editor borrows one (the Level's it
+        // was opened from, or the project's only one), in memory; the Game of a Level is given to the Level.
+        void RenderSceneView() noexcept
+        {
+            RefreshGameStatus();
+            ImGui::SetNextWindowPos(ImVec2(18, 18), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(480, 500), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin(m_Names.m_Inspector))
+            {
+                std::string Name;
+                xresource_editor::RemapGUIDToString(Name, xresource::full_guid{ m_State.m_CurrentScene.m_Instance, xecs::scene::type_guid_v });
+                ImGui::Text("Scene  %s", Name.empty() ? "(unnamed)" : Name.c_str());
+                ImGui::TextDisabled("%016llX", static_cast<unsigned long long>(m_State.m_CurrentScene.m_Instance.m_Value));
+                ImGui::SeparatorText("Game");
+                if (!m_GameStatus.m_Issue.empty())
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.45f, 0.42f, 1.0f));
+                    ImGui::TextWrapped("%s", m_GameStatus.m_Issue.c_str());
+                    ImGui::PopStyleColor();
+                }
+                else if (!m_GameStatus.m_UsingFrom.empty()) ImGui::TextWrapped("Works under the Game '%s', from %s (a Scene names none: the Level that has it gives it one).", m_GameStatus.m_Name.c_str(), m_GameStatus.m_UsingFrom.c_str());
+            }
+            ImGui::End();
+        }
+
         // What the Inspector shows while the prefab (the top row of the tree) is selected in a Prefab Editor: the prefab, the Game it plays with (a combo: SetPrefabGame, undoable), whether that Game
         // can run what the prefab needs, and the scenes it is tested against (a Scene dropped here is brought in; a button takes it out).
         void RenderPrefabView() noexcept
@@ -1609,7 +1657,9 @@ namespace xlevel
             }
 
             std::string LevelTabName;
-            if (m_State.isPrefabEditor())
+            if (m_State.isSceneEditor())
+                xresource_editor::RemapGUIDToString(LevelTabName, xresource::full_guid{ m_State.m_CurrentScene.m_Instance, xecs::scene::type_guid_v });
+            else if (m_State.isPrefabEditor())
                 xresource_editor::RemapGUIDToString(LevelTabName, xlevel::PrefabResourceGuid(m_State));
             else if (!m_State.m_CurrentLevel.empty())
                 xresource_editor::RemapGUIDToString(LevelTabName, xresource::full_guid{ m_State.m_CurrentLevel.m_Instance, m_State.m_CurrentLevel.m_Type });
@@ -1617,7 +1667,9 @@ namespace xlevel
                 LevelTabName = "Level";
 
             xresource::full_guid LevelDockGuid{};
-            if (m_State.isPrefabEditor())
+            if (m_State.isSceneEditor())
+                LevelDockGuid = xresource::full_guid{ m_State.m_CurrentScene.m_Instance, xecs::scene::type_guid_v };
+            else if (m_State.isPrefabEditor())
                 LevelDockGuid = xlevel::PrefabResourceGuid(m_State);
             else if (!m_State.m_CurrentLevel.empty())
             {
@@ -1640,7 +1692,7 @@ namespace xlevel
                 bool bTabOpen = m_State.m_bLevelEditorOpen;
                 bParentEditorVisible = xlevel::editor_tabs::RenderLevelEditorDockspace(
                     [this]() { RenderParentEditorToolbar(); }, m_Names,
-                    LevelTabName.c_str(), m_pDevice, isPrefab() ? xecs::prefab::type_guid_v : xecs::level::type_guid_v, LevelDockGuid, &bTabOpen);
+                    LevelTabName.c_str(), m_pDevice, isScene() ? xecs::scene::type_guid_v : isPrefab() ? xecs::prefab::type_guid_v : xecs::level::type_guid_v, LevelDockGuid, &bTabOpen);
                 if (!bTabOpen)
                 {
                     xlevel::RequestCloseLevel(*m_pGameMgr, m_State, m_Undo);
@@ -1714,6 +1766,7 @@ namespace xlevel
                 // The Level selected in the Level Tree: the Inspector tab shows the Level's own properties (its Game, its scenes) instead of an entity's
                 if (m_State.m_bRootSelected && !m_State.m_CurrentLevel.empty()) m_LevelView.Render(m_CmdContext, m_Names.m_Inspector);
                 else if (m_State.m_bRootSelected && m_State.isPrefabEditor())   RenderPrefabView();
+                else if (m_State.m_bRootSelected && m_State.isSceneEditor())    RenderSceneView();
                 else                                                            xscene::RenderEntityPropertiesPanel(m_CmdContext, m_Names.m_Inspector, m_EntityInspector, m_InspectorBridge, bSelectedLocked, ReadOnlyReason.c_str());
 
                 xlevel::editor_tabs::SetNextLevelEditorToolClass();
@@ -1827,6 +1880,13 @@ namespace xlevel
     // The Prefab Editor (prefabs_plan.md, phase 5): the same editor with a prefab as its document, opened by a double click on a Prefab in the Asset Browser or by OpenPrefab.
     inline const xeditor::auto_register_resource_editor g_PrefabRegistration
     { xecs::prefab::type_guid_v
+    , [](xresource::full_guid Guid, xresource_editor::library::guid LibraryGuid, xgpu::device* pDevice) -> std::unique_ptr<xeditor::resource_editor>
+      { return std::make_unique<session>(Guid, LibraryGuid, pDevice); }
+    };
+
+    // The Scene Editor (documentation/Editors/prefabs_plan.md): the same editor with a Scene as its document, opened by a double click on a Scene in the Asset Browser or by OpenScene.
+    inline const xeditor::auto_register_resource_editor g_SceneRegistration
+    { xecs::scene::type_guid_v
     , [](xresource::full_guid Guid, xresource_editor::library::guid LibraryGuid, xgpu::device* pDevice) -> std::unique_ptr<xeditor::resource_editor>
       { return std::make_unique<session>(Guid, LibraryGuid, pDevice); }
     };

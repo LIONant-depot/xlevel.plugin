@@ -9,6 +9,7 @@
 #include "plugins/xlevel.plugin/source/Editor/xlevel_command_context.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_ops.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_prefab_document.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_scene_document.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_save.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_document_session.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_document.h"

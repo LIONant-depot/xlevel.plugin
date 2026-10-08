@@ -93,9 +93,17 @@ namespace xlevel
         return ReadPrefabGame(ProjectRoot().wstring(), Prefab);
     }
 
-    // The Game of the Level or the prefab a Level editor is opened for.
+    // The Game a Scene Editor works under (a Scene names none: it is a part of a Level, which does): the one it borrowed when its editor opened (GiveSceneAGameIfNone), in memory only. 0: none found.
+    inline std::uint64_t GameOfScene( std::uint64_t Scene ) noexcept
+    {
+        const auto It = g_PrefabGameOverride.find(Scene);
+        return It == g_PrefabGameOverride.end() ? 0 : It->second;
+    }
+
+    // The Game of the Level, the prefab or the Scene a Level editor is opened for.
     inline std::uint64_t GameOfDocument( xresource::full_guid Guid ) noexcept
     {
+        if (Guid.m_Type == xecs::scene::type_guid_v) return GameOfScene(Guid.m_Instance.m_Value);
         return Guid.m_Type == xecs::prefab::type_guid_v ? GameOfPrefab(Guid.m_Instance.m_Value) : GameOfLevel(Guid.m_Instance.m_Value);
     }
 
