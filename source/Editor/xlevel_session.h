@@ -675,10 +675,6 @@ namespace xlevel
                 m_EditorToolbarHost.m_Items.push_back
                 ({ "Scene", ximgui::toolbar::toolbar_host_edge::Top, ximgui::toolbar::axis::Horizontal
                  , ImVec2(kSceneToolbarWidth, kEditorToolbarHeight), ImVec2(32.0f, 250.0f), ImVec2(24.0f, 72.0f) });
-                // One handler per editor, under its own name, and removed again in the destructor (it points at this editor).
-                std::snprintf(m_ToolbarHandlerName, sizeof(m_ToolbarHandlerName), "LevelEditorToolbar%016llX", static_cast<unsigned long long>(m_LevelGuid.m_Instance.m_Value));
-                ximgui::toolbar::RegisterSettingsHandler(m_EditorToolbarHost, m_ToolbarHandlerName);
-                m_bToolbarHandler = true;
             }
 
             // A Level editor is for one Level: load it (and every Scene it owns) right away, and have the game module's
@@ -707,6 +703,27 @@ namespace xlevel
                 xlevel::OpenLevel(*m_pGameMgr, m_State, m_LevelGuid);
                 xlevel::MarkDocumentClean(m_State, m_Undo);
                 m_State.m_bPendingStartGameReloadAfterOpen = true;
+            }
+
+            // The toolbar position is saved in the ImGui .ini under a handler named after the Level: one per editor, removed again
+            // in the destructor (it points at this editor). Only an editor that holds its document gets one. An editor whose open
+            // failed is dropped at the start of the next frame (DropClosed), and until then it is not found by guid (getGuid() reads
+            // the loaded Level), so a second open of the same Level in that window made a second editor whose handler had the same
+            // name: ImGui asserts on that (AddSettingsHandler, duplicate TypeName). The stand-in editor (no Level) is never drawn.
+            if (m_pDevice && ImGui::GetCurrentContext() && (m_State.HasDocument() || !m_State.m_OpenScenes.empty()))
+            {
+                std::snprintf(m_ToolbarHandlerName, sizeof(m_ToolbarHandlerName), "LevelEditorToolbar%016llX", static_cast<unsigned long long>(m_LevelGuid.m_Instance.m_Value));
+                if (ImGui::FindSettingsHandler(m_ToolbarHandlerName) == nullptr)
+                {
+                    ximgui::toolbar::RegisterSettingsHandler(m_EditorToolbarHost, m_ToolbarHandlerName);
+                    m_bToolbarHandler = true;
+                }
+                else
+                {
+                    // Another live editor already has this name (it can not be the same Level: that one is found by guid and focused);
+                    // this one does not persist its toolbar rather than take the other's entry.
+                    std::fprintf(stderr, "xlevel: settings handler %s already registered - this editor's toolbar position is not saved\n", m_ToolbarHandlerName);
+                }
             }
 
             // The shell builds the commands that are addressed to this editor by name (Name\Command) and keeps them in
