@@ -250,17 +250,27 @@ namespace xlevel
     // The generator the editor itself was configured with, so the script project is built with the same Visual Studio.
     inline std::wstring ScriptProjectGeneratorArgs( const script_project_paths& P ) noexcept
     {
+#if defined(_WIN32)
         std::string Generator = "Visual Studio 17 2022", Platform = "x64";
+#else
+        std::string Generator = "Ninja", Platform;
+#endif
+        std::string Compiler;
         if (std::ifstream Cache(P.m_XGpuBinDir / L"CMakeCache.txt"); Cache.is_open())
         {
             for (std::string Line; std::getline(Cache, Line); )
             {
                 if (Line.starts_with("CMAKE_GENERATOR:INTERNAL="))          Generator = Line.substr(sizeof("CMAKE_GENERATOR:INTERNAL=") - 1);
                 if (Line.starts_with("CMAKE_GENERATOR_PLATFORM:INTERNAL=")) Platform  = Line.substr(sizeof("CMAKE_GENERATOR_PLATFORM:INTERNAL=") - 1);
+                if (Line.starts_with("CMAKE_CXX_COMPILER:FILEPATH="))       Compiler  = Line.substr(sizeof("CMAKE_CXX_COMPILER:FILEPATH=") - 1);
             }
         }
         std::wstring Args = std::format(L" -G \"{}\"", xstrtool::To(Generator));
         if (!Platform.empty()) Args += std::format(L" -A {}", xstrtool::To(Platform));
+#if !defined(_WIN32)
+        // The compiler of the engine (the game includes its headers, which need clang's -fms-extensions/-fdeclspec): CMake would pick the system default otherwise.
+        if (!Compiler.empty()) Args += std::format(L" -DCMAKE_CXX_COMPILER=\"{}\"", xstrtool::To(Compiler));
+#endif
         return Args;
     }
 
@@ -378,7 +388,12 @@ namespace xlevel
 
         // The project names no place: the two folders of the engine come on the command line of the configure (the stamp says which ones it was configured with).
         auto Fwd = [](const std::filesystem::path& Path) { std::wstring Text = Path.wstring(); std::ranges::replace(Text, L'\\', L'/'); return Text; };
+#if defined(_WIN32)
         const std::wstring EngineArgs = std::format(L" -DXGPU_ROOT=\"{}\" -DXGPU_BIN_DIR=\"{}\"", Fwd(P.m_XGpuRoot), Fwd(P.m_XGpuBinDir));
+#else
+        // A single-configuration generator: the configuration is chosen when it is configured (part of the stamp, so the other configuration reconfigures).
+        const std::wstring EngineArgs = std::format(L" -DXGPU_ROOT=\"{}\" -DXGPU_BIN_DIR=\"{}\" -DCMAKE_BUILD_TYPE={}", Fwd(P.m_XGpuRoot), Fwd(P.m_XGpuBinDir), P.m_Config);
+#endif
         const std::string  EngineText = xstrtool::To(EngineArgs);
 
         const auto ConfiguredStamp = P.m_BuildDir / L"configured.stamp";
@@ -407,7 +422,11 @@ namespace xlevel
                 std::filesystem::last_write_time(PchFile, std::filesystem::file_time_type::clock::now(), Ec);
         }
 
+#if defined(_WIN32)
         const auto BuildExit = RunCmakeCommand(std::format(L"cmake --build \"{}\" --target Game --config {} -- /nodeReuse:false", P.m_BuildDir.wstring(), P.m_Config), P.m_Root, Plugin.m_hBuildJob, pAdapter);
+#else
+        const auto BuildExit = RunCmakeCommand(std::format(L"cmake --build \"{}\" --target Game", P.m_BuildDir.wstring()), P.m_Root, Plugin.m_hBuildJob, pAdapter);
+#endif
         if (BuildExit != 0)
         {
             Plugin.m_LastStatus = std::format("Game.dll: BUILD FAILED (exit={}) - see the Logs (LogProblems -Operation {})", BuildExit, Op.Id());

@@ -46,7 +46,12 @@ namespace xlevel
         P.m_BuildDir   = P.m_Root / L"Build";
         P.m_CMakeLists = P.m_Root / L"CMakeLists.txt";
         P.m_DllRoot    = P.m_Project / L"Cache" / L"Resources" / L"Platforms" / L"WINDOWS" / L"GameDll" / G;
-        P.m_Dll        = (P.m_Config == L"Release" ? P.m_DllRoot : P.m_DllRoot / P.m_Config) / L"Game.dll";
+#if defined(_WIN32)
+        constexpr const wchar_t* pDllName = L"Game.dll";
+#else
+        constexpr const wchar_t* pDllName = L"libGame.so";       // what CMake names the shared library of the target Game on Linux (see xgame_cmake.h)
+#endif
+        P.m_Dll        = (P.m_Config == L"Release" ? P.m_DllRoot : P.m_DllRoot / P.m_Config) / pDllName;
         P.m_PdbDir     = P.m_BuildDir / L"GamePdb" / P.m_Config;
         P.m_LoadedDir  = P.m_Root / L"Loaded";
         return P;
@@ -55,6 +60,7 @@ namespace xlevel
     // The paths of the editor and the project, for no Game yet (m_Game 0): ForGame says where a Game's files are.
     inline script_project_paths MakeScriptProjectPaths(const std::filesystem::path& Project) noexcept
     {
+#if defined(_WIN32)
         TCHAR szModulePath[MAX_PATH];
         GetModuleFileName(NULL, szModulePath, MAX_PATH);
         const std::filesystem::path ExeDir = std::filesystem::path(szModulePath).parent_path();   // .../Build/<BuildDirName>/<Config>
@@ -64,6 +70,25 @@ namespace xlevel
         P.m_Config     = ExeDir.filename().wstring();
         P.m_XGpuBinDir = ExeDir.parent_path();
         P.m_XGpuRoot   = P.m_XGpuBinDir.parent_path().parent_path();
+#else
+        // Linux: the executable is in the root of a single-configuration build folder (CMake + Ninja), which is also the folder that holds xLIONCore; the configuration is the one
+        // this editor was compiled as, and the checkout is the source folder that build folder was configured from (its CMakeCache.txt says).
+        std::error_code Ec;
+        const std::filesystem::path ExeDir = std::filesystem::read_symlink("/proc/self/exe", Ec).parent_path();
+
+        script_project_paths P;
+        P.m_Project    = Project;
+    #if defined(_DEBUG)
+        P.m_Config     = L"Debug";
+    #else
+        P.m_Config     = L"Release";
+    #endif
+        P.m_XGpuBinDir = ExeDir;
+        P.m_XGpuRoot   = ExeDir.parent_path();
+        if (std::ifstream Cache(ExeDir / "CMakeCache.txt"); Cache.is_open())
+            for (std::string Line; std::getline(Cache, Line); )
+                if (Line.starts_with("CMAKE_HOME_DIRECTORY:INTERNAL=")) P.m_XGpuRoot = Line.substr(sizeof("CMAKE_HOME_DIRECTORY:INTERNAL=") - 1);
+#endif
         return ForGame(std::move(P), 0);
     }
 
