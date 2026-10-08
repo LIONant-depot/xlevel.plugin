@@ -5,6 +5,7 @@
 // DescribeText: the layout of the Text component of an entity (lines, glyphs, the box of the text), as the render module of the Level computes it - what the person sees, said in words, so a
 // script (and a test) can check a label without a screenshot. The layout is the renderer's: this command only asks.
 #include <cstdio>
+#include <cstdlib>
 #include "plugins/xlevel.plugin/source/Editor/xlevel_command_context.h"
 #include "plugins/xscene.plugin/source/Editor/xscene_command_context.h"
 
@@ -76,7 +77,21 @@ namespace xlevel::commands
             auto DirArg    = m_Parser.getOptionArgAs<std::string>(m_hDir, 0);
             if (std::holds_alternative<xerr>(OriginArg) || std::holds_alternative<xerr>(DirArg)) return "PickRay: bad arguments";
             float O[3], D[3];
-            if (std::sscanf(std::get<std::string>(OriginArg).c_str(), "%f,%f,%f", &O[0], &O[1], &O[2]) != 3 || std::sscanf(std::get<std::string>(DirArg).c_str(), "%f,%f,%f", &D[0], &D[1], &D[2]) != 3)
+            // "x,y,z" -> 3 floats (strtof: what sscanf's %f does, without MSVC's C4996)
+            const auto Parse3 = [](const std::string& S, float (&V)[3]) noexcept
+            {
+                const char* p = S.c_str();
+                for (int i = 0; i < 3; ++i)
+                {
+                    char* pEnd = nullptr;
+                    V[i] = std::strtof(p, &pEnd);
+                    if (pEnd == p) return false;
+                    p = pEnd;
+                    if (i < 2) { if (*p != ',') return false; ++p; }
+                }
+                return true;
+            };
+            if (!Parse3(std::get<std::string>(OriginArg), O) || !Parse3(std::get<std::string>(DirArg), D))
                 return "PickRay: Origin and Dir are x,y,z";
             auto& Ctx = LevelContext();
             return Ctx.m_PickRay ? Ctx.m_PickRay(xmath::fvec3(O[0], O[1], O[2]), xmath::fvec3(D[0], D[1], D[2])) : "PickRay: this Level has no render module";

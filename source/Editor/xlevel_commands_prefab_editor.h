@@ -175,7 +175,7 @@ namespace xlevel::commands
             if (const auto Why = EnterContextEdit(*pDoc, Source, Scene, Id, Note); !Why.empty())
             {
                 // No plain Prefab Editor under the Level's Game is left behind: the editor this command opened is closed again (nothing in it was edited).
-                pDoc->m_Undo.Query("Close -Save 0");
+                (void)pDoc->m_Undo.Query("Close -Save 0");
                 ErasePrefabGameOverride(Prefab.m_Instance.m_Value);
                 return std::format("EditInContext: {}", Why);
             }
