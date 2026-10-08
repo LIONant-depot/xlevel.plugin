@@ -26,8 +26,10 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#if defined(_WIN32)
 #include <tlhelp32.h>
 #include <oleauto.h>
+#endif
 #undef ERROR
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -44,6 +46,7 @@ namespace xlevel
         return std::filesystem::is_regular_file(Solution, Ec) ? Solution : std::filesystem::path{};
     }
 
+#if defined(_WIN32)
     namespace details
     {
         inline std::wstring Lowered(std::wstring Text) noexcept { for (auto& c : Text) c = static_cast<wchar_t>(std::towlower(c)); return Text; }
@@ -243,6 +246,11 @@ namespace xlevel
         const auto Result = reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", Solution.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
         return Result > 32 ? std::format("OpenInVisualStudio: opened {}", Solution.string()) : std::format("OpenInVisualStudio: Windows could not open {} (error {})", Solution.string(), Result);
     }
+#else
+    // Linux port: Visual Studio integration is Windows-only
+    inline std::string RequestOpenFileInVisualStudio(level_context&, const std::filesystem::path&, bool) noexcept { return "Visual Studio integration is not available on this platform"; }
+    inline std::string RequestOpenVisualStudio(level_context&, bool) noexcept { return "OpenInVisualStudio: not available on this platform"; }
+#endif
 }
 
 #endif // XLEVEL_VISUAL_STUDIO_H

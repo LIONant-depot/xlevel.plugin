@@ -27,6 +27,14 @@
 
 namespace xlevel::engine
 {
+#if !defined(_WIN32)
+    // Linux port: the per-Level copies rely on PE import patching. Not ported yet: Make() says so and the
+    // Level runs on the original shared objects (the documented fallback in xlevel_session.h).
+    inline std::vector<std::string> ImportsOf(const std::vector<std::uint8_t>&) noexcept { return {}; }
+    inline int  RenameImport(std::vector<std::uint8_t>&, std::string_view, std::string_view) noexcept { return 0; }
+    inline void FixChecksum(std::vector<std::uint8_t>&) noexcept {}
+    inline bool ChecksumIsRight(const std::filesystem::path&) noexcept { return true; }
+#else
     //---------------------------------------------------------------------------
     // PE patching: rename what a module imports, fix the checksum
     //---------------------------------------------------------------------------
@@ -122,6 +130,7 @@ namespace xlevel::engine
         return bOk;
     }
 
+#endif
     // LoadLibrary of a file that was just written: a scanner can hold it for a moment (a sharing violation), so it is tried again for a short while.
     inline HMODULE LoadCopy(const std::filesystem::path& Path, DWORD& Error) noexcept
     {
@@ -238,6 +247,10 @@ namespace xlevel::engine
         // A new set: the core copied and loaded first, then the render DLL copied with its import patched to the core copy. Null (and nothing left behind) when a step fails; Why says which.
         std::shared_ptr<engine_set> Make(std::string& Why) noexcept
         {
+        #if !defined(_WIN32)
+            Why = "per-Level engine copies are not supported on this platform yet";
+            return {};
+        #endif
             CleanLeftovers();
             const auto OriginalCore = m_OriginalsDir / kCoreNameW;
             if (!std::filesystem::exists(OriginalCore)) { Why = std::format("{} is not next to the editor", std::filesystem::path(kCoreNameW).string()); return {}; }

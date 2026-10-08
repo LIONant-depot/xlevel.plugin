@@ -243,8 +243,13 @@ namespace xlevel
     // + context so this function holds no C++ objects (__try cannot live next to destructors).
     inline bool RunGuarded( void (*pFn)(void*), void* pContext, unsigned long& Code ) noexcept
     {
+    #if defined(_WIN32)
         __try                                                                   { pFn(pContext); return true; }
         __except( (Code = GetExceptionCode()) == EXCEPTION_BREAKPOINT ? EXCEPTION_CONTINUE_SEARCH : EXCEPTION_EXECUTE_HANDLER ) { return false; }
+    #else
+        // Linux port: no SEH; the call is made unguarded
+        Code = 0; pFn(pContext); return true;
+    #endif
     }
 
     // Runs pFn(pContext) guarded. On a crash: says so in the log and in the status line, and flags the module as crashed (it is left
