@@ -43,13 +43,13 @@ namespace xlevel
         for (auto Id : OnDisk)
         {
             if (ActiveSet.contains(Id)) continue;
-            std::printf("[IdleWork] WARNING: Scene=%llX orphaned entity file Id=%llX exists on disk but is not listed in the scene descriptor - inert, safe to clean up manually\n", SceneGuid.m_Instance.m_Value, (unsigned long long)Id);
+            std::printf("[IdleWork] WARNING: Scene=%llX orphaned entity file Id=%llX exists on disk but is not listed in the scene descriptor - inert, safe to clean up manually\n", static_cast<unsigned long long>(SceneGuid.m_Instance.m_Value), static_cast<unsigned long long>(Id));
             ++OrphanCount;
         }
         for (auto Id : ActiveEntities)
         {
             if (OnDiskSet.contains(Id)) continue;
-            std::printf("[IdleWork] WARNING: Scene=%llX dangling reference - descriptor lists Id=%llX as active but its entity file is missing on disk\n", SceneGuid.m_Instance.m_Value, (unsigned long long)Id);
+            std::printf("[IdleWork] WARNING: Scene=%llX dangling reference - descriptor lists Id=%llX as active but its entity file is missing on disk\n", static_cast<unsigned long long>(SceneGuid.m_Instance.m_Value), static_cast<unsigned long long>(Id));
             ++DanglingCount;
         }
         if (OrphanCount || DanglingCount) std::fflush(stdout);
