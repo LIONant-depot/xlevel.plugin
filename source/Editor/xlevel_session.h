@@ -45,7 +45,7 @@
 #include "dependencies/xresource_pipeline_v2/source/editor/xresource_editor_asset_browser.h"
 #include "dependencies/xeditor_tools/src/xeditor_tools_camera.h"
 #include "dependencies/xeditor_tools/src/xeditor_tools_grid.h"
-#include "source/tools/xgpu_imgui_breach.h"
+#include "source/Tools/xgpu_imgui_breach.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_plugin_dlls.h"
 #include "dependencies/xLIONRender/src/xlionrender_api.h"
 #include "dependencies/xLIONCore/src/tags/xlioncore_tags.h"
