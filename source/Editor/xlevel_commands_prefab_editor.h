@@ -137,19 +137,19 @@ namespace xlevel::commands
             if (!g_OpenLevelSession) return "EditInContext: no editor available";
 
             // The Level around the prefab needs its Game's modules to load whole: the editor of the prefab is opened under the Level's Game (not written into the prefab).
-            if (const auto Game = GameOfLevel(State().m_CurrentLevel.m_Instance.m_Value); Game) g_PrefabGameOverride[Prefab.m_Instance.m_Value] = Game;
+            if (const auto Game = GameOfLevel(State().m_CurrentLevel.m_Instance.m_Value); Game) { g_PrefabGameOverride[Prefab.m_Instance.m_Value] = Game; g_PrefabGameFrom[Prefab.m_Instance.m_Value] = "the Level"; }
             const auto Reply = g_OpenLevelSession(Prefab);
             level_context* pDoc = nullptr;
             for (auto* pOther : g_LevelContexts)
                 if (pOther->State().isPrefabEditor() && pOther->State().m_CurrentPrefab.m_Instance == Prefab.m_Instance) pDoc = pOther;
-            if (!pDoc) { g_PrefabGameOverride.erase(Prefab.m_Instance.m_Value); return "EditInContext: " + Reply; }
+            if (!pDoc) { ErasePrefabGameOverride(Prefab.m_Instance.m_Value); return "EditInContext: " + Reply; }
 
             std::string Note;
             if (const auto Why = EnterContextEdit(*pDoc, Source, Scene, Id, Note); !Why.empty())
             {
                 // No plain Prefab Editor under the Level's Game is left behind: the editor this command opened is closed again (nothing in it was edited).
                 pDoc->m_Undo.Query("Close -Save 0");
-                g_PrefabGameOverride.erase(Prefab.m_Instance.m_Value);
+                ErasePrefabGameOverride(Prefab.m_Instance.m_Value);
                 return std::format("EditInContext: {}", Why);
             }
             return std::format("EditInContext: ok, {} context scene(s){}{}", pDoc->State().m_ContextScenes.size(), Note.empty() ? "" : " - ", Note);

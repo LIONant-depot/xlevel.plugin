@@ -15,10 +15,25 @@ namespace xlevel
         State.m_CleanUndoIndex = Undo.GetUndoIndex();
     }
 
+    // A step that only moves the selection (a click in the tree or the viewport): it is an undo step, but it changes nothing of the document, so it never makes it "unsaved" (a Level whose
+    // person only clicked an instance to Edit it Alone, closed with the Prefab Editor, must not ask whether to save).
+    inline bool IsSelectionStep(std::string_view CommandString) noexcept
+    {
+        const auto Name = CommandString.substr(0, CommandString.find(' '));
+        const auto Base = Name.substr(Name.find_last_of("\\/") == std::string_view::npos ? 0 : Name.find_last_of("\\/") + 1);
+        return Base == "Select" || Base == "SelectLevel" || Base == "ToggleMultiSelect" || Base == "ClearSelection";
+    }
+
+    // The document has unsaved changes when a step other than a selection lies between the state it was saved in and the one it is in now.
     inline bool HasUnsavedDocumentChanges(const level_state& State, const xundo::system& Undo) noexcept
     {
         if (!State.HasDocument() && State.m_OpenScenes.empty()) return false;
-        return Undo.GetUndoIndex() != State.m_CleanUndoIndex;
+        const int Now = Undo.GetUndoIndex(), Clean = State.m_CleanUndoIndex;
+        if (Now == Clean) return false;
+        if (Clean < 0 || static_cast<std::size_t>(Clean) > Undo.GetHistoryCount() || static_cast<std::size_t>(Now) > Undo.GetHistoryCount()) return true;       // (-1: never clean, see the prefab that could not be saved)
+        for (int i = std::min(Now, Clean); i < std::max(Now, Clean); ++i)
+            if (!IsSelectionStep(Undo.GetHistoryCommandString(static_cast<std::size_t>(i)))) return true;
+        return false;
     }
 
     // Unload every open scene, clear CurrentLevel / selection, and Reset undo (old steps no longer
@@ -42,7 +57,7 @@ namespace xlevel
         for (const auto SceneGuid : State.m_ContextScenes)         // a Prefab Editor's context scenes go with it
             xlioncore::Ecs(GameMgr).ReleaseLoadScene(SceneGuid);
         State.m_ContextScenes.clear();
-        if (State.isPrefabEditor()) g_PrefabGameOverride.erase(State.m_CurrentPrefab.m_Instance.m_Value);        // (Edit in Context: the Game of the Level was this editor's only while it was open)
+        if (State.isPrefabEditor()) ErasePrefabGameOverride(State.m_CurrentPrefab.m_Instance.m_Value);        // (Edit in Context: the Game of the Level was this editor's only while it was open)
         State.m_ContextEdit = {};
 
         State.m_bLevelEditorOpen = false;
@@ -141,10 +156,14 @@ namespace xlevel
     // Same OpenPopup-every-frame convention as RenderKeepTweaksModal / RenderErrorPopup.
     inline void RenderSaveBeforeCloseModal(xecs::game_mgr::instance& GameMgr, level_state& State, xundo::system& Undo, const ImVec2* pCenter = nullptr) noexcept
     {
+        // One question per editor: the id carries the document's guid. Two editors asked at once (the dock's close button closes every tab of the window) must not share one popup, or the buttons of one
+        // answer for the other.
+        char Title[96];
+        std::snprintf(Title, sizeof(Title), "Save changes?###LevelDocument%016llX", static_cast<unsigned long long>(State.isPrefabEditor() ? State.m_CurrentPrefab.m_Instance.m_Value : State.m_CurrentLevel.m_Instance.m_Value));
         if (State.m_bAwaitingSaveBeforeClose)
-            ImGui::OpenPopup("Save changes?##LevelDocument");
+            ImGui::OpenPopup(Title);
 
-        if (xeditor::BeginModal("Save changes?##LevelDocument", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings, pCenter))
+        if (xeditor::BeginModal(Title, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings, pCenter))
         {
             const bool bOpeningOther = !State.m_PendingOpenLevelAfterClose.empty();
             ImGui::TextUnformatted(State.isPrefabEditor() ? "The prefab has unsaved changes."

@@ -127,11 +127,18 @@ namespace xlevel
         bool                 m_bPendingOpenWantsGameReload = false;
         // One-shot: set by FinishPendingDocumentAction after a Level really opened; the editor frame consumes it.
         bool                 m_bPendingStartGameReloadAfterOpen = false;
+
+        // A Prefab Editor has just opened its document (or opened it again after a Game.dll reload / a Stop): the root of the prefab is selected, once it is loaded, unless the person already has a selection in
+        // it (SelectPrefabRootIfNone). Not an undo step: a click is not a change.
+        bool                 m_bSelectRootPending = false;
     };
 
     // The Game a prefab editor works under while it is open in context of a Level (Edit in Context, prefabs_plan.md phase 7), by prefab guid: the Level's, so that the scenes around it load whole. In memory only
     // (nothing is written into the prefab); read by GameOfPrefab, erased when the editor closes.
     inline std::unordered_map<std::uint64_t, std::uint64_t> g_PrefabGameOverride;
+    // Where each of those Games came from, for the Inspector ("the Level", "the project's only Game"); erased with it (ErasePrefabGameOverride).
+    inline std::unordered_map<std::uint64_t, std::string> g_PrefabGameFrom;
+    inline void ErasePrefabGameOverride(std::uint64_t Prefab) noexcept { g_PrefabGameOverride.erase(Prefab); g_PrefabGameFrom.erase(Prefab); }
 
     // Why a prefab edited in context cannot be played (it is drawn over the Level's own instance).
     inline constexpr const char* kWhyNotPlayInContext = "this prefab is open in context of a Level (it is placed over the Level's own instance): play the Level, or open the prefab on its own";

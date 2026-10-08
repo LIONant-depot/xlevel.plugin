@@ -77,8 +77,36 @@ namespace xlevel
         for (const auto& Context : State.m_ContextScenes)
             if (auto Err = Ecs.RequestLoadScene(Context); Err)
                 xeditor::NotifyToast(std::format("Failed to load the context scene {:016X}: {}", Context.m_Instance.m_Value, Err.getMessage()));
+        State.m_bSelectRootPending = true;
         PlaceDocumentRoot(GameMgr, State);          // editing in context: the document is opened again (a Play rebuild, a game module reload): its root goes back to the instance's place
         return {};
+    }
+
+    // The root of a freshly opened prefab is the selection (the Inspector shows it, the tree row is lit, the gizmo is on it, and the camera turns to look at it: the viewport does that for every new selection),
+    // unless the person already selected something of the prefab (a reopen after a Game.dll reload keeps it). Set directly, not through Select: it is no undo step and no change of the document. Waits until
+    // the document is loaded. True when it is settled (selected, or nothing to do).
+    inline bool SelectPrefabRootIfNone(xecs::game_mgr::instance& GameMgr, level_state& State) noexcept
+    {
+        if (!State.isPrefabEditor()) return true;
+        auto&       Ecs    = xlioncore::Ecs(GameMgr);
+        const auto* pScene = GameMgr.m_SceneMgr.Find(State.PrefabScene());
+        if (!pScene || pScene->m_LocalToRuntime.empty()) return false;
+        if (State.m_SelectedEntityId != xecs::scene::invalid_permanent_id_v && State.m_SelectedEntityScene == State.PrefabScene() && pScene->m_LocalToRuntime.contains(State.m_SelectedEntityId)) return true;
+        if (State.m_bRootSelected) return true;                           // the prefab row itself is the selection: the person's
+        for (const auto& [Id, Entity] : pScene->m_LocalToRuntime)
+            if (!pScene->m_InstanceMembers.contains(Id) && !Ecs.ParentOf(Entity))
+            {
+                State.m_MultiSelectedEntityIds = { Id };
+                State.m_MultiSelectOrder       = { Id };
+                State.m_MultiSelectScene       = State.PrefabScene();
+                State.m_SelectedEntityId       = Id;
+                State.m_SelectedEntity         = Entity;
+                State.m_SelectedEntityScene    = State.PrefabScene();
+                State.m_bEntityInspectorDirty  = true;
+                State.m_bRootSelected          = false;
+                return true;
+            }
+        return false;
     }
 
     // Brings a scene in to test the prefab against: it is loaded (so it plays), and it is never picked, edited or saved, and it is no part of the prefab. "" or why not.

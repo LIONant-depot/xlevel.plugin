@@ -475,6 +475,7 @@ namespace xlevel
             m_GamePlugin.m_CoreModule   = CoreModule();
             m_GamePlugin.m_RenderModule = RenderModule();
             m_GamePlugin.m_pCoreSet     = m_pSet;                                           // keeps the copies alive for as long as the Game.dll bound to them
+            if (isPrefab()) xlevel::GivePrefabAGameIfNone(m_LevelGuid.m_Instance.m_Value);          // a prefab that names none works under the Level's Game (or the project's only one), in memory
             m_GamePlugin.m_Game         = m_LevelGuid.m_Instance.empty() ? 0 : xlevel::GameOfDocument(m_LevelGuid);          // the Game the Level names, or the one the prefab plays with
 #if defined(XECS_BUILD_SHARED)
             {
@@ -599,6 +600,18 @@ namespace xlevel
                 if (Game) if (auto Why = xlevel::WritePrefabGame(xlevel::ProjectRoot().wstring(), Prefab.m_Instance.m_Value, Game); !Why.empty())
                     xeditor::NotifyToast(std::format("The new prefab could not be given the Game it was made under: {}", Why));
             };
+            // The prefab row of the Entity Properties (Edit In Context / Edit Alone): the command goes through the queue the Level Tree's "Edit in Context" uses (PumpLevels runs it), and the refusals are the command's
+            m_CmdContext.m_QueueCommand = [this](std::string Command) noexcept { xlevel::QueueLevelCommand(&m_CmdContext, std::move(Command)); };
+            m_CmdContext.m_QueueOpenPrefab = [](std::uint64_t Prefab) noexcept { xlevel::QueueOpenLevel(xresource::full_guid{ .m_Instance = { Prefab }, .m_Type = xecs::prefab::type_guid_v }); };
+            m_CmdContext.m_WhyNotEditPrefab = [this](bool bInContext, std::uint64_t Prefab) -> std::string
+            {
+                if (!bInContext) return {};                                  // Edit Alone: opens the prefab in its own editor (one already open is brought to the front)
+                if (m_State.isPlaying())      return "Not while playing: stop the game first.";
+                if (m_State.isPrefabEditor()) return "An instance inside a prefab is not edited in context yet.";
+                for (auto* pOther : xlevel::g_LevelContexts)
+                    if (pOther->State().isPrefabEditor() && pOther->State().m_CurrentPrefab.m_Instance.m_Value == Prefab) return "This prefab is already open in an editor: close it first, or use Edit Alone to go to it.";
+                return {};
+            };
             m_CmdContext.m_GameSolution = [this]() { return xlevel::GameSolutionIn(m_GamePlugin.m_Paths.m_BuildDir); };
             m_CmdContext.m_PickRay = [this](const xmath::fvec3& Origin, const xmath::fvec3& Dir) -> std::string
             {
@@ -721,7 +734,7 @@ namespace xlevel
             m_pEcs->SetPrefabSaveRedirect(nullptr);        // the core keeps the pointer for the worlds it makes: not one into an editor that is going
             m_pEcs->DestroyWorld();
             xlevel::ReleasePrefabSnapshots(m_State);
-            if (m_State.isPrefabEditor()) xlevel::g_PrefabGameOverride.erase(m_State.m_CurrentPrefab.m_Instance.m_Value);        // (Edit in Context: the Game of the Level was this editor's only while it was open)
+            if (m_State.isPrefabEditor()) xlevel::ErasePrefabGameOverride(m_State.m_CurrentPrefab.m_Instance.m_Value);        // (Edit in Context: the Game of the Level was this editor's only while it was open)
             m_Grid.Release();
 
             // The game module goes after the world (its systems live in it) and before the copy of the core it is bound to. A build still running is stopped rather than waited for.
@@ -1468,7 +1481,9 @@ namespace xlevel
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.45f, 0.42f, 1.0f));
                     ImGui::TextWrapped("%s", m_GameStatus.m_Issue.c_str());
                     ImGui::PopStyleColor();
+                    if (!m_GameStatus.m_UsingFrom.empty()) ImGui::TextDisabled("(no Game) - using %s from %s. Set a Game to keep this.", m_GameStatus.m_Name.c_str(), m_GameStatus.m_UsingFrom.c_str());
                 }
+                else if (!m_GameStatus.m_UsingFrom.empty()) ImGui::TextDisabled("(no Game) - using %s from %s. Set a Game to keep this.", m_GameStatus.m_Name.c_str(), m_GameStatus.m_UsingFrom.c_str());
                 else if (m_GameStatus.m_bNamed) ImGui::TextDisabled("Plays with the Game '%s'.", m_GameStatus.m_Name.c_str());
                 else ImGui::TextDisabled("No Game: this prefab has no scripts, components or systems of any module when it plays.");
 
@@ -1534,6 +1549,9 @@ namespace xlevel
             if (!xlevel::HasUnsavedDocumentChanges(m_State, m_Undo))
                 if (auto* pHost = xeditor::host::current())
                     if (auto* pMe = xlevel::FindHostSession(m_Undo)) xlevel::ReleaseLevelEditAccess(*pHost, *pMe, m_State);
+
+            // A Prefab Editor that has just opened its document selects the prefab's root once it is loaded.
+            if (m_State.m_bSelectRootPending && xlevel::SelectPrefabRootIfNone(*m_pGameMgr, m_State)) m_State.m_bSelectRootPending = false;
 
             // Closing the Level closes its editor (the shell drops it at the start of the next frame).
             if (m_bOpenRequested && !m_State.HasDocument() && m_State.m_OpenScenes.empty() && !m_State.m_bAwaitingSaveBeforeClose)
