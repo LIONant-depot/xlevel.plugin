@@ -45,11 +45,14 @@ namespace xlevel
         }
         // A prefab that cannot be saved (it breaks a rule of a prefab: one root, references inside) cannot be played either: the world is rebuilt from what was saved, and Play would show the
         // prefab as it was, not as it is in the editor.
-        if (!SaveEverything(Ed.World(), Ed.State()) && Ed.State().isPrefabEditor())
+        // A document that did not load whole is not written either (SaveEverything says why): Play would rebuild the world from files that are not what is open.
+        const bool bLossy = !LossyDocumentProblem(Ed.World(), Ed.State()).empty();
+        if (!SaveEverything(Ed.World(), Ed.State()) && (Ed.State().isPrefabEditor() || bLossy))
         {
             Ed.State().m_bPlayRequested = false;
             Ed.State().m_bStepOneFrame  = false;
-            xeditor::NotifyToast("Play cancelled: the prefab could not be saved (see the message above), and Play plays what is saved.");
+            xeditor::NotifyToast(bLossy ? "Play cancelled: the document did not load whole and is not saved (see the message above), and Play plays what is saved."
+                                        : "Play cancelled: the prefab could not be saved (see the message above), and Play plays what is saved.");
             return;
         }
         Ed.State().m_PlayHistoryBoundary        = Ed.m_Undo.GetUndoIndex();

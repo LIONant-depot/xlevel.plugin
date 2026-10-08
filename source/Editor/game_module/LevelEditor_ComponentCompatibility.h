@@ -252,6 +252,7 @@ namespace xlevel
                                                 : std::format("This prefab names no Game, so nothing provides the module(s) it needs: {}. Give it a Game that lists them (SetPrefabGame).", List);
             else         S.m_Issue = S.m_bNamed ? std::format("The Game '{}' does not list the module(s) these scenes need: {}.", S.m_Name, List)
                                                 : std::format("This Level names no Game, so nothing provides the module(s) its scenes need: {}. Give it a Game that lists them.", List);
+            S.m_Issue += " Until then the entities that need them do not load, and saving is blocked (nothing is written: the files stay as they are).";
         }
         return S;
     }

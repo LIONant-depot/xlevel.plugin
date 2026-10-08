@@ -49,9 +49,25 @@ namespace xlevel
         return pWriter ? pWriter->display_name() : std::string{};
     }
 
+    inline bool HasUnsavedDocumentChanges(const level_state& State, const xundo::system& Undo) noexcept;        // xlevel_document_session.h
+
+    // "" when every open scene of this editor (the prefab of a Prefab Editor, the Scene of a Scene Editor, the scenes of a Level) loaded whole; otherwise why the document is not written. A scene
+    // some of whose entities could not be loaded (a component of theirs is not registered: its game module is not in the Game the editor works under) would be written lossy: the entities that
+    // loaded lost their references to the others at load, and a prefab is written whole from what loaded. Such a document is never written (xecs::scene::mgr::SaveScene refuses it too).
+    inline std::string LossyDocumentProblem(xecs::game_mgr::instance& GameMgr, const level_state& State) noexcept
+    {
+        for (const auto& SceneGuid : State.m_OpenScenes)
+            if (const auto* pScene = GameMgr.m_SceneMgr.Find(SceneGuid); pScene && !pScene->m_UnloadedEntities.empty())
+                return std::format("{} {:016X} was not saved: {} of its entities could not be loaded (a component of theirs is not registered: the game module that defines it is not in the Game this editor works under), "
+                                   "so nothing of it was written and its files are as they were. Give it a Game that lists that module, then open it again"
+                    , State.isPrefabEditor() && SceneGuid == State.PrefabScene() ? "The prefab" : "The scene", SceneGuid.m_Instance.m_Value, pScene->m_UnloadedEntities.size());
+        return {};
+    }
+
     // The Level's Save. Saves the Level and every open Scene this editor may write - a Scene another Level editor owns is left alone (its
     // edits are that editor's to save). The other editors that have one of the Scenes this editor owned open reload it.
-    // Returns false when something that had to be saved was not (the toast says what).
+    // Returns false when something that had to be saved was not (the toast says what). A document that did not load whole is not written at all (LossyDocumentProblem), and
+    // a prefab document with no unsaved change is not written either (it is the file: the whole-prefab rewrite would only reformat it).
     bool SaveEverything(xecs::game_mgr::instance& GameMgr, level_state& State) noexcept
     {
         bool              bAllSaved = true;
@@ -59,6 +75,13 @@ namespace xlevel
         auto*             pEd   = FindContextOf(State);
         xeditor::session* pMe   = pEd ? FindHostSession(pEd->m_Undo) : nullptr;
         std::vector<xecs::scene::guid> Owned;
+
+        if (const auto Why = LossyDocumentProblem(GameMgr, State); !Why.empty())
+        {
+            xeditor::NotifyToast(Why);
+            return false;
+        }
+        const bool bPrefabUnchanged = State.isPrefabEditor() && pEd && !HasUnsavedDocumentChanges(State, pEd->m_Undo);
 
         if (!State.m_CurrentLevel.empty() && GameMgr.m_LevelMgr.Find(State.m_CurrentLevel))
         {
@@ -78,6 +101,7 @@ namespace xlevel
         for (auto& SceneGuid : State.m_OpenScenes)
         {
             if (pEd && IsSceneLockedByOther(*pEd, SceneGuid)) continue;     // another editor owns it
+            if (bPrefabUnchanged && SceneGuid == State.PrefabScene()) continue;  // the prefab is what its file holds: nothing to write (Play of a clean prefab, a Save with no change)
             if (pHost && pMe && pHost->writer_for(SceneResourceGuid(SceneGuid)) == pMe) Owned.push_back(SceneGuid);
 
             // Plain console log, NOT xeditor::NotifyError() - this is routine save progress (every normal save
@@ -107,7 +131,7 @@ namespace xlevel
 
         // A prefab saved from its editor changed on disk: the other editors bring their instances of it up to date (live update, prefabs_plan.md phase 6). This editor's own world (its
         // context scenes) was brought up to date by the save itself.
-        if (State.isPrefabEditor() && bAllSaved)
+        if (State.isPrefabEditor() && bAllSaved && !bPrefabUnchanged)
             LiveUpdatePrefabElsewhere(&State, State.m_CurrentPrefab);
 
         // Save is local: the Level and its Scenes. The renames and moves of the resource view are its own (its Save button), and Save All saves everything.

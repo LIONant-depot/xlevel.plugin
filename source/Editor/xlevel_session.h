@@ -1806,6 +1806,7 @@ namespace xlevel
     }
     inline void session_actions::Save() noexcept
     {
+        if (!xlevel::LossyDocumentProblem(*S().m_pGameMgr, S().m_State).empty()) { (void)xlevel::SaveEverything(*S().m_pGameMgr, S().m_State); return; }     // refused (it toasts why): did not load whole, stays unsaved
         if (!xlevel::SaveEverything(*S().m_pGameMgr, S().m_State) && S().m_State.isPrefabEditor()) return;      // the prefab was not saved (it breaks a rule of a prefab): it stays unsaved
         xlevel::MarkDocumentClean(S().m_State, S().m_Undo);
     }

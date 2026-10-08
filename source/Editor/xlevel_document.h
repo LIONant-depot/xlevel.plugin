@@ -53,6 +53,7 @@ namespace xlevel
             auto& State = m_pEd->State();
             if (State.m_CurrentLevel.empty() && State.m_OpenScenes.empty())
                 return "LevelDocument: nothing open";
+            if (auto Lossy = LossyDocumentProblem(m_pEd->World(), State); !Lossy.empty()) return Lossy;          // did not load whole: nothing is written, it stays unsaved
             if (!SaveEverything(m_pEd->World(), State) && State.isPrefabEditor()) return "the prefab was not saved (it breaks a rule of a prefab: one root, references inside)";
             MarkDocumentClean(State, m_pEd->m_Undo);
             // Save restores just-loaded: drop write locks so peers can edit again.

@@ -91,13 +91,15 @@ namespace xlevel
         if (bSaveFirst)
         {
             // A prefab that breaks a rule of a prefab is not written: the editor stays open and unsaved (nothing closes on a save that did not happen).
-            if (!SaveEverything(GameMgr, State) && State.isPrefabEditor())
+            // So does a document that did not load whole (SaveEverything toasts why: nothing of it is written).
+            const bool bLossy = !LossyDocumentProblem(GameMgr, State).empty();
+            if (!SaveEverything(GameMgr, State) && (State.isPrefabEditor() || bLossy))
             {
                 State.m_PendingOpenLevelAfterClose = {};
                 State.m_bPendingOpenWantsGameReload = false;
                 State.m_bPendingStartGameReloadAfterOpen = false;
                 State.m_bLevelEditorOpen = true;
-                xeditor::NotifyToast("The prefab was not saved (a prefab has one root, and references only its own entities): the editor stays open");
+                if (!bLossy) xeditor::NotifyToast("The prefab was not saved (a prefab has one root, and references only its own entities): the editor stays open");
                 return;
             }
             MarkDocumentClean(State, Undo);
