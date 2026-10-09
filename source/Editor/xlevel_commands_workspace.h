@@ -625,6 +625,9 @@ namespace xlevel::commands
         void RegisterArguments() noexcept override {}
         std::string Query() noexcept override
         {
+            // The headless editor has no UI at all (no ImGui context): no modal can be open, and the ImGui calls below would dereference null.
+            if (ImGui::GetCurrentContext() == nullptr) return "Open=false
+Headless=true";
             auto* pHost = xeditor::host::current();
             const ImGuiWindow* pModal  = ImGui::GetTopMostPopupModal();
             const ImVec2       Popup   = pModal ? ImVec2(pModal->Pos.x + pModal->Size.x * 0.5f, pModal->Pos.y + pModal->Size.y * 0.5f) : ImVec2(0, 0);
