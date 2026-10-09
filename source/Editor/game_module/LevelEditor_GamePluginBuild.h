@@ -77,7 +77,9 @@ namespace xlevel
             return m_hBuildJob;
         }
         // Kills whatever the running build of THIS plugin state started (the builds of the other Levels go on); the build then reports Failed.
-        void CancelBuild() noexcept { if (m_hBuildJob) TerminateJobObject(m_hBuildJob, 1); }
+        // It also stops the wait for the resource pipeline (m_bCancelWait): a build that is only waiting for the Game project to be made has started no process yet, so killing the job
+        // changed nothing for it and closing the Level blocked until that wait timed out (10 minutes) - only ~game_plugin_state raised the flag, after the close had waited for the build.
+        void CancelBuild() noexcept { m_bCancelWait = true; if (m_hBuildJob) TerminateJobObject(m_hBuildJob, 1); }
         std::wstring   m_CoreModule   = engine::kCoreNameW;
         std::wstring   m_RenderModule = engine::kRenderNameW;
         std::uint64_t  m_Game         = 0;          // the Game (resource instance) this plugin state builds and loads; 0 = none: no module, no component, no system
