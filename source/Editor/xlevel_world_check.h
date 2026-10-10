@@ -7,24 +7,17 @@
 // created. Reading them is an assert in the Debug build and memory that is not there in the Release one, so everything that walks a scene's entities asks first.
 // (Included after xecs's game manager and scene headers, by the files that walk scenes.)
 
+#include "dependencies/xLIONCore/src/game/xlioncore_editor.h"
+
 namespace xlevel
 {
-    // The details of a runtime entity, or null when the world does not know it.
-    inline xecs::component::entity::global_info* FindEntityDetails(xecs::game_mgr::instance& GameMgr, xecs::component::entity Entity) noexcept
-    {
-        auto& Infos = GameMgr.m_ComponentMgr.m_GlobalEntityInfos;
-        if (!Entity.isValid() || Infos.m_pGlobalInfo == nullptr) return nullptr;
-        auto& Entry = Infos.m_pGlobalInfo[Entity.m_GlobalInfoIndex];
-        // A slot with no pool is an entity a snapshot named (its validation is restored first) and then never read back: the world does not have it.
-        return Entry.m_Validation == Entity.m_Validation && Entry.m_pPool != nullptr ? &Entry : nullptr;
-    }
-
     // How many of the scene's entities the world does not know.
     inline std::size_t CountUnknownEntities(xecs::game_mgr::instance& GameMgr, const xecs::scene::instance& Scene) noexcept
     {
+        auto& Ecs = xlioncore::Ecs(GameMgr);                      // the world is asked through the interface of its core: the editor reads no pool of its own (ecs_gate.py)
         std::size_t Unknown = 0;
         for (const auto& Pair : Scene.m_LocalToRuntime)
-            if (FindEntityDetails(GameMgr, Pair.second) == nullptr) ++Unknown;
+            if (!Ecs.IsAlive(Pair.second)) ++Unknown;
         return Unknown;
     }
 
