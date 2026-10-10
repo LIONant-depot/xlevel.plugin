@@ -2,6 +2,10 @@
 #define XLVL_NEW_LevelEditor_GAME_PLUGIN_LOAD_H
 #pragma once
 #include <fstream>
+#if !defined(_WIN32)
+    #include <csetjmp>          // RunGuarded: the Linux guard around a call into the game module
+    #include <csignal>
+#endif
 
 // Extracted from LevelEditor_GamePlugin.h (mechanical move, phase 3 of the kit split - see the umbrella
 // file's own top comment). The shadow-copy + LoadLibrary/GetProcAddress mechanics: copying the
@@ -247,8 +251,31 @@ namespace xlevel
         __try                                                                   { pFn(pContext); return true; }
         __except( (Code = GetExceptionCode()) == EXCEPTION_BREAKPOINT ? EXCEPTION_CONTINUE_SEARCH : EXCEPTION_EXECUTE_HANDLER ) { return false; }
     #else
-        // Linux port: no SEH; the call is made unguarded
-        Code = 0; pFn(pContext); return true;
+        // Linux: no SEH; a fault signal during the call jumps back here instead (the handlers are in place only for the length of the call, then the old ones are back).
+        // Like __try, it holds no C++ objects: sigsetjmp/siglongjmp skip destructors.
+        struct guard { static sigjmp_buf*& Env() noexcept { static thread_local sigjmp_buf* p = nullptr; return p; } static int& Signal() noexcept { static thread_local int s = 0; return s; }
+                       static void Handler(int Sig, siginfo_t*, void*) noexcept { if (Env()) { Signal() = Sig; siglongjmp(*Env(), 1); } std::signal(Sig, SIG_DFL); std::raise(Sig); } };
+        constexpr int Signals[] = { SIGSEGV, SIGBUS, SIGFPE, SIGILL };
+        struct sigaction Old[4] = {};
+        struct sigaction New{}; New.sa_sigaction = &guard::Handler; New.sa_flags = SA_SIGINFO | SA_NODEFER | SA_ONSTACK; sigemptyset(&New.sa_mask);
+        sigjmp_buf Env;
+        sigjmp_buf* pPreviousEnv = guard::Env();
+        bool bOk = true;
+        Code = 0;
+        if (sigsetjmp(Env, 1) == 0)
+        {
+            guard::Env() = &Env;
+            for (int i = 0; i < 4; ++i) sigaction(Signals[i], &New, &Old[i]);
+            pFn(pContext);
+        }
+        else
+        {
+            bOk  = false;
+            Code = (guard::Signal() == SIGSEGV || guard::Signal() == SIGBUS) ? EXCEPTION_ACCESS_VIOLATION : 0xC0000000ul | static_cast<unsigned long>(guard::Signal());
+        }
+        for (int i = 0; i < 4; ++i) sigaction(Signals[i], &Old[i], nullptr);
+        guard::Env() = pPreviousEnv;
+        return bOk;
     #endif
     }
 
