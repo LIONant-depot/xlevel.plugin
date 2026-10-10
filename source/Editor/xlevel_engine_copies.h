@@ -274,7 +274,13 @@ namespace xlevel::engine
         }
         return nullptr;
     #else
-        if (void* h = ::dlopen(Path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND)) return reinterpret_cast<HMODULE>(h);
+        // a sanitizer build (ASan) aborts the process on a dlopen with RTLD_DEEPBIND: there the copies are loaded without it (they see the original core: the engine copy tests are not meaningful in that build)
+        #if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
+            constexpr int DeepBind = 0;
+        #else
+            constexpr int DeepBind = RTLD_DEEPBIND;
+        #endif
+        if (void* h = ::dlopen(Path.c_str(), RTLD_NOW | RTLD_LOCAL | DeepBind)) return reinterpret_cast<HMODULE>(h);
         const char* pWhy = ::dlerror();
         std::printf("[EngineCopies] dlopen %s failed: %s\n", Path.c_str(), pWhy ? pWhy : "?");
         std::fflush(stdout);
