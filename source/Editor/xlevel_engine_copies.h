@@ -274,8 +274,11 @@ namespace xlevel::engine
         }
         return nullptr;
     #else
-        // a sanitizer build (ASan) aborts the process on a dlopen with RTLD_DEEPBIND: there the copies are loaded without it (they see the original core: the engine copy tests are not meaningful in that build)
-        #if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
+        // a sanitizer build (ASan or TSan) aborts the process on a dlopen with RTLD_DEEPBIND: the sanitizers intercept malloc, free, the
+        // pthread calls and the like, and RTLD_DEEPBIND would make the library bind its own libc symbols ahead of those interceptors,
+        // so the runtime refuses it. In that build the copies are loaded without it (they see the original core: the engine copy tests
+        // are not meaningful in that build). The TSan case mirrors the ASan one; it is still to be confirmed by the first TSan CI run.
+        #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || (defined(__has_feature) && (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer)))
             constexpr int DeepBind = 0;
         #else
             constexpr int DeepBind = RTLD_DEEPBIND;
