@@ -159,11 +159,16 @@ namespace xlevel
         level_state& State() noexcept { return static_cast<level_state&>(m_State); }
 
         xlioncore::game* m_pGame = nullptr;   // this editor's game (the game manager and the time), set by its session
+        // Only used when the editors share the original core (a sanitizer build makes no copies of the engine, see xlevel_engine_copies.h): a Level that opens
+        // makes the others let go of their world while the registry is reset and it registers its Game, and gives them a world again after.
+        std::function<void()> m_ReleaseWorld;
+        std::function<void()> m_RestoreWorld;
 
         void* m_pToolEditor = nullptr;   // this editor's viewport_tools::editor (the "Edit Collider" tools), set by its session
         game_plugin_state* m_pGamePlugin = nullptr;   // the game module of this editor's Level (its own: every Level loads the one of its Game), set by its session
         std::function<std::string(const xmath::fvec3&, const xmath::fvec3&)> m_PickRay;   // which entity (scene and id) a ray hits, as the render module of this Level picks (what a click in the viewport does)
         std::function<std::string()> m_DescribeTextDraw;            // what the last draw of the Texts of this Level did (the render module says it)
+        std::function<std::string()> m_DescribeScene;               // what the last forward render of the Level's Meshes and lights had (the render module says it)
         std::function<std::string(std::uint64_t)> m_DescribeText;   // the layout of the Text of an entity (raw runtime entity value), as the render module of this Level says it, set by its session
         std::function<std::filesystem::path()> m_GameSolution;   // the Visual Studio solution of this Level's game project (empty: not made yet), set by its session
         std::function<void(const xmath::fvec3&)> m_AimCamera;     // the viewport's camera looks at a point (the orbit target), set by its session

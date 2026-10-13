@@ -460,6 +460,16 @@ namespace xlevel
                 xeditor::NotifyModal(std::format("Level session xundo Init failed: {}", Err));
             m_Document.Bind(m_CmdContext);
 
+            // No copies of the engine (a sanitizer build): this Level shares the original core with the other editors, and the registry of that core was locked by the worlds that are
+            // already there (the idle editor's, at startup); a locked registry refuses the Game's components. Their worlds go away for the moment, the registry is reset, and they get
+            // a world again below, once this Level has registered its Game. (Two Levels open at once do not work in that build: the first one is left with an empty world.)
+            std::vector<level_context*> Released;
+            if (!m_pSet && !m_LevelGuid.m_Instance.empty())
+            {
+                for (auto* pOther : g_LevelContexts) if (pOther->m_ReleaseWorld) { pOther->m_ReleaseWorld(); Released.push_back(pOther); }
+                if (!Released.empty()) m_pEcs->ResetRegistrations();
+            }
+
             m_pEcs->CreateWorld();
             m_PrefabRedirect = { this, &session::TakesPrefab, &session::DeliverPrefab, &session::PrefabSaved };
             m_pEcs->SetPrefabSaveRedirect(&m_PrefabRedirect);
@@ -533,6 +543,8 @@ namespace xlevel
             }
 #endif
             RegisterWorldSystems();
+
+            for (auto* pOther : Released) if (pOther->m_RestoreWorld) pOther->m_RestoreWorld();
 
             m_pGameMgr->m_SceneMgr.m_ProjectPath  = m_ProjectPath;
             m_pGameMgr->m_SceneMgr.m_pModuleOfComponent = &xlevel::ResolveComponentModule;      // a scene's ComponentDeps.txt names the module of each component
@@ -634,6 +646,12 @@ namespace xlevel
                 const int Length = m_pRender ? m_pRender->DescribeTextDraw(Text, static_cast<int>(sizeof(Text))) : -1;
                 return Length < 0 ? std::string("DescribeTextDraw: this Level has no render module") : std::string(Text, static_cast<std::size_t>(Length));
             };
+            m_CmdContext.m_DescribeScene = [this]() -> std::string
+            {
+                char Text[512];
+                const int Length = m_pRender ? m_pRender->DescribeScene(m_pGameMgr.get(), Text, static_cast<int>(sizeof(Text))) : -1;
+                return Length < 0 ? std::string("DescribeScene: this Level has no render module") : std::string(Text, static_cast<std::size_t>(Length));
+            };
             m_CmdContext.m_DescribeRoleDraw = [this]() -> std::string
             {
                 char Text[256];
@@ -664,6 +682,8 @@ namespace xlevel
             m_CmdContext.m_pToolEditor = &m_ToolEditor;
             m_CmdContext.m_EndGizmoDrag = [this]() noexcept { CommitGizmoDrag(); };
             m_CmdContext.m_pGame       = &m_Game;
+            m_CmdContext.m_ReleaseWorld = [this]() noexcept { m_pEcs->DestroyWorld(); };
+            m_CmdContext.m_RestoreWorld = [this]() noexcept { CreateWorld(); RegisterHostComponents(*m_pGameMgr); };
             g_LevelContexts.push_back(&m_CmdContext);
             if (g_pActiveLevelContext == nullptr || !m_LevelGuid.m_Instance.empty())
                 SetActiveLevelContext(&m_CmdContext);
@@ -1249,9 +1269,30 @@ namespace xlevel
             //
             // Grid: color-only editor helper - never submitted to xlionrender's entity draw/pick list.
             // Always drawn; grid does not participate in selection (CPU pick + ground MaxT only).
-            xgpu::tools::imgui::AddCustomRenderCallback([this](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
+            //
+            // The world's Meshes, lights and Environment go through the forward renderer (xlionrender::instance: shadows, probes,
+            // GI) into the world's own view, recorded now (render passes: before the UI is rendered), blitted by the first callback.
+            // The grid is that render's overlay: drawn with the scene's depth, so meshes hide it. Without the render module: the grid alone.
+            bool bScene = false;
+            if (m_pRender)
+                if (auto* pHost = xeditor::host::current(); auto* pWindow = pHost ? pHost->find<xgpu::window>() : nullptr)
+                {
+                    role_sets Sets;
+                    BuildRoleSets(*m_pGameMgr, m_State, Sets);
+                    const auto Roles = Sets.Roles(m_FadeColor, 0.65f);
+                    m_pRender->RenderScene(m_pGameMgr.get(), *pWindow, m_Camera.m_View, static_cast<int>(Avail.x), static_cast<int>(Avail.y), xlionrender::view::SCENE
+                                          , [](xgpu::cmd_buffer& CmdBuffer, void* pUser) noexcept
+                                            {
+                                                auto& S = *static_cast<session*>(pUser);
+                                                S.m_Grid.Draw(CmdBuffer, S.m_Camera.m_View.getW2C(), S.m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
+                                            }
+                                          , this, Sets.m_Context.empty() ? nullptr : &Roles);
+                    bScene = true;
+                }
+            xgpu::tools::imgui::AddCustomRenderCallback([this, bScene](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
-                m_Grid.Draw(CmdBuffer, m_Camera.m_View.getW2C(), m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
+                if (bScene) m_pRender->BlitScene(m_pGameMgr.get(), CmdBuffer);
+                else        m_Grid.Draw(CmdBuffer, m_Camera.m_View.getW2C(), m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
             });
 
             // Structural changes (new entities, AddComponent archetype migrations) stay in a pending

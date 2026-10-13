@@ -58,6 +58,23 @@ namespace xlevel::commands
         }
     };
 
+    // DescribeScene: what the last forward render of the Level had (the Mesh, light and Environment components through xlionrender::instance)
+    struct describe_scene_query_cmd : level_query_command
+    {
+        describe_scene_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "DescribeScene", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override
+        {
+            return "Says what the last render of the Level's Meshes and lights had: Meshes (entities with a Mesh), Drawn, Waiting (their GeomStatic not loaded yet), ConstantSlots (material slots drawn with the "
+                   "constant material: their material instance is not loaded or does not resolve), Materials (made so far), Sun, Lights (points and spots), DrawsRendered (after culling). Usage: DescribeScene";
+        }
+        void RegisterArguments() noexcept override {}
+        std::string Query() noexcept override
+        {
+            auto& Ctx = LevelContext();
+            return Ctx.m_DescribeScene ? Ctx.m_DescribeScene() : "DescribeScene: this Level has no render module";
+        }
+    };
+
     // PickRay: what a click in the viewport would select along a ray, so a script can ask "is this label (or primitive) where I think it is" without a mouse.
     struct pick_ray_query_cmd : level_query_command
     {
