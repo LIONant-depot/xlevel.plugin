@@ -37,6 +37,7 @@
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GamePlugin.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_scene_sanity_scan.h"
 #include "source/Tools/Editor/xeditor_resource_editor.h"
+#include "source/Tools/Editor/xeditor_resource_updates.h"
 #include "source/Tools/Editor/xeditor_inspector.h"
 #include "source/Tools/Editor/xeditor_toolbar.h"
 #include "dependencies/xeditor/include/xeditor/host.h"
@@ -688,7 +689,11 @@ namespace xlevel
             if (g_pActiveLevelContext == nullptr || !m_LevelGuid.m_Instance.empty())
                 SetActiveLevelContext(&m_CmdContext);
             if (auto* pHost = xeditor::host::current())
+            {
                 pHost->m_IdleWork.m_OnRun.Register<&xlevel::scene_sanity_scanner::Run>(m_SceneScanner);
+                // A resource compiled again: this Level's copy of the engine core has its own resource manager (its renderer draws with it)
+                if (auto* pUpdates = pHost->find<xeditor::resource_updates>()) pUpdates->m_OnUpdated.Register<&session::OnResourceUpdated>(*this);
+            }
 
             if (m_pDevice)   // non-headless: same one-time toolbar-position persistence AppInit.h used to do
             {
@@ -759,6 +764,7 @@ namespace xlevel
             if (auto* pHost = xeditor::host::current())
             {
                 pHost->m_IdleWork.m_OnRun.RemoveDelegates(&m_SceneScanner);
+                if (auto* pUpdates = pHost->find<xeditor::resource_updates>()) pUpdates->m_OnUpdated.RemoveDelegates(this);
                 if (auto* pMe = xlevel::FindHostSession(m_Undo))
                     std::erase_if(pHost->m_WriteLocks, [&](const xeditor::host::write_lock& L) noexcept { return L.pWriter == pMe; });
             }
@@ -1633,6 +1639,11 @@ namespace xlevel
         // open_resource_editors::RenderAll(), itself called from mid-frame), so these two cannot live there -
         // the shell calls this once, before BeginRendering, exactly where LevelEditor_AppFrame.h's own
         // PollGameReload/deferred-Stop calls always ran.
+        void OnResourceUpdated(xresource::full_guid Guid) noexcept
+        {
+            if (m_pEcs) m_pEcs->MarkResourceUpdated(Guid.m_Type.m_Value, Guid.m_Instance.m_Value);
+        }
+
         void PumpBeforeFrame() noexcept
         {
             xlevel::PollGameReload(m_CmdContext, m_GamePlugin, [this](xecs::game_mgr::instance& GameMgr) noexcept { RegisterHostComponents(GameMgr); }, m_SeenBuildSeq);
