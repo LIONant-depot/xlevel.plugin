@@ -649,9 +649,15 @@ namespace xlevel
             };
             m_CmdContext.m_DescribeScene = [this]() -> std::string
             {
-                char Text[512];
+                char Text[1024];
                 const int Length = m_pRender ? m_pRender->DescribeScene(m_pGameMgr.get(), Text, static_cast<int>(sizeof(Text))) : -1;
                 return Length < 0 ? std::string("DescribeScene: this Level has no render module") : std::string(Text, static_cast<std::size_t>(Length));
+            };
+            m_CmdContext.m_DumpGI = [this](const std::string& Path) -> std::string
+            {
+                if (!m_pRender) return "DumpGI: this Level has no render module";
+                const int n = m_pRender->DumpGI(m_pGameMgr.get(), Path.c_str());
+                return n < 0 ? std::string("DumpGI: no GI, or the file could not be made") : std::format("DumpGI: ok\nSurfels={}", n);
             };
             m_CmdContext.m_DescribeRoleDraw = [this]() -> std::string
             {

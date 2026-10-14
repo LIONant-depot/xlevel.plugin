@@ -75,6 +75,26 @@ namespace xlevel::commands
         }
     };
 
+    // DumpGI: the GI's surfels of the last forward render to a CSV file (the GI baseline: the solver's light and the shown light per surfel)
+    struct dump_gi_query_cmd : level_query_command
+    {
+        dump_gi_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "DumpGI", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override
+        {
+            return "Writes the GI's surfels of the last render of the Level to a CSV file: world position, normal, radius, the solver's light (unfiltered), the shown light (filtered), "
+                   "validity, captured albedo; the GI setup on the first line. Says how many surfels. Usage: DumpGI -File path";
+        }
+        void RegisterArguments() noexcept override { m_hFile = m_Parser.addOption("File", "The CSV file to write", true, 1); }
+        std::string Query() noexcept override
+        {
+            auto FileArg = m_Parser.getOptionArgAs<std::string>(m_hFile, 0);
+            if (std::holds_alternative<xerr>(FileArg)) return "DumpGI: bad arguments";
+            auto& Ctx = LevelContext();
+            return Ctx.m_DumpGI ? Ctx.m_DumpGI(std::get<std::string>(FileArg)) : "DumpGI: this Level has no render module";
+        }
+        xcmdline::parser::handle m_hFile;
+    };
+
     // PickRay: what a click in the viewport would select along a ray, so a script can ask "is this label (or primitive) where I think it is" without a mouse.
     struct pick_ray_query_cmd : level_query_command
     {

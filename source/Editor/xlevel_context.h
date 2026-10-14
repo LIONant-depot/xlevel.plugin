@@ -169,6 +169,7 @@ namespace xlevel
         std::function<std::string(const xmath::fvec3&, const xmath::fvec3&)> m_PickRay;   // which entity (scene and id) a ray hits, as the render module of this Level picks (what a click in the viewport does)
         std::function<std::string()> m_DescribeTextDraw;            // what the last draw of the Texts of this Level did (the render module says it)
         std::function<std::string()> m_DescribeScene;               // what the last forward render of the Level's Meshes and lights had (the render module says it)
+        std::function<std::string(const std::string&)> m_DumpGI;   // the GI's surfels of the last forward render to a CSV file (the render module writes it)
         std::function<std::string(std::uint64_t)> m_DescribeText;   // the layout of the Text of an entity (raw runtime entity value), as the render module of this Level says it, set by its session
         std::function<std::filesystem::path()> m_GameSolution;   // the Visual Studio solution of this Level's game project (empty: not made yet), set by its session
         std::function<void(const xmath::fvec3&)> m_AimCamera;     // the viewport's camera looks at a point (the orbit target), set by its session
