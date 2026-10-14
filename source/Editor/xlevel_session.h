@@ -320,6 +320,7 @@ namespace xlevel
         session_actions                              m_Actions{ *this };      // the keys/menu/toolbar actions (see session_actions)
         bool                                         m_bPivotCenter = true;
         bool                                         m_bLocalSpace  = false;
+        xlionrender::view_options                    m_ViewOptions;              // the viewport's GI view (the toolbar's GI menu): drawn, never saved
         ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost{ {}, false, [](const char* pText) noexcept { xeditor::hint::Text("%s", pText); } };      // its tooltip is the editors' hint window
         char                                         m_ToolbarHandlerName[48] = {};
         bool                                         m_bToolbarHandler = false;
@@ -1152,10 +1153,58 @@ namespace xlevel
                 };
                 SceneToggle("Pivot", "P", m_bPivotCenter);
                 SceneToggle("Local", "L", m_bLocalSpace);
+                ToolbarSeparator();
+                RenderGIMenu(bHorizontal, ButtonHeight);
             }
 
             ImGui::PopFont();
             ImGui::PopStyleVar();
+        }
+
+        // The toolbar's GI menu: what the viewport shows of the GI (view_options, on top of the Environment's settings). Only this view:
+        // the Level is not changed, nothing is saved, undo does not see it
+        void RenderGIMenu(bool bHorizontal, float ButtonHeight) noexcept
+        {
+            if (bHorizontal) ImGui::SameLine();
+            const bool bChanged = !(m_ViewOptions == xlionrender::view_options{});
+            if (bChanged) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Header]);
+            const bool bPressed = ImGui::Button(bHorizontal ? "GI \xEE\x9C\x8D###GIView" : "G###GIView", bHorizontal ? ImVec2(52.0f, ButtonHeight) : ImVec2(32.0f, ButtonHeight));     // Segoe MDL2 ChevronDown
+            if (bChanged) ImGui::PopStyleColor();
+            const ImVec2 Min = ImGui::GetItemRectMin(), Max = ImGui::GetItemRectMax();
+            if (ImGui::IsItemHovered()) xeditor::hint::Text("GI view: what this viewport shows of the GI (only here: the Level's Environment is not changed)");
+            if (bPressed)
+            {
+                ImGui::SetNextWindowPos(ImVec2(Min.x, Max.y));                  // under the button
+                ImGui::OpenPopup("###GIViewPopup");
+            }
+            if (!ImGui::BeginPopup("###GIViewPopup")) return;
+            struct item { std::int8_t m_Debug; const char* m_pName; const char* m_pHint; };
+            static constexpr item Views[] =
+            { { -1, "As the Environment says", "The Environment's GIDebug setting" }
+            , {  0, "Final",                   "The lit image" }
+            , {  1, "Surfels",                 "Every pixel in the color of the surfel it reads most (black: no surfel reaches it)" }
+            , {  2, "Light",                   "The GI light alone: no textures, no direct light" }
+            , {  4, "Surface color",           "The surface color the GI bounces (the material capture)" }
+            , {  5, "Coverage",                "Which read lights each pixel: green its own surfels, blue the vertices', magenta none (no GI there)" }
+            };
+            for (const auto& V : Views)
+            {
+                if (ImGui::MenuItem(V.m_pName, nullptr, m_ViewOptions.m_GIDebug == V.m_Debug)) m_ViewOptions.m_GIDebug = V.m_Debug;
+                if (ImGui::IsItemHovered()) xeditor::hint::Text("%s", V.m_pHint);
+            }
+            ImGui::Separator();
+            const auto Toggle = [&](const char* pName, bool& bOff, const char* pHint)
+            {
+                bool bOn = !bOff;
+                if (ImGui::MenuItem(pName, nullptr, &bOn)) bOff = !bOn;
+                if (ImGui::IsItemHovered()) xeditor::hint::Text("%s", pHint);
+            };
+            Toggle("GI",             m_ViewOptions.m_bNoGI,       "Off: drawn without GI (on: as the Environment says)");
+            Toggle("Per-pixel read", m_ViewOptions.m_bNoPerPixel, "Off: the vertex read only (on: as the Environment's GIPerPixel says)");
+            Toggle("Visibility",     m_ViewOptions.m_bNoMoments,  "Off: the reads skip the depth-moment visibility test (on: as the Environment's GIMoments says)");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Reset", nullptr, false, bChanged)) m_ViewOptions = {};
+            ImGui::EndPopup();
         }
 
         // What the viewport draws and picks with the roles of this session (a Prefab Editor with context scenes: the context is drawn first and faded, and never picked; the instance edited in context is
@@ -1292,6 +1341,7 @@ namespace xlevel
                     role_sets Sets;
                     BuildRoleSets(*m_pGameMgr, m_State, Sets);
                     const auto Roles = Sets.Roles(m_FadeColor, 0.65f);
+                    m_pRender->SetViewOptions(m_pGameMgr.get(), m_ViewOptions);
                     m_pRender->RenderScene(m_pGameMgr.get(), *pWindow, m_Camera.m_View, static_cast<int>(Avail.x), static_cast<int>(Avail.y), xlionrender::view::SCENE
                                           , [](xgpu::cmd_buffer& CmdBuffer, void* pUser) noexcept
                                             {
