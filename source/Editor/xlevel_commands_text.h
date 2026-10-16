@@ -82,7 +82,8 @@ namespace xlevel::commands
         const char* getCommandHelp() const noexcept override
         {
             return "Writes the GI's surfels of the last render of the Level to a CSV file: world position, normal, radius, the solver's light (unfiltered), the shown light (filtered), "
-                   "validity, captured albedo; the GI setup on the first line. Says how many surfels. Usage: DumpGI -File path";
+                   "validity, captured albedo; the GI setup on the first line. Says how many surfels. Also writes the GI's frame log (the last frames' stage times, counts and "
+                   "memory: documentation/gi_dynamic_master_plan.md, Phase 0) to path.frames.csv. Usage: DumpGI -File path";
         }
         void RegisterArguments() noexcept override { m_hFile = m_Parser.addOption("File", "The CSV file to write", true, 1); }
         std::string Query() noexcept override
