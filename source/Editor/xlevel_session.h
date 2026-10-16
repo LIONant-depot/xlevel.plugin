@@ -1012,10 +1012,55 @@ namespace xlevel
             return pHost ? pHost->find<ximgui::actions::context>() : nullptr;
         }
 
+        // The world box of the primary selection (a Mesh's geometry bounds placed by the entity, a primitive's box), if it has one
+        bool SelectionBox(xmath::fvec3& Center, xmath::fquat& Rotation, xmath::fvec3& Half) noexcept
+        {
+            if (!m_pRender || m_State.m_SelectedEntityId == xecs::scene::invalid_permanent_id_v) return false;
+            return m_pRender->EntityBox(m_pGameMgr.get(), m_State.m_SelectedEntity.m_Value, Center, Rotation, Half);
+        }
+
+        // The camera frames the selection (its box's sphere) and looks at its center; with nothing to frame the request is dropped
+        // (the camera's F still switches Fly and Orbit). The distance is the framing of every editor's orbit camera: ReframeOrbitCamera
+        void FrameSelection() noexcept
+        {
+            xmath::fvec3 Center, Half; xmath::fquat Rotation;
+            if (!SelectionBox(Center, Rotation, Half)) { m_Camera.m_bReframe = false; return; }
+            m_Camera.m_Center = Center;
+            m_Camera.m_Radius = std::max(Half.Length() * 1.3f, 0.05f);
+        }
+
+        // The outline of the selection's box in the viewport: its 12 edges, over the scene (a mesh has no outline pass of the primitives' kind)
+        void DrawSelectionBox(const ImVec2& Min, const ImVec2& Size) noexcept
+        {
+            xmath::fvec3 Center, Half; xmath::fquat Rotation;
+            if (!SelectionBox(Center, Rotation, Half)) return;
+            xmath::fvec3 Corner[8]; ImVec2 Pt[8]; bool bOk[8];
+            const xmath::fmat4 W2C = m_Camera.m_View.getW2C();
+            for (int i = 0; i < 8; ++i)
+            {
+                const xmath::fvec3 L{ (i & 1 ? 1.0f : -1.0f) * Half.m_X, (i & 2 ? 1.0f : -1.0f) * Half.m_Y, (i & 4 ? 1.0f : -1.0f) * Half.m_Z };
+                Corner[i] = Center + Rotation.RotateVector(L);
+                const xmath::fvec4 C = W2C * xmath::fvec4(Corner[i], 1.0f);
+                bOk[i] = C.m_W > 1.0e-4f;
+                if (bOk[i]) Pt[i] = ImVec2(Min.x + (C.m_X / C.m_W * 0.5f + 0.5f) * Size.x, Min.y + (C.m_Y / C.m_W * 0.5f + 0.5f) * Size.y);
+            }
+            auto* pDraw = ImGui::GetWindowDrawList();
+            pDraw->PushClipRect(Min, ImVec2(Min.x + Size.x, Min.y + Size.y), true);
+            const ImU32 Col = IM_COL32(255, 170, 40, 235);
+            for (int i = 0; i < 8; ++i)
+                for (int b = 0; b < 3; ++b)
+                {
+                    const int j = i ^ (1 << b);
+                    if (j > i && bOk[i] && bOk[j]) pDraw->AddLine(Pt[i], Pt[j], Col, 1.5f);
+                }
+            pDraw->PopClipRect();
+        }
+
         // Q/W/E/R and their toolbar buttons: while a viewport tool is editing they drive ITS mode (Move/Rotate/Resize, Q ends
         // it); otherwise they pick the scene tool.
         void SetSceneTool(int ToolIndex) noexcept
         {
+            if (ToolIndex == 4) { m_Camera.m_bReframe = true; FrameSelection(); return; }        // "Frame selected" is an action: the tool stays as it is
             if (m_ToolEditor.isActive() && ToolIndex <= 3) m_ToolEditor.SetToolIndex(ToolIndex);
             else                                           m_SceneTool = ToolIndex;
         }
@@ -1522,10 +1567,12 @@ namespace xlevel
             // click either. Skipping it also keeps the picker's "missed everything -> ClearSelection"
             // branch from firing on a click meant for the gizmo, and keeps the camera from orbiting
             // mid-drag.
+            // DrawSelectionBox(Min, Avail);   // OFF for now: the selection's outline is to be your outline shader's (xlionrender_renderer), not a box
             if (!bGizmoInteracting)
             {
                 ImGui::InvisibleButton("##LevelEditorViewport", Avail);
                 m_Camera.HandleInput();
+                if (m_Camera.m_bReframe) FrameSelection();       // F (in Fly it switches to Orbit and frames) and the toolbar's F: the selection is what the camera frames
                 m_Camera.DrawOverlay();
 
                 // The Q/W/E/R tool keys are the Level/Viewport/Tool* actions (see session_actions: unavailable while the camera
