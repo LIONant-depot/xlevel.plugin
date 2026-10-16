@@ -1391,7 +1391,9 @@ namespace xlevel
                     role_sets Sets;
                     BuildRoleSets(*m_pGameMgr, m_State, Sets);
                     const auto Roles = Sets.Roles(m_FadeColor, 0.65f);
-                    m_pRender->SetViewOptions(m_pGameMgr.get(), m_ViewOptions);
+                    auto Options = m_ViewOptions;                                           // the foreground: first on the host's shared GI allowance
+                    Options.m_GITraceAllowanceMs = pHost->m_GIAllowance.Grant(true);
+                    m_pRender->SetViewOptions(m_pGameMgr.get(), Options);
                     m_pRender->RenderScene(m_pGameMgr.get(), *pWindow, m_Camera.m_View, static_cast<int>(Avail.x), static_cast<int>(Avail.y), xlionrender::view::SCENE
                                           , [](xgpu::cmd_buffer& CmdBuffer, void* pUser) noexcept
                                             {
@@ -1399,6 +1401,7 @@ namespace xlevel
                                                 S.m_Grid.Draw(CmdBuffer, S.m_Camera.m_View.getW2C(), S.m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
                                             }
                                           , this, Sets.m_Context.empty() ? nullptr : &Roles);
+                    pHost->m_GIAllowance.Used(m_pRender->GITraceMs(m_pGameMgr.get()), true);
                     bScene = true;
                 }
             xgpu::tools::imgui::AddCustomRenderCallback([this, bScene](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
