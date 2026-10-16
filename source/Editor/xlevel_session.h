@@ -1562,18 +1562,22 @@ namespace xlevel
                 }
             }
 
-            // The viewport InvisibleButton (camera-orbit input, hotkeys, click-to-pick) - skipped
-            // entirely, with everything keyed off its item state, on any frame the gizmo is hovered or
-            // being dragged. ImGuizmo's CanActivate() needs !IsAnyItemHovered(), which also checks
-            // g.HoveredIdPreviousFrame (latched at frame start from the PRIOR frame) - so this button,
-            // which spans the whole viewport, must not claim hover on the frames leading up to the
-            // click either. Skipping it also keeps the picker's "missed everything -> ClearSelection"
-            // branch from firing on a click meant for the gizmo, and keeps the camera from orbiting
-            // mid-drag.
+            // The viewport InvisibleButton (click-to-pick, and the item the camera input and hotkeys key off) - not
+            // submitted on any frame the gizmo is hovered or being dragged. ImGuizmo's CanActivate() needs
+            // !IsAnyItemHovered(), which also checks g.HoveredIdPreviousFrame (latched at frame start from the PRIOR
+            // frame) - so this button, which spans the whole viewport, must not claim hover on the frames leading up
+            // to the click either. Skipping it also keeps the picker's "missed everything -> ClearSelection" branch
+            // from firing on a click meant for the gizmo.
+            // The gizmo only takes the left mouse button, though: while it is merely hovered the viewport still owns
+            // the keyboard (F, Esc, right-mouse fly W A S D Q E) and the right/middle mouse and wheel. A Dummy of the
+            // same rect stands in for the button then - an item with no ID never claims hover, so ImGuizmo can still
+            // activate - and the camera input runs off it. Only a drag in progress keeps the camera and keys out.
             // DrawSelectionBox(Min, Avail);   // OFF for now: the selection's outline is to be your outline shader's (xlionrender_renderer), not a box
-            if (!bGizmoInteracting)
+            const bool bGizmoDragging = ImGuizmo::IsUsingAny() || viewport_tools::handle::isActive();
+            if (bGizmoInteracting) ImGui::Dummy(Avail);
+            else                   ImGui::InvisibleButton("##LevelEditorViewport", Avail);
+            if (!bGizmoDragging)
             {
-                ImGui::InvisibleButton("##LevelEditorViewport", Avail);
                 m_Camera.HandleInput();
                 if (m_Camera.m_bReframe) FrameSelection();       // F (in Fly it switches to Orbit and frames) and the toolbar's F: the selection is what the camera frames
                 m_Camera.DrawOverlay();
@@ -1583,7 +1587,10 @@ namespace xlevel
                 // Esc finishes a viewport tool that is editing.
                 if (ImGui::IsItemHovered() && !ImGui::GetIO().WantTextInput && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
                     m_ToolEditor.HandleHotkeys();
+            }
 
+            if (!bGizmoInteracting)
+            {
                 // Click-to-select: CPU ray-pick against every rendered entity's rigid_body AABB
                 // (xlionrender::Pick - xeditor_tools_picking.h under the hood, the same shared primitives
                 // xskeleton.plugin's own PickWedge uses for bones). Gated on hover + not mid-orbit, same
