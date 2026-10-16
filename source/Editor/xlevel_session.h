@@ -40,6 +40,7 @@
 #include "source/Tools/Editor/xeditor_resource_updates.h"
 #include "source/Tools/Editor/xeditor_inspector.h"
 #include "source/Tools/Editor/xeditor_toolbar.h"
+#include "source/Tools/Editor/xeditor_camera_toolbar.h"
 #include "dependencies/xeditor/include/xeditor/host.h"
 #include "dependencies/toolbar.imgui/ximgui_toolbar.h"
 #include "dependencies/actions.imgui/ximgui_actions.h"
@@ -171,10 +172,10 @@ namespace xlevel
         { { 0,             mouse_input::Left,   mouse_kind::Click,  "Select",      "Selects the entity under the mouse; clicking empty ground clears the selection." }
         , { ImGuiMod_Ctrl, mouse_input::Left,   mouse_kind::Click,  "Add / remove","Adds the entity under the mouse to the selection, or takes it out." }
         , { 0,             mouse_input::Left,   mouse_kind::Drag,   "Gizmo",       "Drag a handle of the gizmo to move, rotate or scale the selected entity (Q W E R choose the tool)." }
-        , { 0,             mouse_input::Right,  mouse_kind::Drag,   "Look around", "Turns the camera where it is." }
-        , { 0,             mouse_input::Right,  mouse_kind::Drag,   "Fly",         "Keep it held and press W A S D to move, Q down, E up.", "W A S D Q E" }
-        , { 0,             mouse_input::Middle, mouse_kind::Drag,   "Pan",         "Slides the camera sideways and up / down." }
-        , { 0,             mouse_input::Wheel,  mouse_kind::Scroll, "Zoom",        "Moves the camera toward or away from what it looks at." } };
+        , { 0,             mouse_input::Right,  mouse_kind::Drag,   "Look around", "Fly: turns the camera where it is. Orbit: turns it around its target." }
+        , { 0,             mouse_input::Right,  mouse_kind::Drag,   "Fly",         "Keep it held and press W A S D to move, Q down, E up (Shift: faster).", "W A S D Q E" }
+        , { 0,             mouse_input::Middle, mouse_kind::Drag,   "Pan",         "Slides the camera sideways and up / down (Fly: at the fly speed)." }
+        , { 0,             mouse_input::Wheel,  mouse_kind::Scroll, "Speed / Zoom","Fly: changes the flying speed in meters per second. Orbit: moves the camera toward or away from its target." } };
 
         inline constexpr gesture tree[] =
         { { 0,             mouse_input::Left,   mouse_kind::Click,  "Select",      "Selects the entity (when the button is released, so a drag can start from the row)." }
@@ -342,7 +343,7 @@ namespace xlevel
 
         // The "Editor" viewport's own camera + ground grid - every other 3D editor already shares these
         // via xeditor_tools; the Level Editor never had a camera or a grid at all before this.
-        xeditor_tools::camera                       m_Camera;
+        xeditor_tools::camera                       m_Camera = [] { xeditor_tools::camera C; C.m_State.m_Mode = xeditor_tools::camera_mode::FLY; C.m_State.m_FovDeg = 60.0f; C.m_bSubject = false; return C; }();     // the level starts flying (F: orbit)
         xecs::scene::permanent_id                   m_CameraAimedAt = xecs::scene::invalid_permanent_id_v;     // the selection the camera last turned to look at
         xmath::fvec3                                m_AimTarget     = {};                                      // a point the camera is to look at (Edit in Context: where the instance is), taken by the next frame of the viewport
         bool                                        m_bAimPending   = false;
@@ -707,6 +708,9 @@ namespace xlevel
                 m_EditorToolbarHost.m_Items.push_back
                 ({ "Scene", ximgui::toolbar::toolbar_host_edge::Top, ximgui::toolbar::axis::Horizontal
                  , ImVec2(kSceneToolbarWidth, kEditorToolbarHeight), ImVec2(32.0f, 250.0f), ImVec2(24.0f, 72.0f) });
+                m_EditorToolbarHost.m_Items.push_back
+                ({ "Camera", ximgui::toolbar::toolbar_host_edge::Top, ximgui::toolbar::axis::Horizontal
+                 , ImVec2(190.0f, kEditorToolbarHeight), ImVec2(32.0f, 120.0f), ImVec2(24.0f, 100.0f) });
             }
 
             // A Level editor is for one Level: load it (and every Scene it owns) right away, and have the game module's
@@ -1096,6 +1100,7 @@ namespace xlevel
 
         void RenderEditorToolbar(const char* Name, ximgui::toolbar::axis Axis) noexcept
         {
+            if (std::string_view(Name) == "Camera") { xeditor::camera_toolbar::CameraButtons(m_Camera.m_State, Axis); return; }
             const bool bHorizontal = Axis == ximgui::toolbar::axis::Horizontal;
             const float ButtonHeight = bHorizontal ? kEditorToolbarHeight - 4.0f : 28.0f;
             if (auto* pCtx = ActionContext(); pCtx && pCtx->DrawToolbar(Name, !bHorizontal)) return;     // the user's own layout of this toolbar (keymap file)
@@ -1521,6 +1526,7 @@ namespace xlevel
             {
                 ImGui::InvisibleButton("##LevelEditorViewport", Avail);
                 m_Camera.HandleInput();
+                m_Camera.DrawOverlay();
 
                 // The Q/W/E/R tool keys are the Level/Viewport/Tool* actions (see session_actions: unavailable while the camera
                 // flies - right mouse held - because xeditor_tools::camera::HandleInput reads Q/W/E for strafe/up-down then).
