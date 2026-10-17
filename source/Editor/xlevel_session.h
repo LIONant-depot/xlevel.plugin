@@ -587,21 +587,8 @@ namespace xlevel
                 if (It == m_InspectorBridge.m_ComponentMap.end() || It->second->m_Guid.m_Value != xlioncore::transform::typedef_v.m_Guid.m_Value) return;
 
                 auto& T = *static_cast<xlioncore::transform*>(pInstance);
-                ImGui::SameLine();
-                const char* pIcon = xlevel::DependenciesIcon();      // the "Link" glyph, same as the Level Tree Dependencies row
-                const float W     = ImGui::CalcTextSize(pIcon).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - W));
-                const bool bOn = T.m_EditorLockScale;
-                // Frameless: transparent button, the glyph colour carries the state (accent when locked, dim when not).
-                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_Text, bOn ? ImVec4(0.35f, 0.65f, 1.0f, 1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                ImGui::BeginDisabled(!m_bLevelWritable || m_State.isPlaying());
-                if (ImGui::SmallButton(pIcon)) T.m_EditorLockScale = !bOn;
-                ImGui::EndDisabled();
-                ImGui::PopStyleColor(4);
-                xproperty::inspector::Tooltip("Lock scale: editing one axis scales all three proportionally");
+                // The same toggle every scale-like property has (xeditor::ScaleLockToggle); here it is off while the level can not be edited
+                if (xeditor::ScaleLockToggle(T.m_EditorLockScale, !m_bLevelWritable || m_State.isPlaying())) T.m_EditorLockScale = !T.m_EditorLockScale;
             };
             m_EntityInspector.m_OnLeftColumnAppend.Register(m_OnScaleRow);
 
