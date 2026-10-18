@@ -47,6 +47,21 @@
 
 namespace xlevel::engine
 {
+    // A Linux sanitizer build (ASan or TSan, GCC or Clang): the sanitizer runtime refuses a dlopen with RTLD_DEEPBIND (LoadCopy), so no engine copies are made (manager::Make)
+#if defined(_WIN32)
+    inline constexpr bool kSanitizerNoDeepBind = false;
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    inline constexpr bool kSanitizerNoDeepBind = true;
+#elif defined(__has_feature)
+    #if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+    inline constexpr bool kSanitizerNoDeepBind = true;
+    #else
+    inline constexpr bool kSanitizerNoDeepBind = false;
+    #endif
+#else
+    inline constexpr bool kSanitizerNoDeepBind = false;
+#endif
+
 #if !defined(_WIN32)
     //---------------------------------------------------------------------------
     // ELF patching: rename what a shared object needs (DT_NEEDED) and what it is called (DT_SONAME)
@@ -276,13 +291,9 @@ namespace xlevel::engine
     #else
         // a sanitizer build (ASan or TSan) aborts the process on a dlopen with RTLD_DEEPBIND: the sanitizers intercept malloc, free, the
         // pthread calls and the like, and RTLD_DEEPBIND would make the library bind its own libc symbols ahead of those interceptors,
-        // so the runtime refuses it. In that build the copies are loaded without it (they see the original core: the engine copy tests
-        // are not meaningful in that build). The TSan case mirrors the ASan one; it is still to be confirmed by the first TSan CI run.
-        #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || (defined(__has_feature) && (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer)))
-            constexpr int DeepBind = 0;
-        #else
-            constexpr int DeepBind = RTLD_DEEPBIND;
-        #endif
+        // so the runtime refuses it. In that build the copies are loaded without it. This is only used for the game module there (see
+        // manager::Make: a sanitizer build makes no copies of the engine: they would see the original core and fail to register their types).
+        constexpr int DeepBind = kSanitizerNoDeepBind ? 0 : RTLD_DEEPBIND;
         if (void* h = ::dlopen(Path.c_str(), RTLD_NOW | RTLD_LOCAL | DeepBind)) return reinterpret_cast<HMODULE>(h);
         const char* pWhy = ::dlerror();
         std::printf("[EngineCopies] dlopen %s failed: %s\n", Path.c_str(), pWhy ? pWhy : "?");
@@ -428,6 +439,15 @@ namespace xlevel::engine
         // A new set: the core copied and loaded first, then the render DLL copied with its import patched to the core copy. Null (and nothing left behind) when a step fails; Why says which.
         std::shared_ptr<engine_set> Make(std::string& Why) noexcept
         {
+            // The copies of the engine need RTLD_DEEPBIND to bind to their own core, which a sanitizer refuses. Without it a copy binds to the original core, and
+            // its component types are never registered in the registry it syncs against (SyncLocalBitIDs asserts, the editor aborts on the first Level). So in a
+            // sanitizer build the Level runs on the original DLLs: the session already handles a null set that way.
+            if constexpr (kSanitizerNoDeepBind)
+            {
+                Why = "sanitizer builds cannot load engine copies with RTLD_DEEPBIND";
+                return {};
+            }
+
             CleanLeftovers();
             const auto OriginalCore = m_OriginalsDir / FileOf(kCoreNameW);
             if (!std::filesystem::exists(OriginalCore)) { Why = std::format("{} is not next to the editor", OriginalCore.filename().string()); return {}; }
