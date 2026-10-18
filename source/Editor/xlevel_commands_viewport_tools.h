@@ -7,6 +7,8 @@
 // entering/leaving edit mode changes no scene content (the drags themselves commit SetProperty).
 #include "plugins/xlevel.plugin/source/Editor/xlevel_command_context.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_viewport_tools.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_scale_reference.h"
+#include <cstdlib>
 
 namespace xlevel::commands
 {
@@ -77,6 +79,57 @@ namespace xlevel::commands
         }
 
         xcmdline::parser::handle m_hElement, m_hMode, m_hOff, m_hComp;
+    };
+
+    // ScaleReference - the human figures of the viewport (xlevel_scale_reference.h): what the toolbar's Human button, a click and the Move
+    // gizmo do. A Query: they are editor only, not in the Level (no undo, nothing to save).
+    struct scale_reference_query_cmd : level_query_command
+    {
+        scale_reference_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "ScaleReference", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override
+        {
+            return "Adds, moves, selects or removes the 1.8 m human figures of the viewport (editor only: never saved or exported); reports them. "
+                   "Usage: ScaleReference [-Add 1] [-Select n] [-At x,y,z (moves the selected)] [-Remove 1 (the selected)]";
+        }
+        void RegisterArguments() noexcept override
+        {
+            m_hAdd    = m_Parser.addOption("Add",    "1 = add one where the camera looks (selected)", false, 1);
+            m_hSelect = m_Parser.addOption("Select", "Index to select (-1 none)",                     false, 1);
+            m_hAt     = m_Parser.addOption("At",     "x,y,z: where the feet of the selected go",      false, 1);
+            m_hRemove = m_Parser.addOption("Remove", "1 = remove the selected",                       false, 1);
+        }
+        std::string Query() noexcept override
+        {
+            auto* pRefs = static_cast<scale_reference*>(LevelContext().m_pScaleReference);
+            if (!pRefs) return "ScaleReference: no Level viewport";
+            const auto Arg = [&](xcmdline::parser::handle H) { auto A = m_Parser.getOptionArgAs<std::string>(H, 0); return std::holds_alternative<xerr>(A) ? std::string{} : std::get<std::string>(A); };
+            if (m_Parser.hasOption(m_hAdd))    pRefs->Add();
+            if (m_Parser.hasOption(m_hSelect))
+            {
+                const int i = std::atoi(Arg(m_hSelect).c_str());
+                pRefs->m_iSelected = i >= 0 && i < static_cast<int>(pRefs->m_Figures.size()) ? i : -1;
+            }
+            if (m_Parser.hasOption(m_hAt))
+            {
+                if (pRefs->m_iSelected < 0) return "ScaleReference: -At needs a selected figure";
+                const std::string Text = Arg(m_hAt);
+                const char*       p    = Text.c_str();
+                char*             pEnd = nullptr;
+                float             V[3];
+                for (int i = 0; i < 3; ++i)
+                {
+                    V[i] = std::strtof(p, &pEnd);
+                    if (pEnd == p || (i < 2 && *pEnd != ',')) return "ScaleReference: -At must be x,y,z";
+                    p = pEnd + (i < 2 ? 1 : 0);
+                }
+                const xmath::fvec3 P{ V[0], V[1], V[2] };
+                pRefs->m_Figures[pRefs->m_iSelected] = P;
+            }
+            if (m_Parser.hasOption(m_hRemove)) pRefs->RemoveSelected();
+            return pRefs->Describe();
+        }
+
+        xcmdline::parser::handle m_hAdd, m_hSelect, m_hAt, m_hRemove;
     };
 }
 

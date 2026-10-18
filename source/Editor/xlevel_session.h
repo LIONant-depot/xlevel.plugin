@@ -56,6 +56,7 @@
 #include "dependencies/xLIONCore/src/transform/xlioncore_hierarchy.h"
 #include "dependencies/ImGuizmo/src/ImGuizmo.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_viewport_tools.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_scale_reference.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_box.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_shapes.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_panel_level_properties.h"
@@ -340,6 +341,8 @@ namespace xlevel
         // Per-component viewport tools ("Edit Collider", ...) - see xlevel_viewport_tools.h. While one is
         // active it owns the W/E/R keys and the gizmo; the Transform gizmo steps aside.
         viewport_tools::editor                       m_ToolEditor;
+        scale_reference                              m_ScaleRefs;            // the toolbar's human figures (editor only: not in the Level)
+        xecs::scene::permanent_id                    m_ScaleRefsLastEntity = xecs::scene::invalid_permanent_id_v;   // an entity selected after a figure was deselects the figure
         bool                                         m_bLevelWritable = true;     // last frame's, for the Inspector toggle
         std::function<void(xproperty::inspector&, const xproperty::type::object&, void*, std::string_view, int)> m_OnArrayElementRender;
         std::function<void(xproperty::inspector&, const xproperty::type::object&, void*, std::string_view)> m_OnScaleRow;
@@ -679,6 +682,7 @@ namespace xlevel
             // commands that act on "the Level the user is working on" reach this editor. The newest real Level becomes the
             // active one; the stand-in editor (no Level) only serves until there is one.
             m_CmdContext.m_pToolEditor = &m_ToolEditor;
+            m_CmdContext.m_pScaleReference = &m_ScaleRefs;
             m_CmdContext.m_EndGizmoDrag = [this]() noexcept { CommitGizmoDrag(); };
             m_CmdContext.m_pGame       = &m_Game;
             m_CmdContext.m_ReleaseWorld = [this]() noexcept { m_pEcs->DestroyWorld(); };
@@ -1197,6 +1201,12 @@ namespace xlevel
                 RenderGIMenu(bHorizontal, ButtonHeight);
                 ToolbarSeparator();
                 xeditor::mesh_budget::Buttons(m_MeshBudget, bHorizontal, ButtonHeight, static_cast<int>(m_NotDrawnBoxes.size()));
+                ToolbarSeparator();
+                ToolbarButton("Human", "H", false, false, [&]     // a 1.8 m figure where the camera looks, to judge the scale (editor only: xlevel_scale_reference.h)
+                {
+                    m_ScaleRefs.Add();
+                    if (m_State.m_SelectedEntityId != xecs::scene::invalid_permanent_id_v) xeditor::Run(m_Undo, "ClearSelection");
+                });
             }
 
             ImGui::PopFont();
@@ -1459,7 +1469,11 @@ namespace xlevel
             //    the click either, not just the click frame.
             bool bGizmoInteracting = false;
             const bool bHasSelection = m_State.m_SelectedEntityId != xecs::scene::invalid_permanent_id_v;
-            if (bHasSelection)
+            // One selection at a time: an entity selected (a click, the tree) deselects the human figure
+            if (bHasSelection && m_State.m_SelectedEntityId != m_ScaleRefsLastEntity) m_ScaleRefs.m_iSelected = -1;
+            m_ScaleRefsLastEntity = m_State.m_SelectedEntityId;
+            const bool bFigureSelected = m_ScaleRefs.m_iSelected >= 0;
+            if (bHasSelection || bFigureSelected)
             {
                 ImGuizmo::BeginFrame();
                 ImGuizmo::SetOrthographic(false);
@@ -1496,7 +1510,11 @@ namespace xlevel
             // Collider"-style edit) - drawn before the Transform gizmo so its handles stay on top.
             bGizmoInteracting |= m_ToolEditor.Run(m_CmdContext, m_State.isPlaying() || !m_bLevelWritable, ToolView);
 
-            if (!m_ToolEditor.isActive() && m_SceneTool >= 1 && m_SceneTool <= 3 && bHasSelection && m_bLevelWritable)
+            // The human figures (editor only), and the Move gizmo of the selected one in place of the entity's
+            m_ScaleRefs.Draw(ToolView, *ImGui::GetWindowDrawList());
+            if (!m_ToolEditor.isActive() && bFigureSelected) bGizmoInteracting |= m_ScaleRefs.Gizmo(ToolView);
+
+            if (!m_ToolEditor.isActive() && !bFigureSelected && m_SceneTool >= 1 && m_SceneTool <= 3 && bHasSelection && m_bLevelWritable)
             {
                 if (auto* pXform = xscene::commands::ResolveTransform(m_CmdContext, m_State.m_SelectedEntityScene, m_State.m_SelectedEntityId))
                 {
@@ -1589,7 +1607,10 @@ namespace xlevel
                 // flies - right mouse held - because xeditor_tools::camera::HandleInput reads Q/W/E for strafe/up-down then).
                 // Esc finishes a viewport tool that is editing.
                 if (ImGui::IsItemHovered() && !ImGui::GetIO().WantTextInput && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
+                {
                     m_ToolEditor.HandleHotkeys();
+                    if (bFigureSelected && !bHasSelection && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) m_ScaleRefs.RemoveSelected();
+                }
             }
 
             if (!bGizmoInteracting)
@@ -1607,6 +1628,10 @@ namespace xlevel
                     {
                         const ImVec2 Mouse  = ImGui::GetIO().MousePos;
                         const auto   Origin = m_Camera.m_View.getPosition();
+
+                        // A human figure under the mouse is picked first (it stands in front of what it is measured against)
+                        const bool bFigure = m_ScaleRefs.Pick(ToolView, Mouse);
+                        if (bFigure && bHasSelection) xeditor::Run(m_Undo, "ClearSelection");
                         const auto   Dir    = m_Camera.m_View.RayFromScreen(Mouse.x, Mouse.y);
 
                         // No GPU ID/pick buffer in this editor (CPU AABB pick only). The grid is
@@ -1619,7 +1644,7 @@ namespace xlevel
                             const float GroundT = -Origin.m_Y / Dir.m_Y;
                             if (GroundT > 1.0e-6f) MaxT = GroundT;
                         }
-                        const auto Hit = m_pRender ? PickWithRoles(Origin, Dir, MaxT) : xecs::component::entity::invalid_entity_v;
+                        const auto Hit = m_pRender && !bFigure ? PickWithRoles(Origin, Dir, MaxT) : xecs::component::entity::invalid_entity_v;
 
                         xecs::scene::guid          HitScene{};
                         xecs::scene::permanent_id  HitId = xecs::scene::invalid_permanent_id_v;
@@ -1646,7 +1671,7 @@ namespace xlevel
                                 ? std::format("ToggleMultiSelect -Scene {} -Id {}", xscene::commands::FormatSceneGuid(HitScene), xscene::commands::FormatEntityId(HitId))
                                 : std::format("Select -Scene {} -Id {}", xscene::commands::FormatSceneGuid(HitScene), xscene::commands::FormatEntityId(HitId)));
                         }
-                        else if (!bCtrl && !bShift)
+                        else if (!bCtrl && !bShift && !bFigure)
                         {
                             xeditor::Run(m_Undo, "ClearSelection");
                         }
