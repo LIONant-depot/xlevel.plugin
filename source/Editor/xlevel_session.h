@@ -41,6 +41,7 @@
 #include "source/Tools/Editor/xeditor_inspector.h"
 #include "source/Tools/Editor/xeditor_toolbar.h"
 #include "source/Tools/Editor/xeditor_camera_toolbar.h"
+#include "source/Tools/Editor/xeditor_mesh_budget.h"
 #include "dependencies/xeditor/include/xeditor/host.h"
 #include "dependencies/toolbar.imgui/ximgui_toolbar.h"
 #include "dependencies/actions.imgui/ximgui_actions.h"
@@ -322,6 +323,8 @@ namespace xlevel
         bool                                         m_bPivotCenter = true;
         bool                                         m_bLocalSpace  = false;
         xlionrender::view_options                    m_ViewOptions;              // the viewport's GI view (the toolbar's GI menu): drawn, never saved
+        xeditor::mesh_budget::state                  m_MeshBudget;               // the toolbar's Boxes and Budget (huge meshes): drawn, never saved
+        std::vector<xlionrender::wire_box>           m_NotDrawnBoxes;            // what the last RenderScene did not draw the inside of: drawn as lines over the viewport
         ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost{ {}, false, [](const char* pText) noexcept { xeditor::hint::Text("%s", pText); } };      // its tooltip is the editors' hint window
         char                                         m_ToolbarHandlerName[48] = {};
         bool                                         m_bToolbarHandler = false;
@@ -361,7 +364,7 @@ namespace xlevel
         }                                           m_CameraGlide;
         xeditor_tools::grid                          m_Grid;
         static constexpr float                       kEditorToolbarWidth      = 570.0f;
-        static constexpr float                       kSceneToolbarWidth       = 390.0f;
+        static constexpr float                       kSceneToolbarWidth       = 570.0f;      // with the Boxes and Budget of xeditor_mesh_budget.h
         static constexpr float                       kEditorToolbarHeight     = 20.0f;
         static constexpr float                       kEditorToolbarFontScale  = 1.0f;
         static constexpr float                       kEditorToolbarItemSpacing = 2.0f;
@@ -694,7 +697,7 @@ namespace xlevel
             {
                 m_EditorToolbarHost.m_Items.push_back
                 ({ "Scene", ximgui::toolbar::toolbar_host_edge::Top, ximgui::toolbar::axis::Horizontal
-                 , ImVec2(kSceneToolbarWidth, kEditorToolbarHeight), ImVec2(32.0f, 250.0f), ImVec2(24.0f, 72.0f) });
+                 , ImVec2(kSceneToolbarWidth, kEditorToolbarHeight), ImVec2(32.0f, 350.0f), ImVec2(24.0f, 72.0f) });
                 m_EditorToolbarHost.m_Items.push_back
                 ({ "Camera", ximgui::toolbar::toolbar_host_edge::Top, ximgui::toolbar::axis::Horizontal
                  , ImVec2(190.0f, kEditorToolbarHeight), ImVec2(32.0f, 120.0f), ImVec2(24.0f, 100.0f) });
@@ -1192,6 +1195,8 @@ namespace xlevel
                 SceneToggle("Local", "L", m_bLocalSpace);
                 ToolbarSeparator();
                 RenderGIMenu(bHorizontal, ButtonHeight);
+                ToolbarSeparator();
+                xeditor::mesh_budget::Buttons(m_MeshBudget, bHorizontal, ButtonHeight, static_cast<int>(m_NotDrawnBoxes.size()));
             }
 
             ImGui::PopFont();
@@ -1380,6 +1385,8 @@ namespace xlevel
                     const auto Roles = Sets.Roles(m_FadeColor, 0.65f);
                     auto Options = m_ViewOptions;                                           // the foreground: first on the host's shared GI allowance
                     Options.m_GITraceAllowanceMs = pHost->m_GIAllowance.Grant(true);
+                    Options.m_bBoxesOnly         = m_MeshBudget.m_bBoxesOnly;      // huge meshes: their boxes, or the clusters the frame budget allows
+                    Options.m_FrameBudgetMs      = m_MeshBudget.FrameBudgetMs();
                     m_pRender->SetViewOptions(m_pGameMgr.get(), Options);
                     m_pRender->RenderScene(m_pGameMgr.get(), *pWindow, m_Camera.m_View, static_cast<int>(Avail.x), static_cast<int>(Avail.y), xlionrender::view::SCENE
                                           , [](xgpu::cmd_buffer& CmdBuffer, void* pUser) noexcept
@@ -1391,6 +1398,12 @@ namespace xlevel
                     pHost->m_GIAllowance.Used(m_pRender->GITraceMs(m_pGameMgr.get()), true);
                     bScene = true;
                 }
+            {   // what it did not draw the inside of (Boxes, Budget): their boxes, drawn below
+                constexpr int kMaxBoxes = 8192;
+                m_NotDrawnBoxes.resize(kMaxBoxes);
+                const int n = bScene ? m_pRender->NotDrawnBoxes(m_pGameMgr.get(), m_NotDrawnBoxes.data(), kMaxBoxes) : 0;
+                m_NotDrawnBoxes.resize(static_cast<std::size_t>(std::clamp(n, 0, kMaxBoxes)));
+            }
             xgpu::tools::imgui::AddCustomRenderCallback([this, bScene](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
                 if (bScene) m_pRender->BlitScene(m_pGameMgr.get(), CmdBuffer);
@@ -1418,6 +1431,9 @@ namespace xlevel
                 m_pRender->SetSelectedEntity(m_State.m_SelectedEntity.m_Value);
                 DrawWithRoles(CmdBuffer, m_Camera.m_View.getW2C(), Avail.x, Avail.y, Fade);     // the editor's viewport: the scene view
             });
+
+            // The boxes of what the render did not draw the inside of (the toolbar's Boxes and Budget), over the scene and under the gizmo: the selection's in its color
+            xeditor::mesh_budget::DrawBoxes(*ImGui::GetWindowDrawList(), m_Camera.m_View.getW2C(), Min, Avail, m_NotDrawnBoxes, m_State.m_SelectedEntity.m_Value);
 
             // Gizmo (Move/Rotate/Scale tools, m_SceneTool 1/2/3) - drives the primary selection's
             // Transform through the command system (Translate/Rotate/Scale, xscene_commands_transform_gizmo.h).
