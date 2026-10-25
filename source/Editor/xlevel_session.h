@@ -822,6 +822,40 @@ namespace xlevel
         xundo::system&      getUndo()     noexcept override { return m_Undo; }
         bool                isLoaded()  const noexcept override { return true; }   // a Level tool is always "loaded" - it may simply have nothing open yet
 
+        // Old files' material data (a MeshMaterial, the Mesh's deprecated Materials list): each Mesh of an open scene that the last render found with it is moved into the Mesh's own
+        // slots once its materials are loaded (the render module does it: UpgradeOldMaterials), its MeshMaterial removed and the entity marked changed, so the next save writes it
+        // the new way. Not undoable (like UpgradeProject); not while playing, nor in a Level that cannot be written.
+        void UpgradeOldMaterials() noexcept
+        {
+            if (!m_pRender || m_State.isPlaying() || !m_bLevelWritable) return;
+            std::array<std::uint64_t, 64> Old;
+            const int n = std::min(m_pRender->OldMaterials(m_pGameMgr.get(), Old.data(), static_cast<int>(Old.size())), static_cast<int>(Old.size()));
+            if (n <= 0) return;
+            auto& Ecs = xlioncore::Ecs(*m_pGameMgr);
+            std::vector<const xecs::component::type::info*> Types;
+            Ecs.ListComponentTypes(Types);
+            const auto It = std::ranges::find_if(Types, [](const xecs::component::type::info* p) { return p->m_pName && std::string_view(p->m_pName) == "MeshMaterial"; });
+            for (int i = 0; i < n; ++i)
+                for (auto& SceneGuid : m_State.m_OpenScenes)
+                {
+                    auto* pScene = m_pGameMgr->m_SceneMgr.Find(SceneGuid);
+                    if (!pScene) continue;
+                    const auto L = pScene->m_RuntimeToLocal.find(Old[i]);
+                    if (L == pScene->m_RuntimeToLocal.end()) continue;
+                    const auto Id = L->second;
+                    if (m_pRender->UpgradeOldMaterials(m_pGameMgr.get(), Old[i]))
+                    {
+                        if (It != Types.end() && Ecs.HasComponent(pScene->m_LocalToRuntime[Id], (*It)->m_Guid))
+                        {
+                            const std::array Remove{ (*It)->m_Guid };
+                            xscene::commands::MigrateEntityComponentGuids(m_CmdContext, SceneGuid, Id, {}, Remove);
+                        }
+                        else m_pGameMgr->m_SceneMgr.MarkEntityDirty(SceneGuid, Id);
+                    }
+                    break;
+                }
+        }
+
         // A drag of the gizmo ends: one undo entry for the whole drag, and none at all for a click that did not change anything. On the release of the mouse, and before a live update
         // of prefab instances (the entity under the gizmo may be made again: what the drag did so far is a step of its own, a drag that goes on is the next one).
         void CommitGizmoDrag() noexcept
@@ -1406,6 +1440,7 @@ namespace xlevel
                                             }
                                           , this, Sets.m_Context.empty() ? nullptr : &Roles);
                     pHost->m_GIAllowance.Used(m_pRender->GITraceMs(m_pGameMgr.get()), true);
+                    UpgradeOldMaterials();
                     bScene = true;
                 }
             {   // what it did not draw the inside of (Boxes, Budget): their boxes, drawn below
