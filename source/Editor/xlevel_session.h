@@ -325,6 +325,7 @@ namespace xlevel
         bool                                         m_bLocalSpace  = false;
         xlionrender::view_options                    m_ViewOptions;              // the viewport's GI view (the toolbar's GI menu): drawn, never saved
         xeditor::mesh_budget::state                  m_MeshBudget;               // the toolbar's Boxes and Budget (huge meshes): drawn, never saved
+        std::string                                  m_CullStats;                // the GPU culling's last numbers (DescribeScene's GPUCull lines), for the toolbar's hints
         std::vector<xlionrender::wire_box>           m_NotDrawnBoxes;            // what the last RenderScene did not draw the inside of: drawn as lines over the viewport
         ximgui::toolbar::toolbar_host_state          m_EditorToolbarHost{ {}, false, [](const char* pText) noexcept { xeditor::hint::Text("%s", pText); } };      // its tooltip is the editors' hint window
         char                                         m_ToolbarHandlerName[48] = {};
@@ -367,7 +368,7 @@ namespace xlevel
         }                                           m_CameraGlide;
         xeditor_tools::grid                          m_Grid;
         static constexpr float                       kEditorToolbarWidth      = 570.0f;
-        static constexpr float                       kSceneToolbarWidth       = 570.0f;      // with the Boxes and Budget of xeditor_mesh_budget.h
+        static constexpr float                       kSceneToolbarWidth       = 720.0f;      // with the Boxes and Budget, the Cull, Occl and Freeze of xeditor_mesh_budget.h
         static constexpr float                       kEditorToolbarHeight     = 20.0f;
         static constexpr float                       kEditorToolbarFontScale  = 1.0f;
         static constexpr float                       kEditorToolbarItemSpacing = 2.0f;
@@ -701,7 +702,7 @@ namespace xlevel
             {
                 m_EditorToolbarHost.m_Items.push_back
                 ({ "Scene", ximgui::toolbar::toolbar_host_edge::Top, ximgui::toolbar::axis::Horizontal
-                 , ImVec2(kSceneToolbarWidth, kEditorToolbarHeight), ImVec2(32.0f, 350.0f), ImVec2(24.0f, 72.0f) });
+                 , ImVec2(kSceneToolbarWidth, kEditorToolbarHeight), ImVec2(32.0f, 450.0f), ImVec2(24.0f, 72.0f) });
                 m_EditorToolbarHost.m_Items.push_back
                 ({ "Camera", ximgui::toolbar::toolbar_host_edge::Top, ximgui::toolbar::axis::Horizontal
                  , ImVec2(190.0f, kEditorToolbarHeight), ImVec2(32.0f, 120.0f), ImVec2(24.0f, 100.0f) });
@@ -1235,6 +1236,7 @@ namespace xlevel
                 RenderGIMenu(bHorizontal, ButtonHeight);
                 ToolbarSeparator();
                 xeditor::mesh_budget::Buttons(m_MeshBudget, bHorizontal, ButtonHeight, static_cast<int>(m_NotDrawnBoxes.size()));
+                xeditor::mesh_budget::CullButtons(m_MeshBudget, bHorizontal, ButtonHeight, m_CullStats.c_str());
                 ToolbarSeparator();
                 ToolbarButton("Human", "H", false, false, [&]     // a 1.8 m figure where the camera looks, to judge the scale (editor only: xlevel_scale_reference.h)
                 {
@@ -1431,6 +1433,9 @@ namespace xlevel
                     Options.m_GITraceAllowanceMs = pHost->m_GIAllowance.Grant(true);
                     Options.m_bBoxesOnly         = m_MeshBudget.m_bBoxesOnly;      // huge meshes: their boxes, or the clusters the frame budget allows
                     Options.m_FrameBudgetMs      = m_MeshBudget.FrameBudgetMs();
+                    Options.m_bNoGPUCull         = !m_MeshBudget.m_bGPUCull;        // GPU cluster culling: the toolbar's Cull, Occl, Freeze
+                    Options.m_bNoGPUOcclusion    = !m_MeshBudget.m_bOcclusion;
+                    Options.m_bFreezeCull        = m_MeshBudget.m_bFreeze;
                     m_pRender->SetViewOptions(m_pGameMgr.get(), Options);
                     m_pRender->RenderScene(m_pGameMgr.get(), *pWindow, m_Camera.m_View, static_cast<int>(Avail.x), static_cast<int>(Avail.y), xlionrender::view::SCENE
                                           , [](xgpu::cmd_buffer& CmdBuffer, void* pUser) noexcept
@@ -1448,6 +1453,19 @@ namespace xlevel
                 m_NotDrawnBoxes.resize(kMaxBoxes);
                 const int n = bScene ? m_pRender->NotDrawnBoxes(m_pGameMgr.get(), m_NotDrawnBoxes.data(), kMaxBoxes) : 0;
                 m_NotDrawnBoxes.resize(static_cast<std::size_t>(std::clamp(n, 0, kMaxBoxes)));
+            }
+            if (bScene && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
+            {   // the GPU culling's numbers for the toolbar's hints (DescribeScene's GPUCull lines), while the mouse is over the viewport
+                char Text[4096];
+                const int n = m_pRender->DescribeScene(m_pGameMgr.get(), Text, int(sizeof(Text)));
+                m_CullStats.clear();
+                for (std::string_view All(Text, static_cast<std::size_t>(std::clamp(n, 0, int(sizeof(Text)) - 1))); !All.empty(); )
+                {
+                    const auto e = All.find('\n');
+                    const auto Line = All.substr(0, e);
+                    if (Line.starts_with("GPUCull")) { m_CullStats += Line.substr(7); m_CullStats += '\n'; }
+                    All = e == std::string_view::npos ? std::string_view{} : All.substr(e + 1);
+                }
             }
             xgpu::tools::imgui::AddCustomRenderCallback([this, bScene](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
