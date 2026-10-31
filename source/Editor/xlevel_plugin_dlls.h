@@ -14,6 +14,17 @@
 #include <Windows.h>
 #include <memory>
 
+#if __has_include("xprofile.h")
+    #include "xprofile.h"          // (the profiler: where xprofile is part of the build)
+#else
+    #ifndef XPROFILE_SCOPE
+        #define XPROFILE_SCOPE(NAME)
+    #endif
+    #ifndef XPROFILE_SCOPE_DYNAMIC
+        #define XPROFILE_SCOPE_DYNAMIC(NAME)
+    #endif
+#endif
+
 namespace xlevel
 {
     // The module of an engine DLL, loaded when nothing loaded it yet: the editor no longer imports these DLLs (it calls their interfaces, found by name), so the linker leaves the import out and the
@@ -31,6 +42,7 @@ namespace xlevel
 
     inline ecs_editor_ptr CreateEcsEditor(const wchar_t* pCoreModule = L"LIONCore.dll") noexcept
     {
+        XPROFILE_SCOPE("Level: the core's editor interface");
         HMODULE hModule = LoadEngineModule(pCoreModule);
         auto* pCreate = hModule ? reinterpret_cast<xlioncore::pfn_create_editor>(GetProcAddress(hModule, xlioncore::kCreateEditorName)) : nullptr;
         if (!pCreate) { OutputDebugStringA("xECSEditor: the core module has no editor interface\n"); return {}; }
@@ -45,6 +57,7 @@ namespace xlevel
 
     inline render_editor_ptr CreateRenderEditor(const wchar_t* pRenderModule = L"LIONRender.dll") noexcept
     {
+        XPROFILE_SCOPE("Level: the render DLL's editor interface");
         HMODULE hModule = LoadEngineModule(pRenderModule);
         auto* pCreate = hModule ? reinterpret_cast<xlionrender::pfn_create_editor>(GetProcAddress(hModule, xlionrender::kCreateEditorName)) : nullptr;
         if (!pCreate) { OutputDebugStringA("xRenderEditor: the render module has no editor interface\n"); return {}; }

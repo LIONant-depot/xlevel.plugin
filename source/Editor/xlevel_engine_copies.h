@@ -45,6 +45,17 @@
 #include <unistd.h>
 #endif
 
+#if __has_include("xprofile.h")
+    #include "xprofile.h"          // (the profiler: where xprofile is part of the build)
+#else
+    #ifndef XPROFILE_SCOPE
+        #define XPROFILE_SCOPE(NAME)
+    #endif
+    #ifndef XPROFILE_SCOPE_DYNAMIC
+        #define XPROFILE_SCOPE_DYNAMIC(NAME)
+    #endif
+#endif
+
 namespace xlevel::engine
 {
     // A Linux sanitizer build (ASan or TSan, GCC or Clang): the sanitizer runtime refuses a dlopen with RTLD_DEEPBIND (LoadCopy), so no engine copies are made (manager::Make)
@@ -448,6 +459,7 @@ namespace xlevel::engine
                 return {};
             }
 
+            XPROFILE_SCOPE("Level: engine copies");
             CleanLeftovers();
             const auto OriginalCore = m_OriginalsDir / FileOf(kCoreNameW);
             if (!std::filesystem::exists(OriginalCore)) { Why = std::format("{} is not next to the editor", OriginalCore.filename().string()); return {}; }
@@ -465,16 +477,16 @@ namespace xlevel::engine
             pSet->m_Render = std::format(L"LR{:06}.dll", pSet->m_Id % 1000000);
             pSet->m_RenderPath = m_CopiesDir / FileOf(pSet->m_Render);
 
-            if (!PatchedCopy(OriginalCore, pSet->m_CorePath)) { Why = "the core could not be copied"; pSet->m_CorePath.clear(); pSet->m_RenderPath.clear(); return {}; }
+            if (![&] { XPROFILE_SCOPE("Level: copy the core DLL"); return PatchedCopy(OriginalCore, pSet->m_CorePath); }()) { Why = "the core could not be copied"; pSet->m_CorePath.clear(); pSet->m_RenderPath.clear(); return {}; }
             DWORD Error = 0;
-            pSet->m_hCore = LoadCopy(pSet->m_CorePath, Error);
+            { XPROFILE_SCOPE("Level: load the core copy"); pSet->m_hCore = LoadCopy(pSet->m_CorePath, Error); }
             if (!pSet->m_hCore) { Why = std::format("the core copy did not load (error {})", Error); pSet->m_RenderPath.clear(); return {}; }
 
             const auto OriginalRender = m_OriginalsDir / FileOf(kRenderNameW);
             if (std::filesystem::exists(OriginalRender, Ec))
             {
-                if (!PatchedCopy(OriginalRender, pSet->m_RenderPath, kCoreName, pSet->CoreName())) { Why = "the render DLL could not be copied and patched"; pSet->m_RenderPath.clear(); return {}; }
-                pSet->m_hRender = LoadCopy(pSet->m_RenderPath, Error);
+                if (![&] { XPROFILE_SCOPE("Level: copy the render DLL"); return PatchedCopy(OriginalRender, pSet->m_RenderPath, kCoreName, pSet->CoreName()); }()) { Why = "the render DLL could not be copied and patched"; pSet->m_RenderPath.clear(); return {}; }
+                { XPROFILE_SCOPE("Level: load the render copy"); pSet->m_hRender = LoadCopy(pSet->m_RenderPath, Error); }
                 if (!pSet->m_hRender) { Why = std::format("the render copy did not load (error {})", Error); return {}; }
             }
             else

@@ -148,7 +148,8 @@ namespace xlevel
         // condition anyway (nothing has been built yet on a fresh checkout) - a plain log line is
         // the right amount of ceremony for it, not a modal.
         DWORD LoadError = 0;
-        HMODULE hModule = engine::LoadCopy(LoadedPath, LoadError);       // the DLL's own folder is searched for the DLLs it needs (the libraries' runtime files)
+        HMODULE hModule = nullptr;
+        { XPROFILE_SCOPE("Level: load Game.dll"); hModule = engine::LoadCopy(LoadedPath, LoadError); }       // the DLL's own folder is searched for the DLLs it needs (the libraries' runtime files)
         if (hModule == nullptr)
         {
             LogGamePlugin(std::format("Game.dll: LoadLibrary failed for {}", std::filesystem::path(LoadedPath).filename().string()));
