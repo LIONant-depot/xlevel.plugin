@@ -764,6 +764,7 @@ namespace xlevel
 
         ~session() noexcept override
         {
+            XPROFILE_SCOPE("Level close: the session");
             m_ShellCommands.reset();   // the commands registered on m_Undo go first
 
             // A closing editor gives back whatever it held: its Scene/Level write locks.
@@ -794,7 +795,7 @@ namespace xlevel
             m_EntityInspector.clear();
 
             m_pEcs->SetPrefabSaveRedirect(nullptr);        // the core keeps the pointer for the worlds it makes: not one into an editor that is going
-            m_pEcs->DestroyWorld();
+            { XPROFILE_SCOPE("Level close: destroy the world"); m_pEcs->DestroyWorld(); }
             xlevel::ReleasePrefabSnapshots(m_State);
             if (m_State.isSceneEditor()) xlevel::ErasePrefabGameOverride(m_State.m_CurrentScene.m_Instance.m_Value);
             if (m_State.isPrefabEditor()) xlevel::ErasePrefabGameOverride(m_State.m_CurrentPrefab.m_Instance.m_Value);        // (Edit in Context: the Game of the Level was this editor's only while it was open)
@@ -807,7 +808,7 @@ namespace xlevel
                 if (m_GamePlugin.m_BuildFuture.valid()) m_GamePlugin.m_BuildFuture.wait();
                 m_GamePlugin.m_bBuilding = false;
             }
-            xlevel::UnloadGamePlugin(m_GamePlugin);
+            { XPROFILE_SCOPE("Level close: unload Game.dll"); xlevel::UnloadGamePlugin(m_GamePlugin); }
         }
 
         xeditor::IDocument& getDocument() noexcept override { return m_Document; }

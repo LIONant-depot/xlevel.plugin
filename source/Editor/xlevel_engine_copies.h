@@ -379,8 +379,28 @@ namespace xlevel::engine
         // Freed in the order they were loaded, backwards: whatever imports the core goes first. A module that cannot be freed (something still holds it) just stays; its file is then left for the next run to delete.
         ~engine_set() noexcept
         {
-            if (m_hRender) FreeLibrary(m_hRender);
-            if (m_hCore)   FreeLibrary(m_hCore);
+            {
+                XPROFILE_SCOPE("Level close: unload the engine copies");
+                // their schedulers' workers stop first: each holds a reference to its module (the C runtime's thread start) - with them
+                // running FreeLibrary left the copies loaded and their files locked
+                const auto BeforeUnload = [](HMODULE h, const char* pName) noexcept
+                {
+                #if defined(_WIN32)
+                    if (auto* pFn = h ? reinterpret_cast<void (*)() noexcept>(GetProcAddress(h, pName)) : nullptr) pFn();
+                #else
+                    if (auto* pFn = h ? reinterpret_cast<void (*)() noexcept>(::dlsym(reinterpret_cast<void*>(h), pName)) : nullptr) pFn();
+                #endif
+                };
+                BeforeUnload(m_hRender, "XLionRender_BeforeUnload");
+                BeforeUnload(m_hCore,   "XLionCore_BeforeUnload");
+                if (m_hRender) FreeLibrary(m_hRender);
+                if (m_hCore)   FreeLibrary(m_hCore);
+            }
+        #if defined(_WIN32)
+            if (std::getenv("XLION_COPIES_DIAG"))         // (diagnostic: did the copies really unload)
+                std::printf("[EngineCopies] after FreeLibrary: core %s, render %s\n", GetModuleHandleW(m_Core.c_str()) ? "STILL LOADED" : "unloaded", !m_Render.empty() && GetModuleHandleW(m_Render.c_str()) ? "STILL LOADED" : "unloaded");
+        #endif
+            XPROFILE_SCOPE("Level close: remove the copies' files");
             if (!m_RenderPath.empty()) RemoveFile(m_RenderPath);
             if (!m_CorePath.empty())   RemoveFile(m_CorePath);
         }
