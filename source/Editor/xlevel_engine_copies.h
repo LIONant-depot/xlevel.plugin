@@ -24,7 +24,7 @@
 // The names are patched in place in .dynstr (every NUL-bounded copy of the name, so .gnu.version_r's file name follows), never longer than the old one. ELF looks a symbol up in the global
 // scope first (the executable and what it links, the ORIGINAL libLIONCore.so among them), so the copies are dlopen'ed with RTLD_DEEPBIND: a copy's own dependencies (its core copy) come
 // first, which is what binding an import to a named DLL does on Windows. libxlion_pathcompat.so (the Windows-path layer at the libc boundary) is linked by the engine libraries for that
-// reason: a deep-bound copy still finds it ahead of libc. Each process makes its copies under EngineCopies/<pid>; a folder whose process is gone is swept by the next one.
+// reason: a deep-bound copy still finds it ahead of libc. Each process makes its copies under EngineCopies/<pid> (on Linux in /dev/shm/xlion-EngineCopies-<uid>/<pid> when /dev/shm allows exec: see manager()); a folder whose process is gone is swept by the next one.
 #include <Windows.h>
 #include <atomic>
 #include <cstdint>
@@ -40,6 +40,7 @@
 #include <cerrno>
 #include <csignal>
 #include <dlfcn.h>
+#include <sys/statvfs.h>
 #include <elf.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -432,6 +433,11 @@ namespace xlevel::engine
             m_OriginalsDir = std::filesystem::path(Buffer).parent_path();
             m_CopiesDir    = m_OriginalsDir / L"EngineCopies";
         #if !defined(_WIN32)
+            // Linux: in memory (tmpfs) when there is one that allows exec. Every Level makes a new pair of copies (two Debug .so files, ~60 MB) and a run of
+            // the editor makes hundreds: written next to the exe, gigabytes went through the page cache to the disk, and its writeback stalled every file call of
+            // the process (an open() took 10-30 s on WSL, the smoke commands timed out). The copies never need to outlive the process (CleanLeftovers sweeps them).
+            if (struct statvfs Fs{}; ::statvfs("/dev/shm", &Fs) == 0 && !(Fs.f_flag & ST_NOEXEC) && !(Fs.f_flag & ST_RDONLY) && ::access("/dev/shm", W_OK | X_OK) == 0)
+                m_CopiesDir = std::filesystem::path("/dev/shm") / ("xlion-EngineCopies-" + std::to_string(::getuid()));
             m_CopiesDir   /= std::to_string(::getpid());        // this process's own folder (see CleanLeftovers)
         #endif
         }
