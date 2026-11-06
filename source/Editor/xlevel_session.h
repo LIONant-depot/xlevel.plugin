@@ -662,6 +662,16 @@ namespace xlevel
                 return Length < 0 ? std::string("DescribeRoleDraw: this Level has no render module") : std::string(Text, static_cast<std::size_t>(Length));
             };
             m_CmdContext.m_AimCamera = [this](const xmath::fvec3& Target) noexcept { m_AimTarget = Target; m_bAimPending = true; };
+            m_CmdContext.m_SetViewOption = [this](const std::string& Name, const std::string& Value) -> std::string
+            {
+                const bool bOn = Value == "1" || Value == "true";
+                if      (Name == "PathTraced") m_ViewOptions.m_bPathTraced = bOn;
+                else if (Name == "NoGI")       m_ViewOptions.m_bNoGI       = bOn;
+                else if (Name == "GIDebug")    m_ViewOptions.m_GIDebug     = static_cast<std::int8_t>(std::atoi(Value.c_str()));
+                else if (Name == "Reset")      m_ViewOptions = {};
+                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Reset)", Name);
+                return std::format("SetViewOption: {} = {}", Name, Value);
+            };
             m_CmdContext.m_DescribeText = [this](std::uint64_t Entity) -> std::string
             {
                 char Text[1024];

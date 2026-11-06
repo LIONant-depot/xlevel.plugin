@@ -75,6 +75,32 @@ namespace xlevel::commands
         }
     };
 
+    // SetViewOption: the viewport's view options (the toolbar's GI menu) from the pipe - the path traced ground truth for lit_grade on a Level
+    struct set_view_option_query_cmd : level_query_command
+    {
+        set_view_option_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "SetViewOption", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override
+        {
+            return "Sets a view option of the Level's viewport (drawn, never saved): PathTraced 0|1 (the GI from the brute path tracer), NoGI 0|1, GIDebug n (-1: the Environment's), "
+                   "Reset. Usage: SetViewOption -Name PathTraced -Value 1";
+        }
+        void RegisterArguments() noexcept override
+        {
+            m_hName  = m_Parser.addOption("Name", "PathTraced, NoGI, GIDebug or Reset", true, 1);
+            m_hValue = m_Parser.addOption("Value", "1/0, or the GIDebug number", false, 1);
+        }
+        std::string Query() noexcept override
+        {
+            auto NameArg = m_Parser.getOptionArgAs<std::string>(m_hName, 0);
+            if (std::holds_alternative<xerr>(NameArg)) return "SetViewOption: bad arguments";
+            auto ValueArg = m_Parser.getOptionArgAs<std::string>(m_hValue, 0);
+            const std::string Value = std::holds_alternative<xerr>(ValueArg) ? std::string("1") : std::get<std::string>(ValueArg);
+            auto& Ctx = LevelContext();
+            return Ctx.m_SetViewOption ? Ctx.m_SetViewOption(std::get<std::string>(NameArg), Value) : "SetViewOption: this Level has no viewport";
+        }
+        xcmdline::parser::handle m_hName, m_hValue;
+    };
+
     // DumpGI: the GI's surfels of the last forward render to a CSV file (the GI baseline: the solver's light and the shown light per surfel)
     struct dump_gi_query_cmd : level_query_command
     {

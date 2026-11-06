@@ -173,6 +173,7 @@ namespace xlevel
         std::function<std::string(const std::string&)> m_DumpGI;   // the GI's surfels of the last forward render to a CSV file (the render module writes it)
         std::function<std::string(std::uint64_t)> m_DescribeText;   // the layout of the Text of an entity (raw runtime entity value), as the render module of this Level says it, set by its session
         std::function<std::filesystem::path()> m_GameSolution;   // the Visual Studio solution of this Level's game project (empty: not made yet), set by its session
+        std::function<std::string(const std::string&, const std::string&)> m_SetViewOption;   // the viewport's view options (the toolbar's GI menu) by name, set by its session
         std::function<void(const xmath::fvec3&)> m_AimCamera;     // the viewport's camera looks at a point (the orbit target), set by its session
         std::function<std::string()> m_DescribeRoleDraw;          // what the last draw did with the roles (the context drawn, the document drawn, whether it was faded), as the render module says it, set by its session
         std::function<void()> m_EndGizmoDrag;                     // a drag of the gizmo in progress ends now (its undo step is written), set by its session: what a live update of prefab instances does first
