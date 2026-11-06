@@ -25,6 +25,7 @@
 // scope first (the executable and what it links, the ORIGINAL libLIONCore.so among them), so the copies are dlopen'ed with RTLD_DEEPBIND: a copy's own dependencies (its core copy) come
 // first, which is what binding an import to a named DLL does on Windows. libxlion_pathcompat.so (the Windows-path layer at the libc boundary) is linked by the engine libraries for that
 // reason: a deep-bound copy still finds it ahead of libc. Each process makes its copies under EngineCopies/<pid>; a folder whose process is gone is swept by the next one.
+#include "dependencies/xLIONRender/src/xlionrender_env.h"      // (the environment switches: one answer to MSVC's C4996, header only)
 #include <Windows.h>
 #include <atomic>
 #include <cstdint>
@@ -397,7 +398,7 @@ namespace xlevel::engine
                 if (m_hCore)   FreeLibrary(m_hCore);
             }
         #if defined(_WIN32)
-            if (std::getenv("XLION_COPIES_DIAG"))         // (diagnostic: did the copies really unload)
+            if (xlionrender::Env("XLION_COPIES_DIAG"))         // (diagnostic: did the copies really unload)
                 std::printf("[EngineCopies] after FreeLibrary: core %s, render %s\n", GetModuleHandleW(m_Core.c_str()) ? "STILL LOADED" : "unloaded", !m_Render.empty() && GetModuleHandleW(m_Render.c_str()) ? "STILL LOADED" : "unloaded");
         #endif
             XPROFILE_SCOPE("Level close: remove the copies' files");
