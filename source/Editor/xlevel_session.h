@@ -629,7 +629,8 @@ namespace xlevel
             m_CmdContext.m_PickPixel = [this](int X, int Y) -> std::string
             {
                 if (!m_pRender) return "PickPixel: this Level has no render module";
-                const auto Hit = m_pRender->PickPixel(m_pGameMgr.get(), X, Y);
+                float Dist = 0.0f;
+                const auto Hit = m_pRender->PickPixel(m_pGameMgr.get(), X, Y, &Dist);
                 if (Hit != xecs::component::entity::invalid_entity_v)
                     for (auto& SceneGuid : m_State.m_OpenScenes)
                         if (auto* pScene = m_pGameMgr->m_SceneMgr.Find(SceneGuid))
@@ -1727,8 +1728,15 @@ namespace xlevel
                         {
                             role_sets Sets;
                             BuildRoleSets(*m_pGameMgr, m_State, Sets);
-                            if (Sets.m_Context.empty()) Hit = m_pRender->PickPixel(m_pGameMgr.get(), static_cast<int>(Mouse.x - Min.x), static_cast<int>(Mouse.y - Min.y));
+                            float Dist = 0.0f;
+                            if (Sets.m_Context.empty()) Hit = m_pRender->PickPixel(m_pGameMgr.get(), static_cast<int>(Mouse.x - Min.x), static_cast<int>(Mouse.y - Min.y), &Dist);
                             if (Hit == xecs::component::entity::invalid_entity_v) Hit = PickWithRoles(Origin, Dir, MaxT);
+                            else                                                         // (a lamp, a text, a primitive in front of that surface: it wins - they draw no id)
+                            {
+                                const float DirLen = Dir.Length();
+                                const auto Front = m_pRender->PickNoMeshes(m_pGameMgr.get(), Origin, Dir, DirLen > 0.0f ? Dist / DirLen : Dist, xlionrender::view::SCENE);
+                                if (Front != xecs::component::entity::invalid_entity_v) Hit = Front;
+                            }
                         }
 
                         xecs::scene::guid          HitScene{};
