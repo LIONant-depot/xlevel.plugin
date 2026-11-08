@@ -626,6 +626,17 @@ namespace xlevel
                 return {};
             };
             m_CmdContext.m_GameSolution = [this]() { return xlevel::GameSolutionIn(m_GamePlugin.m_Paths.m_BuildDir); };
+            m_CmdContext.m_PickPixel = [this](int X, int Y) -> std::string
+            {
+                if (!m_pRender) return "PickPixel: this Level has no render module";
+                const auto Hit = m_pRender->PickPixel(m_pGameMgr.get(), X, Y);
+                if (Hit != xecs::component::entity::invalid_entity_v)
+                    for (auto& SceneGuid : m_State.m_OpenScenes)
+                        if (auto* pScene = m_pGameMgr->m_SceneMgr.Find(SceneGuid))
+                            if (auto It = pScene->m_RuntimeToLocal.find(Hit); It != pScene->m_RuntimeToLocal.end())
+                                return std::format("PickPixel: hit\nScene={}\nId={}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(It->second));
+                return Hit != xecs::component::entity::invalid_entity_v ? std::format("PickPixel: entity {:x}, in no open scene", Hit) : "PickPixel: nothing";
+            };
             m_CmdContext.m_PickRay = [this](const xmath::fvec3& Origin, const xmath::fvec3& Dir) -> std::string
             {
                 if (!m_pRender) return "PickRay: this Level has no render module";
@@ -1698,7 +1709,7 @@ namespace xlevel
                         if (bFigure && bHasSelection) xeditor::Run(m_Undo, "ClearSelection");
                         const auto   Dir    = m_Camera.m_View.RayFromScreen(Mouse.x, Mouse.y);
 
-                        // No GPU ID/pick buffer in this editor (CPU AABB pick only). The grid is
+                        // The ray pick (below, after the G-buffer's id): the grid is
                         // color-pass-only and is not in the entity pick set - but a ray through empty
                         // floor would still hit entity AABBs behind the ground. Cap MaxT at the
                         // y=0 plane so a closer grid hit clears selection instead of selecting through it.
@@ -1708,7 +1719,17 @@ namespace xlevel
                             const float GroundT = -Origin.m_Y / Dir.m_Y;
                             if (GroundT > 1.0e-6f) MaxT = GroundT;
                         }
-                        const auto Hit = m_pRender && !bFigure ? PickWithRoles(Origin, Dir, MaxT) : xecs::component::entity::invalid_entity_v;
+                        // The G-buffer prepass's id under the mouse first (xRenderEditor::PickPixel, gpu_pick_plan_2026-11-09.md): exact per pixel - a
+                        // merged street the eye stands in, a skinned character. Nothing drawn there (the sky, a light, a text): the ray pick below. With
+                        // context scenes (editing in context: never picked) the ray pick alone - it knows the roles
+                        std::uint64_t Hit = xecs::component::entity::invalid_entity_v;
+                        if (m_pRender && !bFigure)
+                        {
+                            role_sets Sets;
+                            BuildRoleSets(*m_pGameMgr, m_State, Sets);
+                            if (Sets.m_Context.empty()) Hit = m_pRender->PickPixel(m_pGameMgr.get(), static_cast<int>(Mouse.x - Min.x), static_cast<int>(Mouse.y - Min.y));
+                            if (Hit == xecs::component::entity::invalid_entity_v) Hit = PickWithRoles(Origin, Dir, MaxT);
+                        }
 
                         xecs::scene::guid          HitScene{};
                         xecs::scene::permanent_id  HitId = xecs::scene::invalid_permanent_id_v;

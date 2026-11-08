@@ -162,6 +162,30 @@ namespace xlevel::commands
         }
         xcmdline::parser::handle m_hOrigin, m_hDir;
     };
+
+    // The click's first pick: what the G-buffer prepass drew at a pixel of the viewport's view (xRenderEditor::PickPixel)
+    struct pick_pixel_query_cmd : level_query_command
+    {
+        pick_pixel_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "PickPixel", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override
+        {
+            return "Says which entity the viewport's last frame drew at a pixel (the G-buffer's id, what a click there picks first): its Scene and Id, or 'nothing'. Usage: PickPixel -X x -Y y (pixels from the viewport's top left)";
+        }
+        void RegisterArguments() noexcept override
+        {
+            m_hX = m_Parser.addOption("X", "The pixel's column from the viewport's left", true, 1);
+            m_hY = m_Parser.addOption("Y", "The pixel's row from the viewport's top",     true, 1);
+        }
+        std::string Query() noexcept override
+        {
+            auto X = m_Parser.getOptionArgAs<std::string>(m_hX, 0);
+            auto Y = m_Parser.getOptionArgAs<std::string>(m_hY, 0);
+            if (std::holds_alternative<xerr>(X) || std::holds_alternative<xerr>(Y)) return "PickPixel: bad arguments";
+            auto& Ctx = LevelContext();
+            return Ctx.m_PickPixel ? Ctx.m_PickPixel(std::atoi(std::get<std::string>(X).c_str()), std::atoi(std::get<std::string>(Y).c_str())) : "PickPixel: this Level has no render module";
+        }
+        xcmdline::parser::handle m_hX, m_hY;
+    };
 }
 
 #endif // XLEVEL_COMMANDS_TEXT_H

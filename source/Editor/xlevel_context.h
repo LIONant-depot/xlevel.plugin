@@ -167,6 +167,7 @@ namespace xlevel
         void* m_pToolEditor = nullptr;   // this editor's viewport_tools::editor (the "Edit Collider" tools), set by its session
         void* m_pScaleReference = nullptr;   // this editor's scale_reference (the viewport's human figures, xlevel_scale_reference.h), set by its session
         game_plugin_state* m_pGamePlugin = nullptr;   // the game module of this editor's Level (its own: every Level loads the one of its Game), set by its session
+        std::function<std::string(int, int)>                                 m_PickPixel;  // which entity the G-buffer prepass drew at a pixel of the viewport's view (the click's first pick)
         std::function<std::string(const xmath::fvec3&, const xmath::fvec3&)> m_PickRay;   // which entity (scene and id) a ray hits, as the render module of this Level picks (what a click in the viewport does)
         std::function<std::string()> m_DescribeTextDraw;            // what the last draw of the Texts of this Level did (the render module says it)
         std::function<std::string()> m_DescribeScene;               // what the last forward render of the Level's Meshes and lights had (the render module says it)
