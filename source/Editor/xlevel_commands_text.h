@@ -75,6 +75,28 @@ namespace xlevel::commands
         }
     };
 
+    // PostEdit: the post chain of the Level's view, edited all or nothing (render graph P6) - the Render Graph tab's Post chain controls send these
+    struct post_edit_query_cmd : level_query_command
+    {
+        post_edit_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "PostEdit", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override
+        {
+            return "Edits the Level view's post chain, all or nothing (an edit that would leave the chain invalid is refused and says why). -Edit: "
+                   "\"bypass <node> <0|1>\" (a node off, kept in the recipe), \"insert <gap> <taa|bloom|exposure|tonemap>\", \"remove <node>\", "
+                   "\"move <node> <to>\", or \"insertable <gap>\" (the types an insert there accepts). Nodes count from 0 as the Post chain view shows them. "
+                   "The chain lives on the view until the render graph resource owns it (it is not saved). Usage: PostEdit -Edit \"bypass 1 0\"";
+        }
+        void RegisterArguments() noexcept override { m_hEdit = m_Parser.addOption("Edit", "The edit, quoted", true, 1); }
+        std::string Query() noexcept override
+        {
+            auto A = m_Parser.getOptionArgAs<std::string>(m_hEdit, 0);
+            if (std::holds_alternative<xerr>(A)) return "PostEdit: -Edit is required";
+            auto& Ctx = LevelContext();
+            return Ctx.m_EditPost ? Ctx.m_EditPost(std::get<std::string>(A)) : "PostEdit: this Level has no render module";
+        }
+        xcmdline::parser::handle m_hEdit;
+    };
+
     // SetViewOption: the viewport's view options (the toolbar's GI menu) from the pipe - the path traced ground truth for lit_grade on a Level
     struct set_view_option_query_cmd : level_query_command
     {

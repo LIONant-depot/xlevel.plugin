@@ -661,6 +661,13 @@ namespace xlevel
                 const int Length = m_pRender ? m_pRender->DescribeScene(m_pGameMgr.get(), Text, static_cast<int>(sizeof(Text))) : -1;
                 return Length < 0 ? std::string("DescribeScene: this Level has no render module") : std::string(Text, static_cast<std::size_t>(Length));
             };
+            m_CmdContext.m_EditPost = [this](const std::string& Edit) -> std::string
+            {
+                if (!m_pRender) return "PostEdit: this Level has no render module";
+                char Reply[512];
+                const bool bOk = m_pRender->EditPost(m_pGameMgr.get(), Edit.c_str(), Reply, static_cast<int>(sizeof(Reply)));
+                return std::format("PostEdit: {}{}", bOk ? "" : "not applied - ", Reply);
+            };
             m_CmdContext.m_DumpGI = [this](const std::string& Path) -> std::string
             {
                 if (!m_pRender) return "DumpGI: this Level has no render module";
