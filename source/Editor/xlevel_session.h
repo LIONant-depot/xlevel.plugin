@@ -684,6 +684,14 @@ namespace xlevel
                     D.FromDesc(Desc);
                     std::error_code Ec; std::filesystem::create_directories(Path.parent_path(), Ec);
                     if (auto Err = D.Serialize(false, Path.wstring(), Context); Err) return std::format("PostEdit: not applied - the RenderGraph {} was not written ({})", Hex, Err.getMessage());
+                    // its compile, queued now (a descriptor written outside its editor is not seen by the file monitor): the library that has it
+                    const xresource::full_guid Full{ { Inst }, xrender_graph::type_guid_v };
+                    for (auto& Lib : xresource_editor::g_LibMgr.m_mLibraryDB)
+                    {
+                        bool bHas = false;
+                        Lib.second->m_InfoByTypeDataBase.FindAsReadOnly(Full.m_Type, [&](const std::unique_ptr<xresource_editor::library_db::info_db>& pDB) { pDB->m_InfoDataBase.FindAsReadOnly(Full.m_Instance, [&](const xresource_editor::library_db::info_node&) { bHas = true; }); });
+                        if (bHas) { (void)xresource_editor::g_LibMgr.RequestCompile(Lib.first, Full); break; }
+                    }
                     return std::format("PostEdit: ok - saved in the RenderGraph {} (it compiles; the view follows)", Hex);
                 }
                 char Reply[8192];
