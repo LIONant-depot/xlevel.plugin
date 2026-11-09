@@ -686,6 +686,15 @@ namespace xlevel
                         std::erase_if(D.m_Stages, [&](const auto& S) { return S.m_Name == Name; });
                         if (!On) D.m_Stages.push_back({ Name, false });
                     }
+                    else if (Edit.starts_with("param "))      // "param <name> <value>" a stage parameter set in the graph; "param <name>" unset
+                    {
+                        char Name[64] = {}; float Value = 0;
+                        const int n = std::sscanf(Edit.c_str() + 6, "%63s %f", Name, &Value);
+                        if (n < 1) return "PostEdit: not applied - param <name> [value]";
+                        if (!xlionrender::stage::Parameter(Name)) return std::format("PostEdit: not applied - '{}' is not a stage parameter (ao.radius, ao.thickness, refl.ssr_steps, refl.ssr_max_dist, refl.ssr_thickness)", Name);
+                        std::erase_if(D.m_StageParams, [&](const auto& P) { return P.m_Name == Name; });
+                        if (n == 2) D.m_StageParams.push_back({ Name, Value });
+                    }
                     else
                     {
                         auto Desc = D.ToDesc();
