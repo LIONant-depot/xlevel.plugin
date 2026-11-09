@@ -83,7 +83,7 @@ namespace xlevel::commands
         {
             return "Edits the Level view's post chain, all or nothing (an edit that would leave the chain invalid is refused and says why). -Edit: "
                    "\"bypass <node> <0|1>\" (a node off, kept in the recipe), \"insert <gap> <taa|bloom|exposure|tonemap>\", \"remove <node>\", "
-                   "\"move <node> <to>\", or \"insertable <gap>\" (the types an insert there accepts). Nodes count from 0 as the Post chain view shows them. "
+                   "\"move <node> <to>\", \"insertable <gap>\" (the types an insert there accepts), or \"describe\" (the Post chain view's text: nodes, parameters, passes). Nodes count from 0 as the Post chain view shows them. "
                    "The chain lives on the view until the render graph resource owns it (it is not saved). Usage: PostEdit -Edit \"bypass 1 0\"";
         }
         void RegisterArguments() noexcept override { m_hEdit = m_Parser.addOption("Edit", "The edit, quoted", true, 1); }

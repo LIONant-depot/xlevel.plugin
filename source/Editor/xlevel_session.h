@@ -664,7 +664,7 @@ namespace xlevel
             m_CmdContext.m_EditPost = [this](const std::string& Edit) -> std::string
             {
                 if (!m_pRender) return "PostEdit: this Level has no render module";
-                char Reply[512];
+                char Reply[8192];
                 const bool bOk = m_pRender->EditPost(m_pGameMgr.get(), Edit.c_str(), Reply, static_cast<int>(sizeof(Reply)));
                 return std::format("PostEdit: {}{}", bOk ? "" : "not applied - ", Reply);
             };
