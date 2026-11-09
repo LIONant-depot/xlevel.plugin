@@ -667,7 +667,7 @@ namespace xlevel
                 if (!m_pRender) return "PostEdit: this Level has no render module";
                 // A chain from a RenderGraph resource (render graph D3): the edit is made in its descriptor - all or nothing, as on the view
                 // - and saved; its compile follows and the view takes the new chain from it (a reload keeps it). Queries stay on the view
-                const bool bQuery = Edit == "describe" || Edit == "source" || Edit.starts_with("insertable");
+                const bool bQuery = Edit == "describe" || Edit == "source" || Edit == "stages" || Edit.starts_with("insertable");
                 char Source[32] = {};
                 m_pRender->EditPost(m_pGameMgr.get(), "source", Source, static_cast<int>(sizeof(Source)));
                 if (const std::uint64_t Inst = std::strtoull(Source, nullptr, 16); Inst && !bQuery)
@@ -678,10 +678,21 @@ namespace xlevel
                     xproperty::settings::context Context;
                     if (std::filesystem::exists(Path))
                         if (auto Err = D.Serialize(true, Path.wstring(), Context); Err) return std::format("PostEdit: not applied - the RenderGraph {} does not read ({})", Hex, Err.getMessage());
-                    auto Desc = D.ToDesc();
-                    std::string Message;
-                    if (!xlionrender::post::Edit(Desc, Edit, Message)) return "PostEdit: not applied - " + Message;
-                    D.FromDesc(Desc);
+                    if (Edit.starts_with("stage "))      // "stage <name> 0|1": a frame stage bypassed or back (the descriptor lists the ones off)
+                    {
+                        char Name[64] = {}; int On = 1;
+                        if (std::sscanf(Edit.c_str() + 6, "%63s %d", Name, &On) != 2) return "PostEdit: not applied - stage <name> 0|1";
+                        if (!xlionrender::stage::Bypassable(Name)) return std::format("PostEdit: not applied - the stage '{}' cannot be bypassed (refl_ssr, refl_recon, ao, light_tiles)", Name);
+                        std::erase_if(D.m_Stages, [&](const auto& S) { return S.m_Name == Name; });
+                        if (!On) D.m_Stages.push_back({ Name, false });
+                    }
+                    else
+                    {
+                        auto Desc = D.ToDesc();
+                        std::string Message;
+                        if (!xlionrender::post::Edit(Desc, Edit, Message)) return "PostEdit: not applied - " + Message;
+                        D.FromDesc(Desc);
+                    }
                     std::error_code Ec; std::filesystem::create_directories(Path.parent_path(), Ec);
                     if (auto Err = D.Serialize(false, Path.wstring(), Context); Err) return std::format("PostEdit: not applied - the RenderGraph {} was not written ({})", Hex, Err.getMessage());
                     // its compile, queued now (a descriptor written outside its editor is not seen by the file monitor): the library that has it
