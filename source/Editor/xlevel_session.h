@@ -38,6 +38,7 @@
 #include "plugins/xlevel.plugin/source/Editor/xlevel_scene_sanity_scan.h"
 #include "source/Tools/Editor/xeditor_resource_editor.h"
 #include "source/Tools/Editor/xeditor_resource_updates.h"
+#include "plugins/xrender_graph.plugin/source/Module/xrender_graph_descriptor.h"     // (PostEdit on a Level whose Environment names a RenderGraph: the edit goes into the resource)
 #include "source/Tools/Editor/xeditor_inspector.h"
 #include "source/Tools/Editor/xeditor_toolbar.h"
 #include "source/Tools/Editor/xeditor_camera_toolbar.h"
@@ -664,6 +665,27 @@ namespace xlevel
             m_CmdContext.m_EditPost = [this](const std::string& Edit) -> std::string
             {
                 if (!m_pRender) return "PostEdit: this Level has no render module";
+                // A chain from a RenderGraph resource (render graph D3): the edit is made in its descriptor - all or nothing, as on the view
+                // - and saved; its compile follows and the view takes the new chain from it (a reload keeps it). Queries stay on the view
+                const bool bQuery = Edit == "describe" || Edit == "source" || Edit.starts_with("insertable");
+                char Source[32] = {};
+                m_pRender->EditPost(m_pGameMgr.get(), "source", Source, static_cast<int>(sizeof(Source)));
+                if (const std::uint64_t Inst = std::strtoull(Source, nullptr, 16); Inst && !bQuery)
+                {
+                    const auto Hex  = std::format("{:016X}", Inst);
+                    const auto Path = std::filesystem::path(xresource_editor::g_LibMgr.m_ProjectPath) / "Descriptors" / "RenderGraph" / Hex.substr(14, 2) / Hex.substr(12, 2) / (Hex + ".desc") / "Descriptor.txt";
+                    xrender_graph::descriptor D;
+                    xproperty::settings::context Context;
+                    if (std::filesystem::exists(Path))
+                        if (auto Err = D.Serialize(true, Path.wstring(), Context); Err) return std::format("PostEdit: not applied - the RenderGraph {} does not read ({})", Hex, Err.getMessage());
+                    auto Desc = D.ToDesc();
+                    std::string Message;
+                    if (!xlionrender::post::Edit(Desc, Edit, Message)) return "PostEdit: not applied - " + Message;
+                    D.FromDesc(Desc);
+                    std::error_code Ec; std::filesystem::create_directories(Path.parent_path(), Ec);
+                    if (auto Err = D.Serialize(false, Path.wstring(), Context); Err) return std::format("PostEdit: not applied - the RenderGraph {} was not written ({})", Hex, Err.getMessage());
+                    return std::format("PostEdit: ok - saved in the RenderGraph {} (it compiles; the view follows)", Hex);
+                }
                 char Reply[8192];
                 const bool bOk = m_pRender->EditPost(m_pGameMgr.get(), Edit.c_str(), Reply, static_cast<int>(sizeof(Reply)));
                 return std::format("PostEdit: {}{}", bOk ? "" : "not applied - ", Reply);
