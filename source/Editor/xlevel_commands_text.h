@@ -75,6 +75,38 @@ namespace xlevel::commands
         }
     };
 
+    // DebugView: one of the frame's images in place of the frame (render graph debug views): the console's way to the view's "view" edit
+    struct debug_view_query_cmd : level_query_command
+    {
+        debug_view_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "DebugView", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override
+        {
+            return "Shows one of the frame's images (by its render graph name) in place of the frame, until -Image off. No -Image: the images and what is shown. "
+                   "-Mode auto (by format), colour, channel, normal or depth; -Scale and -Bias remap the value (value * Scale + Bias); -Channel 0-3 for channel; -Mip. "
+                   "Usage: DebugView -Image \"Render target: prepass normals\" -Mode normal";
+        }
+        void RegisterArguments() noexcept override
+        {
+            m_hImage = m_Parser.addOption("Image", "The image's name (quoted), or off", false, 1);
+            m_hMode  = m_Parser.addOption("Mode", "auto, colour, channel, normal or depth", false, 1);
+            m_hScale = m_Parser.addOption("Scale", "value * Scale + Bias (1)", false, 1);
+            m_hBias  = m_Parser.addOption("Bias", "(0)", false, 1);
+            m_hChan  = m_Parser.addOption("Channel", "0-3, for -Mode channel", false, 1);
+            m_hMip   = m_Parser.addOption("Mip", "the mip level (0)", false, 1);
+        }
+        std::string Query() noexcept override
+        {
+            auto& Ctx = LevelContext();
+            if (!Ctx.m_EditPost) return "DebugView: this Level has no render module";
+            auto Get = [&](xcmdline::parser::handle h, const char* pDefault) { auto A = m_Parser.getOptionArgAs<std::string>(h, 0); return std::holds_alternative<xerr>(A) ? std::string(pDefault) : std::get<std::string>(A); };
+            const auto Image = Get(m_hImage, "");
+            const auto Reply = Image.empty() ? Ctx.m_EditPost("view") : Image == "off" ? Ctx.m_EditPost("view off")
+                             : Ctx.m_EditPost(std::format("view {} | {} {} {} {} {}", Image, Get(m_hMode, "auto"), Get(m_hScale, "1"), Get(m_hBias, "0"), Get(m_hChan, "0"), Get(m_hMip, "0")));
+            return "DebugView: " + (Reply.starts_with("PostEdit: ") ? Reply.substr(10) : Reply);
+        }
+        xcmdline::parser::handle m_hImage, m_hMode, m_hScale, m_hBias, m_hChan, m_hMip;
+    };
+
     // PostEdit: the post chain of the Level's view, edited all or nothing (render graph P6) - the Render Graph tab's Post chain controls send these
     struct post_edit_query_cmd : level_query_command
     {

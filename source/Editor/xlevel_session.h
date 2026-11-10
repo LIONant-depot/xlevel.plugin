@@ -325,6 +325,7 @@ namespace xlevel
         bool                                         m_bPivotCenter = true;
         bool                                         m_bLocalSpace  = false;
         xlionrender::view_options                    m_ViewOptions;              // the viewport's GI view (the toolbar's GI menu): drawn, never saved
+        std::string                                  m_DebugImageMode = "auto";  // the GI menu's Image: how the next image shown is drawn (DebugView -Mode)
         xeditor::mesh_budget::state                  m_MeshBudget;               // the toolbar's Boxes and Budget (huge meshes): drawn, never saved
         std::string                                  m_CullStats;                // the GPU culling's last numbers (DescribeScene's GPUCull lines), for the toolbar's hints
         std::vector<xlionrender::wire_box>           m_NotDrawnBoxes;            // what the last RenderScene did not draw the inside of: drawn as lines over the viewport
@@ -667,7 +668,7 @@ namespace xlevel
                 if (!m_pRender) return "PostEdit: this Level has no render module";
                 // A chain from a RenderGraph resource (render graph D3): the edit is made in its descriptor - all or nothing, as on the view
                 // - and saved; its compile follows and the view takes the new chain from it (a reload keeps it). Queries stay on the view
-                const bool bQuery = Edit == "describe" || Edit == "source" || Edit == "stages" || Edit.starts_with("insertable");
+                const bool bQuery = Edit == "describe" || Edit == "source" || Edit == "stages" || Edit.starts_with("insertable") || Edit == "view" || Edit.starts_with("view ");     // (view: the debug view, the view's own - never in the graph)
                 char Source[32] = {};
                 m_pRender->EditPost(m_pGameMgr.get(), "source", Source, static_cast<int>(sizeof(Source)));
                 if (const std::uint64_t Inst = std::strtoull(Source, nullptr, 16); Inst && !bQuery)
@@ -1371,8 +1372,47 @@ namespace xlevel
             Toggle("Per-pixel read", m_ViewOptions.m_bNoPerPixel, "Off: the vertex read only (on: as the Environment's GIPerPixel says)");
             Toggle("Visibility",     m_ViewOptions.m_bNoMoments,  "Off: the reads skip the depth-moment visibility test (on: as the Environment's GIMoments says)");
             ImGui::Separator();
+            RenderDebugImageMenu();
+            ImGui::Separator();
             if (ImGui::MenuItem("Reset", nullptr, false, bChanged)) m_ViewOptions = {};
             ImGui::EndPopup();
+        }
+
+        // The GI menu's "Image": one of the frame's images in place of the frame (the console's DebugView; the view's "view" edit)
+        void RenderDebugImageMenu() noexcept
+        {
+            if (!m_CmdContext.m_EditPost) return;
+            const std::string List = m_CmdContext.m_EditPost("view");      // "PostEdit: showing: <name|the frame>[ (why not)]" then an image a line
+            std::vector<std::string> Lines;
+            for (std::size_t b = 0; b <= List.size(); )
+            {
+                std::size_t e = List.find('\n', b); if (e == std::string::npos) e = List.size();
+                Lines.emplace_back(List.substr(b, e - b)); b = e + 1;
+            }
+            if (Lines.empty()) return;
+            const std::string_view Head = Lines[0];
+            const auto At = Head.find("showing: ");
+            const std::string Shown = At == std::string_view::npos ? std::string() : std::string(Head.substr(At + 9));
+            const bool bOn = !Shown.starts_with("the frame");
+            if (!ImGui::BeginMenu(bOn ? "Image (on)" : "Image")) { if (ImGui::IsItemHovered()) xeditor::hint::Text("One of the frame's images in place of the frame: %s", Shown.c_str()); return; }
+            if (ImGui::MenuItem("The frame", nullptr, !bOn)) (void)m_CmdContext.m_EditPost("view off");
+            ImGui::Separator();
+            for (std::size_t i = 1; i < Lines.size(); ++i)
+            {
+                const auto& L = Lines[i];
+                const bool bMade = L.find("  (not made)") == std::string::npos;
+                const std::string Name = bMade ? L : L.substr(0, L.find("  (not made)"));
+                if (ImGui::MenuItem(Name.c_str(), nullptr, bOn && Shown.substr(0, Shown.find(" (")) == Name, bMade)) (void)m_CmdContext.m_EditPost("view " + Name + " | " + m_DebugImageMode);
+                if (!bMade && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) xeditor::hint::Text("Not made: its switch is off");
+            }
+            ImGui::Separator();
+            for (const char* pMode : { "auto", "colour", "normal", "depth" })
+                if (ImGui::MenuItem(pMode, nullptr, m_DebugImageMode == pMode))
+                {
+                    m_DebugImageMode = pMode;
+                    if (bOn) { const auto Paren = Shown.find(" ("); (void)m_CmdContext.m_EditPost("view " + Shown.substr(0, Paren) + " | " + m_DebugImageMode); }
+                }
+            ImGui::EndMenu();
         }
 
         // What the viewport draws and picks with the roles of this session (a Prefab Editor with context scenes: the context is drawn first and faded, and never picked; the instance edited in context is
