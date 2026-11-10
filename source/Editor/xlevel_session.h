@@ -325,6 +325,8 @@ namespace xlevel
         bool                                         m_bPivotCenter = true;
         bool                                         m_bLocalSpace  = false;
         xlionrender::view_options                    m_ViewOptions;              // the viewport's GI view (the toolbar's GI menu): drawn, never saved
+        std::string                                  m_DebugImageShown;          // the image the view shows instead of the frame ("": the frame), read every 30 frames
+        int                                          m_DebugImageCheck = 0;
         std::string                                  m_DebugImageMode = "auto";  // the GI menu's Image: how the next image shown is drawn (DebugView -Mode)
         xeditor::mesh_budget::state                  m_MeshBudget;               // the toolbar's Boxes and Budget (huge meshes): drawn, never saved
         std::string                                  m_CullStats;                // the GPU culling's last numbers (DescribeScene's GPUCull lines), for the toolbar's hints
@@ -1335,12 +1337,20 @@ namespace xlevel
         void RenderGIMenu(bool bHorizontal, float ButtonHeight) noexcept
         {
             if (bHorizontal) ImGui::SameLine();
-            const bool bChanged = !(m_ViewOptions == xlionrender::view_options{});
+            if (m_CmdContext.m_EditPost && m_DebugImageCheck-- <= 0)      // (an image shown instead of the frame lights the button too: set from here or the console - read twice a second)
+            {
+                const auto R = m_CmdContext.m_EditPost("view");
+                const auto At = R.find("showing: "), End = R.find('\n');
+                m_DebugImageShown = At == std::string::npos || R.compare(At + 9, 9, "the frame") == 0 ? std::string() : R.substr(At + 9, End == std::string::npos ? std::string::npos : End - At - 9);
+                m_DebugImageCheck = 30;
+            }
+            const bool bChanged = !(m_ViewOptions == xlionrender::view_options{}) || !m_DebugImageShown.empty();
             if (bChanged) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Header]);
             const bool bPressed = ImGui::Button(bHorizontal ? "GI \xEE\x9C\x8D###GIView" : "G###GIView", bHorizontal ? ImVec2(52.0f, ButtonHeight) : ImVec2(32.0f, ButtonHeight));     // Segoe MDL2 ChevronDown
             if (bChanged) ImGui::PopStyleColor();
             const ImVec2 Min = ImGui::GetItemRectMin(), Max = ImGui::GetItemRectMax();
-            if (ImGui::IsItemHovered()) xeditor::hint::Text("GI view: what this viewport shows of the GI (only here: the Level's Environment is not changed)");
+            if (ImGui::IsItemHovered()) { if (m_DebugImageShown.empty()) xeditor::hint::Text("GI view: what this viewport shows of the GI (only here: the Level's Environment is not changed)");
+                                          else xeditor::hint::Text("Showing an image instead of the frame: %s (GI > Image > The frame: back)", m_DebugImageShown.c_str()); }
             if (bPressed)
             {
                 ImGui::SetNextWindowPos(ImVec2(Min.x, Max.y));                  // under the button
