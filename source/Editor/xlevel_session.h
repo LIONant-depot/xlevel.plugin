@@ -36,6 +36,7 @@
 #include "plugins/xlevel.plugin/source/Editor/xlevel_editor_tabs.h"
 #include "plugins/xlevel.plugin/source/Editor/game_module/LevelEditor_GamePlugin.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_scene_sanity_scan.h"
+#include "dependencies/xLIONRender/src/xlionrender_env.h"
 #include "source/Tools/Editor/xeditor_resource_editor.h"
 #include "source/Tools/Editor/xeditor_resource_updates.h"
 #include "plugins/xrender_graph.plugin/source/Module/xrender_graph_descriptor.h"     // (PostEdit on a Level whose Environment names a RenderGraph: the edit goes into the resource)
@@ -684,7 +685,7 @@ namespace xlevel
                     if (Edit.starts_with("stage "))      // "stage <name> 0|1": a frame stage bypassed or back (the descriptor lists the ones off)
                     {
                         char Name[64] = {}; int On = 1;
-                        if (std::sscanf(Edit.c_str() + 6, "%63s %d", Name, &On) != 2) return "PostEdit: not applied - stage <name> 0|1";
+                        if (xlionrender::Scan(Edit.c_str() + 6, "%63s %d", Name, &On) != 2) return "PostEdit: not applied - stage <name> 0|1";
                         if (!xlionrender::stage::Bypassable(Name)) return std::format("PostEdit: not applied - the stage '{}' cannot be bypassed (refl_ssr, refl_recon, ao, light_tiles)", Name);
                         std::erase_if(D.m_Stages, [&](const auto& S) { return S.m_Name == Name; });
                         if (!On) D.m_Stages.push_back({ Name, false });
@@ -692,7 +693,7 @@ namespace xlevel
                     else if (Edit.starts_with("param "))      // "param <name> <value>" a stage parameter set in the graph; "param <name>" unset
                     {
                         char Name[64] = {}; float Value = 0;
-                        const int n = std::sscanf(Edit.c_str() + 6, "%63s %f", Name, &Value);
+                        const int n = xlionrender::Scan(Edit.c_str() + 6, "%63s %f", Name, &Value);
                         if (n < 1) return "PostEdit: not applied - param <name> [value]";
                         if (!xlionrender::stage::Parameter(Name)) return std::format("PostEdit: not applied - '{}' is not a stage parameter (ao.radius, ao.thickness, refl.ssr_steps, refl.ssr_max_dist, refl.ssr_thickness)", Name);
                         std::erase_if(D.m_StageParams, [&](const auto& P) { return P.m_Name == Name; });
