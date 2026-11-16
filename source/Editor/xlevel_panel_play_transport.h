@@ -1,6 +1,7 @@
 #include "dependencies/xeditor/include/xeditor/hint.h"
 #include "dependencies/xeditor/include/xeditor/shortcuts.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_visual_studio.h"
+#include "source/Tools/Editor/xeditor_play_transport.h"     // the buttons and the speed slider (shared by every editor)
 #ifndef XLEVEL_PANEL_PLAY_TRANSPORT_H
 #define XLEVEL_PANEL_PLAY_TRANSPORT_H
 #pragma once
@@ -25,103 +26,33 @@ namespace xlevel
 
     inline void RenderPlayTransport( level_context& Ed, const transport_layout& Layout ) noexcept
     {
+        namespace pt = xeditor::play_transport;
         auto& State = Ed.State();
         const auto* pGate = xeditor::host::current()->find<play_gate>();
-        const bool bBuilding = pGate && pGate->m_IsBuilding(Ed);
         using play_state = level_state::play_state;
-        constexpr const char* PlayIcon  = "\xEE\x9D\xA8";
-        constexpr const char* PauseIcon = "\xEE\x9D\xA9";
-        constexpr const char* StopIcon  = "\xEE\x9C\x9A";
-        constexpr const char* StepIcon  = "\xEE\xA2\x93";
         constexpr const char* CodeIcon  = "\xEE\xA5\x83";
+        const pt::layout L{ Layout.m_ButtonSize, Layout.m_bHorizontal, Layout.m_bTooltips };
+        const float PairX = pt::PairX(L);
 
-        // Captured once, before any button: clicking slot 2's Pause must not make slot 3 appear this same frame.
-        const bool bStopped = State.m_PlayState == play_state::Stopped;
-        const bool bPlaying = State.m_PlayState == play_state::Playing;
-        const bool bPaused  = State.m_PlayState == play_state::Paused;
-
-        auto Slot = [&](const char* Icon, bool bDisabled, bool bPressed, auto&& OnClick) noexcept
-        {
-            ImGui::PushFont(xgpu::tools::imgui::getFont(4));
-            if (bPressed) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Header]);
-            ImGui::BeginDisabled(bDisabled);
-            if (ImGui::Button(Icon, Layout.m_ButtonSize)) OnClick();
-            ImGui::EndDisabled();
-            if (bPressed) ImGui::PopStyleColor();
-            ImGui::PopFont();
-        };
-        auto Tip = [&](const char* Title, const char* Hint) noexcept
-        {
-            if (!Layout.m_bTooltips || !ImGui::IsItemHovered()) return;
-            // The key the action has right now (Level/Play, Level/Stop), from the host; the other buttons have none.
-            const std::string Keys = std::string_view(Title) == "Play" ? xeditor::ShortcutText("Level/Play")
-                                   : std::string_view(Title) == "Stop" ? xeditor::ShortcutText("Level/Stop") : std::string{};
-            xeditor::hint::Draw({ Title, Hint, Keys });
-        };
-        auto Next = [&]() noexcept { if (Layout.m_bHorizontal) ImGui::SameLine(); };
-
-        // Centered on the two-slot pair ALWAYS, so slots 1 and 2 stay pixel-fixed when slot 3 appears.
-        const float PairX = (ImGui::GetWindowWidth() - (Layout.m_ButtonSize.x * 2.0f + ImGui::GetStyle().ItemSpacing.x)) * 0.5f;
-
-        // The speed of the game, left of Play: 0.25x to 3x, with snaps at the usual speeds (and right-click for 1x). It is the multiplier of
-        // this editor's game time, so it is already set when Play is pressed.
+        // The speed of the game, left of Play: the multiplier of this editor's game time, so it is already set when Play is pressed.
         if (Layout.m_bHorizontal && Ed.m_pGame)
-        {
-            constexpr float SliderW = 120.0f;
-            constexpr auto& Snaps = xlioncore::game_time::kScaleSteps;
-            auto& Scale = Ed.m_pGame->m_Time.m_TimeScale;
-            ImGui::SameLine(std::max(0.0f, PairX - SliderW - ImGui::GetStyle().ItemSpacing.x * 2.0f));
-            ImGui::SetNextItemWidth(SliderW);
-            // An integer slider over the stops, as the animation editor's playback speed is: the grab can only sit on a stop and the number is
-            // always that stop, never something in between.
-            constexpr int N = static_cast<int>(Snaps.size());
-            int Stop = 0;
-            for (int i = 0; i < N; ++i) if (Snaps[i] == Scale) Stop = i;
-            if (ImGui::SliderInt("##TimeScale", &Stop, 0, N - 1, std::format("{}x", Snaps[Stop]).c_str())) Scale = Snaps[Stop];
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) Scale = 1.0f;
-            if (Layout.m_bTooltips && ImGui::IsItemHovered()) xeditor::hint::Text("Speed of the game: %gx  (0.25 0.5 0.75 1 1.5 2 3, right-click for 1x)", Scale);
-            { // a small mark for every stop, under the slider
-                const ImVec2 Min = ImGui::GetItemRectMin(), Max = ImGui::GetItemRectMax();
-                const float  Pad = ImGui::GetStyle().FramePadding.x;
-                const float  Grab = std::max((Max.x - Min.x - Pad * 2.0f) / N, ImGui::GetStyle().GrabMinSize);      // ImGui's own grab size for an integer slider
-                for (int i = 0; i < N; ++i)
-                {
-                    const float X = Min.x + Pad + Grab * 0.5f + (Max.x - Min.x - Pad * 2.0f - Grab) * (static_cast<float>(i) / (N - 1));
-                    ImGui::GetWindowDrawList()->AddLine(ImVec2(X, Max.y - 3.0f), ImVec2(X, Max.y), IM_COL32(200, 200, 200, 160));
-                }
-            }
-        }
-        if (Layout.m_bHorizontal)
-            ImGui::SameLine(PairX);
+            pt::SpeedLeftOfPair(Ed.m_pGame->m_Time.m_TimeScale, xlioncore::game_time::kScaleSteps, L);
 
         // A Level with an error (its Game lacks what its scenes need) cannot be played: it would run without the systems and components its scenes use
-        const bool bBlocked = bStopped && !State.m_WhyNotPlay.empty();
-        Slot(bStopped ? PlayIcon : StopIcon, bBuilding || bBlocked, false, [&]
-        {
-            if (bStopped) RequestPlay(Ed);
-            else          RequestStop(Ed, std::nullopt);
-        });
-        if (bBlocked) { if (Layout.m_bTooltips && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) xeditor::hint::Text("Cannot play: %s", State.m_WhyNotPlay.c_str()); }
-        else Tip(bStopped ? "Play" : "Stop", bStopped ? "Start playback" : "Stop playback");
+        pt::actions A;
+        A.m_bBusy      = pGate && pGate->m_IsBuilding(Ed);
+        A.m_WhyNotPlay = State.m_WhyNotPlay;
+        A.m_PlayKeys   = xeditor::ShortcutText("Level/Play");
+        A.m_StopKeys   = xeditor::ShortcutText("Level/Stop");
+        A.m_Play       = [&] { RequestPlay(Ed); };
+        A.m_Stop       = [&] { RequestStop(Ed, std::nullopt); };
+        A.m_Pause      = [&] { RequestPause(State); };
+        A.m_Resume     = [&] { RequestResume(State); };
+        A.m_Step       = [&] { RequestStep(Ed); };
+        pt::Buttons(State.m_PlayState == play_state::Stopped ? pt::state::Stopped : State.m_PlayState == play_state::Playing ? pt::state::Playing : pt::state::Paused, A, L);
 
-        Next();
-        if (bPlaying)
-        {
-            Slot(PauseIcon, false, false, [&] { RequestPause(State); });
-            Tip("Pause", "Pause playback");
-        }
-        else
-        {
-            Slot(StepIcon, bBuilding || bBlocked, false, [&] { RequestStep(Ed); });
-            Tip("Step", "Run one frame");
-        }
-
-        if (bPaused)
-        {
-            Next();
-            Slot(PauseIcon, false, true, [&] { RequestResume(State); });
-            Tip("Resume", "Resume playback");
-        }
+        auto Slot = [&](const char* Icon, bool bDisabled, bool bPressed, auto&& OnClick) noexcept { if (pt::Slot(Icon, L, bDisabled, bPressed)) OnClick(); };
+        auto Tip = [&](const char* Title, const char* Hint) noexcept { if (Layout.m_bTooltips && ImGui::IsItemHovered()) xeditor::hint::Draw({ Title, Hint }); };
 
         // The way to Visual Studio, after the room the three transport slots may take (and a little more).
         if (Layout.m_bHorizontal) ImGui::SameLine(PairX + (Layout.m_ButtonSize.x + ImGui::GetStyle().ItemSpacing.x) * 3.0f + 16.0f);
