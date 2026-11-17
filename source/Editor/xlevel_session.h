@@ -1449,8 +1449,37 @@ namespace xlevel
         // GetContentRegionAvail/GetCursorScreenPos here are exactly the viewport rect. No shadow caster
         // exists for Level geometry yet, so the grid is always lit (a zero shadow matrix - the same "no
         // shadow" convention xeditor_tools::grid::Draw already documents).
+        // K4 (a stick-driven character): the player's input for this Level's game, polled once a frame while Play has this viewport's focus
+        // (WASD / arrows, Shift runs, Space jumps, a gamepad's left stick through ImGui), the stick also turned into the world by this camera.
+        // Held state only, rebuilt every frame (no stuck keys; zero when the focus is elsewhere, while typing, or while the camera is flown with
+        // the right mouse). Fable's review 2026-11-17: per game, not global; clamp the diagonal; a radial deadzone on the pad.
+        void PollPlayerInput() noexcept
+        {
+            auto& In = m_Game.m_Input; In = {};
+            if (m_State.m_PlayState != xlevel::level_state::play_state::Playing) return;
+            if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) || ImGui::GetIO().WantTextInput || ImGui::IsMouseDown(ImGuiMouseButton_Right)) return;
+            auto K = [](ImGuiKey a, ImGuiKey b) { return (ImGui::IsKeyDown(a) || ImGui::IsKeyDown(b)) ? 1.0f : 0.0f; };
+            float x = K(ImGuiKey_D, ImGuiKey_RightArrow) - K(ImGuiKey_A, ImGuiKey_LeftArrow), y = K(ImGuiKey_W, ImGuiKey_UpArrow) - K(ImGuiKey_S, ImGuiKey_DownArrow);
+            auto A = [](ImGuiKey k) { const auto* p = ImGui::GetKeyData(k); return p ? p->AnalogValue : 0.0f; };
+            const float gx = A(ImGuiKey_GamepadLStickRight) - A(ImGuiKey_GamepadLStickLeft), gy = A(ImGuiKey_GamepadLStickUp) - A(ImGuiKey_GamepadLStickDown);
+            bool bPad = false;
+            if (const float m = std::hypot(gx, gy); m > 0.24f && m > std::hypot(x, y)) { const float s = std::min(1.0f, (m - 0.24f) / 0.76f) / m; x = gx * s; y = gy * s; bPad = true; }
+            if (const float m = std::hypot(x, y); m > 1.0f) { x /= m; y /= m; }
+            In.m_bActive = true; In.m_Stick[0] = x; In.m_Stick[1] = y;
+            In.m_Look[0] = A(ImGuiKey_GamepadRStickRight) - A(ImGuiKey_GamepadRStickLeft); In.m_Look[1] = A(ImGuiKey_GamepadRStickUp) - A(ImGuiKey_GamepadRStickDown);
+            if (ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift) || (bPad && std::hypot(x, y) > 0.85f)) In.m_Buttons |= xlioncore::game::input::RUN;
+            if (ImGui::IsKeyDown(ImGuiKey_Space) || ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown)) In.m_Buttons |= xlioncore::game::input::JUMP;
+            if (ImGui::IsKeyDown(ImGuiKey_E) || ImGui::IsKeyDown(ImGuiKey_GamepadFaceLeft)) In.m_Buttons |= xlioncore::game::input::ACTION;
+            auto F = m_Camera.m_View.getForward(); F.m_Y = 0;                 // (camera-relative: forward on the ground, right = forward x up)
+            if (F.LengthSq() < 1e-8f) F = xmath::fvec3(0, 0, 1);
+            F = F.NormalizeSafeCopy(); const auto R = F.Cross(xmath::fvec3(0, 1, 0));
+            const auto W = R * x + F * y;
+            In.m_MoveWorld[0] = W.m_X; In.m_MoveWorld[1] = W.m_Z;
+        }
+
         void RenderViewport() noexcept
         {
+            PollPlayerInput();
             if (!m_pDevice) { ImGui::TextDisabled("Editor"); return; }
             const bool bFirstInit = !m_Grid.m_bReady;
             if (!m_Grid.Init(*m_pDevice, false)) { ImGui::TextDisabled("Editor"); return; }
@@ -2147,6 +2176,7 @@ namespace xlevel
             if (m_State.m_PlayState == xlevel::level_state::play_state::Playing)
             {
                 m_pEcs->Run();
+                m_Game.m_Input = {};                     // (used once: a viewport that is not drawn next frame leaves no key held)
                 if (m_State.m_bStepOneFrame)
                 {
                     m_State.m_bStepOneFrame = false;
