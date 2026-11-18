@@ -27,6 +27,25 @@ namespace xlevel::viewport_tools
             A.m_bSeeBones = true;                   // (the next frame's pose fills the segments)
             static constexpr ImU32 Colors[] = { IM_COL32(80, 220, 255, 230), IM_COL32(255, 170, 60, 230), IM_COL32(200, 120, 255, 200)
                                               , IM_COL32(255, 80, 80, 240), IM_COL32(255, 255, 90, 230), IM_COL32(120, 255, 140, 230) };
+            // the warp window's landing (S6) and distance matching's stop or start point (U1): where the game asked the body to be
+            const xmath::fvec3 X(1, 0, 0), Z(0, 0, 1);
+            const auto From = Target.m_pTransform ? Target.m_pTransform->m_Position : A.m_WarpTarget;
+            if (A.m_bWarp)
+            {
+                const ImU32 C = IM_COL32(255, 120, 200, 230);
+                View.Circle(DL, A.m_WarpTarget, X, Z, 0.25f, C, 2.0f);
+                View.Line(DL, From, A.m_WarpTarget, IM_COL32(255, 120, 200, 120), 1.0f);
+                if (A.m_bWarpTurn)
+                {
+                    const float y = A.m_WarpYaw * 0.017453293f;
+                    View.Line(DL, A.m_WarpTarget, A.m_WarpTarget + xmath::fvec3(std::sin(y), 0, std::cos(y)) * 0.5f, C, 3.0f);     // (the facing it lands with)
+                }
+            }
+            if (A.m_bDist)
+            {
+                View.Circle(DL, A.m_DistTarget, X, Z, 0.2f, IM_COL32(120, 200, 255, 230), 2.0f);
+                View.Line(DL, From, A.m_DistTarget, IM_COL32(120, 200, 255, 120), 1.0f);
+            }
             if (!A.m_pSeen) return;
             for (const auto& S : *A.m_pSeen)
             {
