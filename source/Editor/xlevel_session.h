@@ -1,6 +1,7 @@
 #ifndef XLEVEL_SESSION_H
 #define XLEVEL_SESSION_H
 #pragma once
+#include "source/Tools/Editor/xeditor_bone_field.h"
 #include "dependencies/xeditor/include/xeditor/popup.h"
 
 // The Level editor as a real xeditor::resource_editor: the ECS world, Game.dll scripting, Play/Pause/Stop,
@@ -352,6 +353,7 @@ namespace xlevel
         bool                                         m_bLevelWritable = true;     // last frame's, for the Inspector toggle
         std::function<void(xproperty::inspector&, const xproperty::type::object&, void*, std::string_view, int)> m_OnArrayElementRender;
         std::function<void(xproperty::inspector&, const xproperty::type::object&, void*, std::string_view)> m_OnScaleRow;
+        std::function<void(xproperty::inspector&, const xproperty::type::object&, void*, std::string_view, const xproperty::any&, bool&)> m_OnBoneField;
 
         // The "Editor" viewport's own camera + ground grid - every other 3D editor already shares these
         // via xeditor_tools; the Level Editor never had a camera or a grid at all before this.
@@ -603,6 +605,15 @@ namespace xlevel
                 if (xeditor::ScaleLockToggle(T.m_EditorLockScale, !m_bLevelWritable || m_State.isPlaying())) T.m_EditorLockScale = !T.m_EditorLockScale;
             };
             m_EntityInspector.m_OnLeftColumnAppend.Register(m_OnScaleRow);
+
+            // KUX1 (R66): the Animation component's bone fields as pickers of the character's bones (source/Tools/Editor/xeditor_bone_field.h)
+            m_OnBoneField = [this](xproperty::inspector& I, const xproperty::type::object& O, void* pInstance, std::string_view Path, const xproperty::any& V, bool& bHandled)
+            {
+                if (!xeditor::bone_field::IsBoneField(Path)) return;
+                if (!m_bLevelWritable || m_State.isPlaying()) return;           // (read only: the plain field)
+                xeditor::bone_field::Draw(I, O, pInstance, Path, V, bHandled);
+            };
+            m_EntityInspector.m_OnCustomRenderReplaceValue.Register(m_OnBoneField);
 
             m_GamePlugin.m_Events.m_OnCollectRequiredComponents.Register<&session::CollectRequiredComponents>(*this);
             m_GamePlugin.m_Events.m_OnBeforeReload.Register<&session::BeforeReload>(*this);
