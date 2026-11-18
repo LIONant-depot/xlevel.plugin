@@ -89,6 +89,14 @@ namespace xlevel
         if (auto* pRegisterSystems = reinterpret_cast<xecs_plugin_pfn_register_systems*>(GetProcAddress(hModule, XECS_PLUGIN_REGISTER_SYSTEMS_NAME)))
             pRegisterSystems(GameMgr);
     }
+    // E61: an engine DLL's systems that need no GPU (LIONRender: animation and ragdoll) - a windowless editor still animates and simulates
+    inline void RegisterEngineDLLCpuSystems(xecs::game_mgr::instance& GameMgr, const wchar_t* pModuleName) noexcept
+    {
+        HMODULE hModule = GetModuleHandleW(pModuleName);
+        if (!hModule) return;
+        using pfn = void(xecs::game_mgr::instance&) noexcept;
+        if (auto* pRegister = reinterpret_cast<pfn*>(GetProcAddress(hModule, "XLionRender_RegisterCpuSystems"))) pRegister(GameMgr);
+    }
 }
 
 #endif // XLEVEL_PLUGIN_DLLS_H

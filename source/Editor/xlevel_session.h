@@ -402,6 +402,7 @@ namespace xlevel
             // (RegisterHostComponents) so headless scenes still carry the data - but headless has no
             // device/window to draw with, so its render SYSTEM never runs there.
             if (m_pDevice) RegisterEngineDLLSystems(GameMgr, RenderModule());
+            else           RegisterEngineDLLCpuSystems(GameMgr, RenderModule());     // (E61: no device - animation and ragdoll still run, only drawing does not)
 
             // The editor does not sync its own copies of the bit ids (info_v<T>.m_BitID of the types it names: static_tag, transform, prefab_instance, entity_reference): they are per-BINARY, and with
             // several copies of the core in one process none of them would be the right one. Whatever the editor needs of a component it asks the xECSEditor of the Level's copy of the core (HasComponent,
