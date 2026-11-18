@@ -69,6 +69,13 @@ namespace xlevel
         P.m_Project    = Project;
         P.m_Config     = ExeDir.filename().wstring();
         P.m_XGpuBinDir = ExeDir.parent_path();
+        // An editor run from a copy of its binaries (the tools' headless runs: they must not lock the build tree's DLLs) names the build
+        // folder that holds xLIONCore with XLION_ENGINE_BUILD_DIR; the Game links against that folder's libraries
+        {
+            wchar_t* pEnv = nullptr; std::size_t Len = 0;
+            if (_wdupenv_s(&pEnv, &Len, L"XLION_ENGINE_BUILD_DIR") == 0 && pEnv && *pEnv) P.m_XGpuBinDir = pEnv;
+            std::free(pEnv);
+        }
         P.m_XGpuRoot   = P.m_XGpuBinDir.parent_path().parent_path();
 #else
         // Linux: the executable is in the root of a single-configuration build folder (CMake + Ninja), which is also the folder that holds xLIONCore; the configuration is the one
