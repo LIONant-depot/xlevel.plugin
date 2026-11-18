@@ -62,6 +62,7 @@
 #include "plugins/xlevel.plugin/source/Editor/xlevel_scale_reference.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_box.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_tool_collider_shapes.h"
+#include "plugins/xlevel.plugin/source/Editor/xlevel_tool_animation_bones.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_panel_level_properties.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_engine_copies.h"
 
