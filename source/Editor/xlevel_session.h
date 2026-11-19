@@ -375,6 +375,7 @@ namespace xlevel
             float        m_T = 1.0f;                                   // how far along it is (1 = arrived)
         }                                           m_CameraGlide;
         xeditor_tools::grid                          m_Grid;
+        bool                                         m_bShowGrid = true;        // the toolbar's Grid menu (m_Grid.m_FillAlpha: how solid its grey is)
         static constexpr float                       kEditorToolbarWidth      = 570.0f;
         static constexpr float                       kSceneToolbarWidth       = 720.0f;      // with the Boxes and Budget, the Cull, Occl and Freeze of xeditor_mesh_budget.h
         static constexpr float                       kEditorToolbarHeight     = 20.0f;
@@ -754,8 +755,10 @@ namespace xlevel
                 if      (Name == "PathTraced") m_ViewOptions.m_bPathTraced = bOn;
                 else if (Name == "NoGI")       m_ViewOptions.m_bNoGI       = bOn;
                 else if (Name == "GIDebug")    m_ViewOptions.m_GIDebug     = static_cast<std::int8_t>(std::atoi(Value.c_str()));
-                else if (Name == "Reset")      m_ViewOptions = {};
-                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Reset)", Name);
+                else if (Name == "Grid")       m_bShowGrid = bOn;                                                   // the toolbar's Grid menu
+                else if (Name == "GridFill")   m_Grid.m_FillAlpha = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
+                else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = 1.0f; }
+                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Grid, GridFill, Reset)", Name);
                 return std::format("SetViewOption: {} = {}", Name, Value);
             };
             m_CmdContext.m_DescribeText = [this](std::uint64_t Entity) -> std::string
@@ -1335,6 +1338,21 @@ namespace xlevel
                 xeditor::mesh_budget::Buttons(m_MeshBudget, bHorizontal, ButtonHeight, static_cast<int>(m_NotDrawnBoxes.size()));
                 xeditor::mesh_budget::CullButtons(m_MeshBudget, bHorizontal, ButtonHeight, m_CullStats.c_str());
                 ToolbarSeparator();
+                {   // the ground grid: shown or not, and how solid its grey is (0: only the lines - what is below the ground shows through).
+                    // Only this view: nothing is saved, undo does not see it
+                    if (bHorizontal) ImGui::SameLine();
+                    if (ImGui::Button(bHorizontal ? "Grid" : "G", bHorizontal ? ImVec2(58.0f, ButtonHeight) : ImVec2(32.0f, ButtonHeight))) ImGui::OpenPopup("##LevelGridMenu");
+                    if (ImGui::IsItemHovered()) { xeditor::hint::Text("The ground grid: show it, and how solid its grey is (0: only the lines, what is below shows)"); }
+                    if (ImGui::BeginPopup("##LevelGridMenu"))
+                    {
+                        ImGui::Checkbox("Show grid", &m_bShowGrid);
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat("Fill", &m_Grid.m_FillAlpha, 0.0f, 1.0f, "%.2f");
+                        if (ImGui::IsItemHovered()) { xeditor::hint::Text("1: solid grey; 0: only the lines, so you see what is below the ground"); }
+                        ImGui::EndPopup();
+                    }
+                }
+                ToolbarSeparator();
                 ToolbarButton("Human", "H", false, false, [&]     // a 1.8 m figure where the camera looks, to judge the scale (editor only: xlevel_scale_reference.h)
                 {
                     m_ScaleRefs.Add();
@@ -1614,7 +1632,7 @@ namespace xlevel
                                           , [](xgpu::cmd_buffer& CmdBuffer, void* pUser) noexcept
                                             {
                                                 auto& S = *static_cast<session*>(pUser);
-                                                S.m_Grid.Draw(CmdBuffer, S.m_Camera.m_View.getW2C(), S.m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
+                                                if (S.m_bShowGrid) S.m_Grid.Draw(CmdBuffer, S.m_Camera.m_View.getW2C(), S.m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
                                             }
                                           , this, Sets.m_Context.empty() ? nullptr : &Roles);
                     pHost->m_GIAllowance.Used(m_pRender->GITraceMs(m_pGameMgr.get()), true);
@@ -1643,7 +1661,7 @@ namespace xlevel
             xgpu::tools::imgui::AddCustomRenderCallback([this, bScene](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
                 if (bScene) m_pRender->BlitScene(m_pGameMgr.get(), CmdBuffer);
-                else        m_Grid.Draw(CmdBuffer, m_Camera.m_View.getW2C(), m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
+                else if (m_bShowGrid) m_Grid.Draw(CmdBuffer, m_Camera.m_View.getW2C(), m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
             });
 
             // Structural changes (new entities, AddComponent archetype migrations) stay in a pending

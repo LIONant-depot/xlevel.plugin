@@ -136,11 +136,11 @@ namespace xlevel::commands
         const char* getCommandHelp() const noexcept override
         {
             return "Sets a view option of the Level's viewport (drawn, never saved): PathTraced 0|1 (the GI from the brute path tracer), NoGI 0|1, GIDebug n (-1: the Environment's), "
-                   "Reset. Usage: SetViewOption -Name PathTraced -Value 1";
+                   "Grid 0|1 (the ground grid shown), GridFill 0..1 (its grey's opacity: 0 only the lines), Reset. Usage: SetViewOption -Name PathTraced -Value 1";
         }
         void RegisterArguments() noexcept override
         {
-            m_hName  = m_Parser.addOption("Name", "PathTraced, NoGI, GIDebug or Reset", true, 1);
+            m_hName  = m_Parser.addOption("Name", "PathTraced, NoGI, GIDebug, Grid, GridFill or Reset", true, 1);
             m_hValue = m_Parser.addOption("Value", "1/0, or the GIDebug number", false, 1);
         }
         std::string Query() noexcept override
