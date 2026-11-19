@@ -771,9 +771,10 @@ namespace xlevel
                 else if (Name == "Grid")       m_bShowGrid = bOn;                                                   // the toolbar's Grid menu
                 else if (Name == "GridFill")   m_Grid.m_FillAlpha = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
                 else if (Name == "GridTolerance") m_Grid.m_Rise = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);       // metres
+                else if (Name == "GridOutline") m_Grid.m_LineHalo = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
 
-                else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = 1.0f; m_Grid.m_Rise = xeditor_tools::grid{}.m_Rise; }
-                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Grid, GridFill, GridTolerance, Reset)", Name);
+                else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = 1.0f; m_Grid.m_Rise = xeditor_tools::grid{}.m_Rise; m_Grid.m_LineHalo = xeditor_tools::grid{}.m_LineHalo; }
+                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Grid, GridFill, GridTolerance, GridOutline, Reset)", Name);
                 return std::format("SetViewOption: {} = {}", Name, Value);
             };
             m_CmdContext.m_DescribeText = [this](std::uint64_t Entity) -> std::string
@@ -1368,6 +1369,9 @@ namespace xlevel
                         ImGui::SetNextItemWidth(160.0f);
                         if (ImGui::SliderFloat("On the grid (cm)", &Cm, 0.0f, 10.0f, "%.1f")) m_Grid.m_Rise = Cm / 100.0f;
                         if (ImGui::IsItemHovered()) { xeditor::hint::Text("A surface this close to the ground plane counts as on it: the lines show on it, the grey hides under it"); }
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat("Line outline", &m_Grid.m_LineHalo, 0.0f, 1.0f, "%.2f");
+                        if (ImGui::IsItemHovered()) { xeditor::hint::Text("A light outline around the dark lines: they stay visible on surfaces of any colour (0: none)"); }
                         ImGui::EndPopup();
                     }
                 }
