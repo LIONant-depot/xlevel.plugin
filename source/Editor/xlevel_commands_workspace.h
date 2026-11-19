@@ -254,6 +254,45 @@ namespace xlevel::commands
     };
 
     //================================================================================================
+    // ComponentFields - a component type's reflected fields, without an entity: each property path, its default value and TypeGuid
+    // (what a Visual Script System's Field names, and what SetProperty takes). Read from a default-constructed instance.
+    //================================================================================================
+    struct component_fields_query_cmd : level_query_command
+    {
+        component_fields_query_cmd(xundo::system& System, void* pDataBase) noexcept : level_query_command(System, "ComponentFields", pDataBase) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "Lists a component type's reflected fields with their default values and TypeGuids (a Visual Script System binds them by name). Usage: ComponentFields -Component name"; }
+        void RegisterArguments() noexcept override { m_hName = m_Parser.addOption("Component", "The component's name (as ListComponentTypes shows it)", true, 1); }
+
+        std::string Query() noexcept override
+        {
+            auto NameArg = m_Parser.getOptionArgAs<std::string>(m_hName, 0);
+            if (std::holds_alternative<xerr>(NameArg)) return "ComponentFields: bad arguments";
+            const auto& Name = std::get<std::string>(NameArg);
+            std::vector<const xecs::component::type::info*> Registered;
+            xlioncore::Ecs(World()).ListComponentTypes(Registered);
+            const xecs::component::type::info* pInfo = nullptr;
+            for (auto* p : Registered) if (p->m_pName && Name == p->m_pName) pInfo = p;
+            if (!pInfo) return std::format("ComponentFields: no component type '{}' (ListComponentTypes lists them; a module's appear once its Game.dll is loaded)", Name);
+            if (!pInfo->m_pPropertyTable || pInfo->m_Size == 0) return std::format("ComponentFields: '{}' has no reflected fields", Name);
+
+            std::vector<std::max_align_t> Storage((pInfo->m_Size + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
+            auto* pData = reinterpret_cast<std::byte*>(Storage.data());
+            if (pInfo->m_pConstructFn) pInfo->m_pConstructFn(pData);       // (no constructor: a trivial type, zeroed)
+            std::string Out = std::format("{}  [{:016X}]\n", pInfo->m_pName, pInfo->m_Guid.m_Value);
+            xproperty::settings::context Context;
+            xproperty::sprop::collector(pData, *pInfo->m_pPropertyTable, Context, [&](const char* pPropertyName, xproperty::any&& Data, const xproperty::type::members&, bool, const void*) noexcept
+            {
+                std::array<char, 256> Buffer{};
+                const auto Len = xscene::commands::FormatPropertyValue(Buffer, Data);
+                Out += std::format("    {} = {}  (TypeGuid {:08X})\n", pPropertyName, std::string(Buffer.data(), Len > 0 ? std::size_t(Len) : 0), Data.m_pType ? Data.m_pType->m_GUID : 0u);
+            });
+            if (pInfo->m_pDestructFn) pInfo->m_pDestructFn(pData);
+            return Out;
+        }
+        xcmdline::parser::handle m_hName;
+    };
+
+    //================================================================================================
     // ListSystems - every registered system in execution order, with what each one declares it
     // touches (must/one-of/none-of/if-present, reads/writes). Per-entity view: DescribeEntity.
     //================================================================================================
