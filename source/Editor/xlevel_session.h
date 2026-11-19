@@ -1513,7 +1513,7 @@ namespace xlevel
         int     m_PlayTool  = 0;
         bool    m_bHandHeld = false;
         float   m_HandDist  = 0;
-        static constexpr const char* play_tool_names_v[] = { "Game (T: Cannon)", "Cannon - left click fires a box at the mouse (T: Hand)", "Hand - left drag pulls a body (T: Game)" };
+        static constexpr const char* play_tool_names_v[] = { "B: fire a box at the mouse    hold H: pull the body under the mouse (hand)", "B: fire a box at the mouse    hold H: pull the body under the mouse (hand)", "B: fire a box at the mouse    hold H: pull the body under the mouse (hand)" };
         void HandRelease() noexcept { if (m_bHandHeld && m_pGameMgr) xlioncore::Ecs(*m_pGameMgr).HandRelease(); m_bHandHeld = false; }
 
         // The box cannon: a 0.3 m, 2 kg box from Origin along Dir at 12 m/s. Made as the game
@@ -1941,7 +1941,6 @@ namespace xlevel
                     const bool bOrbiting = ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
                     const bool bPlaying  = m_State.m_PlayState == xlevel::level_state::play_state::Playing;
                     const bool bPlayTool = bPlaying && m_PlayTool != 0;
-                    if (!bPlayTool) HandRelease();
                     if (bPlaying)
                     {   // the Play tools: the HUD line (which mode), then the left button is theirs (not in Game)
                         const ImVec2 Min = ImGui::GetItemRectMin();
@@ -1952,18 +1951,18 @@ namespace xlevel
                         // the mouse's ray only while the mouse is really there: an unfocused window's mouse is -FLT_MAX (ImGui), and a ray
                         // through it is a square root of garbage (the Debug assert that closed Tomas's editor on every focus loss, 2026-11-19)
                         const ImVec2 Mouse = ImGui::GetIO().MousePos;
-                        if (m_PlayTool != 0 && ImGui::IsMousePosValid(&Mouse))
+                        // keys, not the left button (Tomas 07:52Z: "left click does not work... make it into a keyboard key"): B (box) fires a box at
+                        // the mouse, H (hand) held pulls the body under the mouse - keys no editor tool uses - with the mouse over the viewport, in any Play tool
+                        const bool bOver = ImGui::IsMousePosValid(&Mouse) && ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), false) && !ImGui::GetIO().WantTextInput;
+                        if (bOver)
                         {
                         const auto Eye = m_Camera.m_View.getPosition(), Dir = m_Camera.m_View.RayFromScreen(Mouse.x, Mouse.y).NormalizeSafeCopy();
-                        if (m_PlayTool == 1 && bHovered && !bOrbiting && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ShootBox(Eye, Dir);
-                        if (m_PlayTool == 2 && m_pGameMgr)
+                        if (ImGui::IsKeyPressed(ImGuiKey_B, false)) ShootBox(Eye, Dir);
+                        if (m_pGameMgr)
                         {
                             auto& Ecs = xlioncore::Ecs(*m_pGameMgr);
-                            if (bHovered && !bOrbiting && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-                            {
-                                float f = 0; m_bHandHeld = Ecs.HandGrab(Eye, Dir * 200.0f, f); m_HandDist = f * 200.0f;
-                            }
-                            if (m_bHandHeld && ImGui::IsMouseDown(ImGuiMouseButton_Left)) Ecs.HandPull(Eye + Dir * m_HandDist, 8.0f);
+                            if (ImGui::IsKeyPressed(ImGuiKey_H, false)) { float f = 0; m_bHandHeld = Ecs.HandGrab(Eye, Dir * 200.0f, f); m_HandDist = f * 200.0f; }
+                            if (m_bHandHeld && ImGui::IsKeyDown(ImGuiKey_H)) Ecs.HandPull(Eye + Dir * m_HandDist, 8.0f);
                             else HandRelease();
                         }
                         }
