@@ -126,6 +126,11 @@ namespace xlevel
         Consider(P.m_CMakeLists);
         Consider(P.RuntimeDir() / L"xscript_game_entry.cpp");
         Consider(P.RuntimeDir() / L"xscript_registration.h");
+        // Visual Script (R84): the generated C++ of each graph (the VisualScript compiler writes <project>/Cache/Script/VisualScript/<Function>.h, only when its text changes)
+        // is on the game's include path: a graph edit makes the DLL stale like a module edit. (ponytail: any of them, not only the ones a module includes; MSBuild rebuilds only the
+        // translation units that include the changed header)
+        for (const auto& E : std::filesystem::directory_iterator(P.m_Project / L"Cache" / L"Script" / L"VisualScript", Ec)) Consider(E.path());
+        Ec.clear();
         for (const auto& Ref : P.m_Game ? ReadGame(P.m_Game).m_Modules : std::vector<xscript::module::module_ref>{})
         {
             const auto DescFolder = xgame::FindModuleFolder(P.m_Project, Ref);
