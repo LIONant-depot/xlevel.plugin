@@ -1949,7 +1949,11 @@ namespace xlevel
                         const ImVec2 Sz = ImGui::CalcTextSize(pText);
                         ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(Min.x + 8, Min.y + 8), ImVec2(Min.x + 20 + Sz.x, Min.y + 14 + Sz.y), IM_COL32(0, 0, 0, 160), 4);
                         ImGui::GetWindowDrawList()->AddText(ImVec2(Min.x + 14, Min.y + 11), IM_COL32(255, 220, 120, 255), pText);
+                        // the mouse's ray only while the mouse is really there: an unfocused window's mouse is -FLT_MAX (ImGui), and a ray
+                        // through it is a square root of garbage (the Debug assert that closed Tomas's editor on every focus loss, 2026-11-19)
                         const ImVec2 Mouse = ImGui::GetIO().MousePos;
+                        if (m_PlayTool != 0 && ImGui::IsMousePosValid(&Mouse))
+                        {
                         const auto Eye = m_Camera.m_View.getPosition(), Dir = m_Camera.m_View.RayFromScreen(Mouse.x, Mouse.y).NormalizeSafeCopy();
                         if (m_PlayTool == 1 && bHovered && !bOrbiting && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ShootBox(Eye, Dir);
                         if (m_PlayTool == 2 && m_pGameMgr)
@@ -1962,6 +1966,8 @@ namespace xlevel
                             if (m_bHandHeld && ImGui::IsMouseDown(ImGuiMouseButton_Left)) Ecs.HandPull(Eye + Dir * m_HandDist, 8.0f);
                             else HandRelease();
                         }
+                        }
+                        else HandRelease();
                     }
                     if (!bPlayTool && bHovered && !bOrbiting && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                     {
