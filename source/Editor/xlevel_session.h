@@ -375,6 +375,8 @@ namespace xlevel
             float        m_T = 1.0f;                                   // how far along it is (1 = arrived)
         }                                           m_CameraGlide;
         xeditor_tools::grid                          m_Grid;
+        bool                                         m_bShowGrid = true;        // the toolbar's Grid menu (m_Grid.m_FillAlpha: how solid its grey is)
+        float                                        m_GridViewW = 1, m_GridViewH = 1;   // the view RenderScene drew (pixels): the grid's jitter match
         static constexpr float                       kEditorToolbarWidth      = 570.0f;
         static constexpr float                       kSceneToolbarWidth       = 720.0f;      // with the Boxes and Budget, the Cull, Occl and Freeze of xeditor_mesh_budget.h
         static constexpr float                       kEditorToolbarHeight     = 20.0f;
@@ -656,6 +658,18 @@ namespace xlevel
                                 return std::format("PickPixel: hit\nScene={}\nId={}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(It->second));
                 return Hit != xecs::component::entity::invalid_entity_v ? std::format("PickPixel: entity {:x}, in no open scene", Hit) : "PickPixel: nothing";
             };
+            m_CmdContext.m_FireBox = [this](const xmath::fvec3& Origin, const xmath::fvec3& Dir) -> std::string
+            {
+                if (m_State.m_PlayState != xlevel::level_state::play_state::Playing) return "FireBox: only in Play";
+                return ShootBox(Origin, Dir);
+            };
+            m_CmdContext.m_SetPlayTool = [this](const std::string& Mode) -> std::string
+            {
+                const int i = Mode == "Game" ? 0 : Mode == "Cannon" ? 1 : Mode == "Hand" ? 2 : -1;
+                if (i < 0) return "PlayTool: -Mode is Game, Cannon or Hand";
+                m_PlayTool = i; HandRelease();
+                return std::string("PlayTool: ") + play_tool_names_v[i];
+            };
             m_CmdContext.m_PickRay = [this](const xmath::fvec3& Origin, const xmath::fvec3& Dir) -> std::string
             {
                 if (!m_pRender) return "PickRay: this Level has no render module";
@@ -754,8 +768,13 @@ namespace xlevel
                 if      (Name == "PathTraced") m_ViewOptions.m_bPathTraced = bOn;
                 else if (Name == "NoGI")       m_ViewOptions.m_bNoGI       = bOn;
                 else if (Name == "GIDebug")    m_ViewOptions.m_GIDebug     = static_cast<std::int8_t>(std::atoi(Value.c_str()));
-                else if (Name == "Reset")      m_ViewOptions = {};
-                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Reset)", Name);
+                else if (Name == "Grid")       m_bShowGrid = bOn;                                                   // the toolbar's Grid menu
+                else if (Name == "GridFill")   m_Grid.m_FillAlpha = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
+                else if (Name == "GridTolerance") m_Grid.m_Rise = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);       // metres
+                else if (Name == "GridOutline") m_Grid.m_LineHalo = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
+
+                else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = 1.0f; m_Grid.m_Rise = xeditor_tools::grid{}.m_Rise; m_Grid.m_LineHalo = xeditor_tools::grid{}.m_LineHalo; }
+                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Grid, GridFill, GridTolerance, GridOutline, Reset)", Name);
                 return std::format("SetViewOption: {} = {}", Name, Value);
             };
             m_CmdContext.m_DescribeText = [this](std::uint64_t Entity) -> std::string
@@ -1335,6 +1354,28 @@ namespace xlevel
                 xeditor::mesh_budget::Buttons(m_MeshBudget, bHorizontal, ButtonHeight, static_cast<int>(m_NotDrawnBoxes.size()));
                 xeditor::mesh_budget::CullButtons(m_MeshBudget, bHorizontal, ButtonHeight, m_CullStats.c_str());
                 ToolbarSeparator();
+                {   // the ground grid: shown or not, and how solid its grey is (0: only the lines - what is below the ground shows through).
+                    // Only this view: nothing is saved, undo does not see it
+                    if (bHorizontal) ImGui::SameLine();
+                    if (ImGui::Button(bHorizontal ? "Grid" : "G", bHorizontal ? ImVec2(58.0f, ButtonHeight) : ImVec2(32.0f, ButtonHeight))) ImGui::OpenPopup("##LevelGridMenu");
+                    if (ImGui::IsItemHovered()) { xeditor::hint::Text("The ground grid: show it, and how solid its grey is (0: only the lines, what is below shows)"); }
+                    if (ImGui::BeginPopup("##LevelGridMenu"))
+                    {
+                        ImGui::Checkbox("Show grid", &m_bShowGrid);
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat("Fill", &m_Grid.m_FillAlpha, 0.0f, 1.0f, "%.2f");
+                        if (ImGui::IsItemHovered()) { xeditor::hint::Text("1: solid grey; 0: only the lines, so you see what is below the ground"); }
+                        float Cm = m_Grid.m_Rise * 100.0f;
+                        ImGui::SetNextItemWidth(160.0f);
+                        if (ImGui::SliderFloat("On the grid (cm)", &Cm, 0.0f, 10.0f, "%.1f")) m_Grid.m_Rise = Cm / 100.0f;
+                        if (ImGui::IsItemHovered()) { xeditor::hint::Text("A surface this close to the ground plane counts as on it: the lines show on it, the grey hides under it"); }
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat("Line outline", &m_Grid.m_LineHalo, 0.0f, 1.0f, "%.2f");
+                        if (ImGui::IsItemHovered()) { xeditor::hint::Text("A light outline around the dark lines: they stay visible on surfaces of any colour (0: none)"); }
+                        ImGui::EndPopup();
+                    }
+                }
+                ToolbarSeparator();
                 ToolbarButton("Human", "H", false, false, [&]     // a 1.8 m figure where the camera looks, to judge the scale (editor only: xlevel_scale_reference.h)
                 {
                     m_ScaleRefs.Add();
@@ -1466,6 +1507,49 @@ namespace xlevel
         // (WASD / arrows, Shift runs, Space jumps, a gamepad's left stick through ImGui), the stick also turned into the world by this camera.
         // Held state only, rebuilt every frame (no stuck keys; zero when the focus is elsewhere, while typing, or while the camera is flown with
         // the right mouse). Fable's review 2026-11-17: per game, not global; clamp the diagonal; a radial deadzone on the pad.
+        // The Play tools (Tomas 2026-11-19: shoot boxes at a ragdoll to see how stable she is; grab and pull as the ragdoll editor's hand; a key
+        // changes the mode, the viewport says which): 0 the game (clicks select), 1 the box cannon (a left click fires at the mouse), 2 the hand (a
+        // left drag pulls the dynamic body under the mouse). T cycles them in Play.
+        int     m_PlayTool  = 0;
+        bool    m_bHandHeld = false;
+        float   m_HandDist  = 0;
+        static constexpr const char* play_tool_names_v[] = { "B: fire a box at the mouse    hold H: pull the body under the mouse (hand)", "B: fire a box at the mouse    hold H: pull the body under the mouse (hand)", "B: fire a box at the mouse    hold H: pull the body under the mouse (hand)" };
+        void HandRelease() noexcept { if (m_bHandHeld && m_pGameMgr) xlioncore::Ecs(*m_pGameMgr).HandRelease(); m_bHandHeld = false; }
+
+        // The box cannon: a 0.3 m, 2 kg box from Origin along Dir at 12 m/s. Made as the game
+        // makes an entity (CreateEntityWith: through the build plan, so its collider and body are built - C69), with its first values set
+        // before it is made; a runtime entity of no scene (it goes away with Play). The primitive cube of the engine as its mesh.
+        std::string ShootBox(const xmath::fvec3& Origin, const xmath::fvec3& Dir) noexcept
+        {
+            if (!m_pGameMgr) return "FireBox: no world";
+            auto& Ecs = xlioncore::Ecs(*m_pGameMgr);
+            static constexpr const char* Names[] = { "Transform", "Mesh", "Physics", "PhysicsBodyProperties", "PhysicsColliderBox", "PhysicsDynamics" };
+            std::vector<const xecs::component::type::info*> All; Ecs.ListComponentTypes(All);
+            std::vector<xecs::component::type::guid> Guids;
+            for (const char* N : Names) for (const auto* p : All) if (p && p->m_pName && std::strcmp(p->m_pName, N) == 0) { Guids.push_back(p->m_Guid); break; }
+            if (Guids.size() != std::size(Names)) return "FireBox: a component type is missing (Mesh: no render module?): not fired";
+            struct shot { xmath::fvec3 P, V; } Shot{ Origin + Dir.NormalizeSafeCopy() * 0.8f, Dir.NormalizeSafeCopy() * 12.0f };
+            const auto E = Ecs.CreateEntityWith(Guids, [](void* pUser, const xecs::component::type::info& Info, void* pData) noexcept
+            {
+                const auto& S = *static_cast<const shot*>(pUser);
+                auto Set = [&](const std::string& Path, const std::string& V) { xscene::commands::SetDataPropertyText(pData, Info, Path, V); };
+                const std::string_view N = Info.m_pName ? Info.m_pName : "";
+                if (N == "Transform")
+                {
+                    Set("Transform/Position/X", std::to_string(S.P.m_X)); Set("Transform/Position/Y", std::to_string(S.P.m_Y)); Set("Transform/Position/Z", std::to_string(S.P.m_Z));
+                    for (const char* a : { "X", "Y", "Z" }) Set(std::string("Transform/Scale/") + a, "0.3");
+                }
+                else if (N == "PhysicsDynamics")
+                {
+                    Set("PhysicsDynamics/LinearVelocity/X", std::to_string(S.V.m_X)); Set("PhysicsDynamics/LinearVelocity/Y", std::to_string(S.V.m_Y)); Set("PhysicsDynamics/LinearVelocity/Z", std::to_string(S.V.m_Z));
+                    Set("PhysicsDynamics/Mass", "2");
+                }
+                else if (N == "Mesh") Set("Mesh/Geom", "5E1CE0A110000009, E5359948C52D26D1");
+            }, &Shot);
+            std::printf("[Cannon] box fired from %.2f %.2f %.2f at %.1f m/s: entity 0x%llX%c", Shot.P.m_X, Shot.P.m_Y, Shot.P.m_Z, Shot.V.Length(), (unsigned long long)E.m_Value, 10); std::fflush(stdout);
+            return std::format("FireBox: a box from {:.2f} {:.2f} {:.2f} at {:.1f} m/s (entity 0x{:X})", Shot.P.m_X, Shot.P.m_Y, Shot.P.m_Z, Shot.V.Length(), E.m_Value);
+        }
+
         void PollPlayerInput() noexcept
         {
             auto& In = m_Game.m_Input; In = {};
@@ -1483,6 +1567,7 @@ namespace xlevel
             if (ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift) || (bPad && std::hypot(x, y) > 0.85f)) In.m_Buttons |= xlioncore::game::input::RUN;
             if (ImGui::IsKeyDown(ImGuiKey_Space) || ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown)) In.m_Buttons |= xlioncore::game::input::JUMP;
             if (ImGui::IsKeyDown(ImGuiKey_E) || ImGui::IsKeyDown(ImGuiKey_GamepadFaceLeft)) In.m_Buttons |= xlioncore::game::input::ACTION;
+            if (ImGui::IsKeyPressed(ImGuiKey_T, false)) { m_PlayTool = (m_PlayTool + 1) % 3; HandRelease(); }      // the Play tools (Tomas 2026-11-19): T cycles them
             auto F = m_Camera.m_View.getForward(); F.m_Y = 0;                 // (camera-relative: forward on the ground, right = forward x up)
             if (F.LengthSq() < 1e-8f) F = xmath::fvec3(0, 0, 1);
             F = F.NormalizeSafeCopy(); const auto R = F.Cross(xmath::fvec3(0, 1, 0));
@@ -1610,11 +1695,15 @@ namespace xlevel
                     Options.m_bNoGPUOcclusion    = !m_MeshBudget.m_bOcclusion;
                     Options.m_bFreezeCull        = m_MeshBudget.m_bFreeze;
                     m_pRender->SetViewOptions(m_pGameMgr.get(), Options);
+                    m_GridViewW = Avail.x; m_GridViewH = Avail.y;
                     m_pRender->RenderScene(m_pGameMgr.get(), *pWindow, m_Camera.m_View, static_cast<int>(Avail.x), static_cast<int>(Avail.y), xlionrender::view::SCENE
                                           , [](xgpu::cmd_buffer& CmdBuffer, void* pUser) noexcept
                                             {
                                                 auto& S = *static_cast<session*>(pUser);
-                                                S.m_Grid.Draw(CmdBuffer, S.m_Camera.m_View.getW2C(), S.m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
+                                                if (!S.m_bShowGrid) return;
+                                                const auto J = S.m_pRender->OverlayJitter(S.m_pGameMgr.get());     // (the scene depth's TAA jitter, in pixels: the grid matches it)
+                                                S.m_Grid.Draw(CmdBuffer, S.m_Camera.m_View.getW2C(), S.m_Camera.m_View.getPosition(), xmath::fmat4::fromZero(), 0.0f
+                                                             , { J.m_X * 0.5f * S.m_GridViewW, J.m_Y * 0.5f * S.m_GridViewH });
                                             }
                                           , this, Sets.m_Context.empty() ? nullptr : &Roles);
                     pHost->m_GIAllowance.Used(m_pRender->GITraceMs(m_pGameMgr.get()), true);
@@ -1643,7 +1732,7 @@ namespace xlevel
             xgpu::tools::imgui::AddCustomRenderCallback([this, bScene](xgpu::cmd_buffer& CmdBuffer, const ImVec2&, const ImVec2&)
             {
                 if (bScene) m_pRender->BlitScene(m_pGameMgr.get(), CmdBuffer);
-                else        m_Grid.Draw(CmdBuffer, m_Camera.m_View.getW2C(), m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
+                else if (m_bShowGrid) m_Grid.Draw(CmdBuffer, m_Camera.m_View.getW2C(), m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
             });
 
             // Structural changes (new entities, AddComponent archetype migrations) stay in a pending
@@ -1850,7 +1939,36 @@ namespace xlevel
                 {
                     const bool bHovered  = ImGui::IsItemHovered();
                     const bool bOrbiting = ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-                    if (bHovered && !bOrbiting && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                    const bool bPlaying  = m_State.m_PlayState == xlevel::level_state::play_state::Playing;
+                    const bool bPlayTool = bPlaying && m_PlayTool != 0;
+                    if (bPlaying)
+                    {   // the Play tools: the HUD line (which mode), then the left button is theirs (not in Game)
+                        const ImVec2 Min = ImGui::GetItemRectMin();
+                        const char* pText = play_tool_names_v[m_PlayTool];
+                        const ImVec2 Sz = ImGui::CalcTextSize(pText);
+                        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(Min.x + 8, Min.y + 8), ImVec2(Min.x + 20 + Sz.x, Min.y + 14 + Sz.y), IM_COL32(0, 0, 0, 160), 4);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(Min.x + 14, Min.y + 11), IM_COL32(255, 220, 120, 255), pText);
+                        // the mouse's ray only while the mouse is really there: an unfocused window's mouse is -FLT_MAX (ImGui), and a ray
+                        // through it is a square root of garbage (the Debug assert that closed Tomas's editor on every focus loss, 2026-11-19)
+                        const ImVec2 Mouse = ImGui::GetIO().MousePos;
+                        // keys, not the left button (Tomas 07:52Z: "left click does not work... make it into a keyboard key"): B (box) fires a box at
+                        // the mouse, H (hand) held pulls the body under the mouse - keys no editor tool uses - with the mouse over the viewport, in any Play tool
+                        const bool bOver = ImGui::IsMousePosValid(&Mouse) && ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), false) && !ImGui::GetIO().WantTextInput;
+                        if (bOver)
+                        {
+                        const auto Eye = m_Camera.m_View.getPosition(), Dir = m_Camera.m_View.RayFromScreen(Mouse.x, Mouse.y).NormalizeSafeCopy();
+                        if (ImGui::IsKeyPressed(ImGuiKey_B, false)) ShootBox(Eye, Dir);
+                        if (m_pGameMgr)
+                        {
+                            auto& Ecs = xlioncore::Ecs(*m_pGameMgr);
+                            if (ImGui::IsKeyPressed(ImGuiKey_H, false)) { float f = 0; m_bHandHeld = Ecs.HandGrab(Eye, Dir * 200.0f, f); m_HandDist = f * 200.0f; }
+                            if (m_bHandHeld && ImGui::IsKeyDown(ImGuiKey_H)) Ecs.HandPull(Eye + Dir * m_HandDist, 8.0f);
+                            else HandRelease();
+                        }
+                        }
+                        else HandRelease();
+                    }
+                    if (!bPlayTool && bHovered && !bOrbiting && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                     {
                         const ImVec2 Mouse  = ImGui::GetIO().MousePos;
                         const auto   Origin = m_Camera.m_View.getPosition();

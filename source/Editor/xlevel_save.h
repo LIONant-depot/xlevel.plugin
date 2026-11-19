@@ -78,6 +78,11 @@ namespace xlevel
 
         if (const auto Why = LossyDocumentProblem(GameMgr, State); !Why.empty())
         {
+            // The Level's own file (its scene list and its Game) does not depend on the scenes' entities: it is still written, so a Level
+            // whose scenes need another Game can be repaired (RemoveScene, then SetLevelGame) - before, the change was never saved (C89)
+            if (!State.isPrefabEditor() && !State.m_CurrentLevel.empty() && GameMgr.m_LevelMgr.Find(State.m_CurrentLevel))
+                if (auto Err = xlioncore::Ecs(GameMgr).SaveLevel(State.m_CurrentLevel); Err)
+                    xeditor::NotifyToast(std::format("Failed to save Level: {}", Err.getMessage()));
             xeditor::NotifyToast(Why);
             return false;
         }
