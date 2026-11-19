@@ -7,6 +7,8 @@
 // The build the game code needs before Play starts is reached through play_gate.
 #include "plugins/xlevel.plugin/source/Editor/xlevel_command_context.h"
 #include "plugins/xlevel.plugin/source/Editor/xlevel_world_check.h"
+#include <cstdio>
+#include <format>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -64,6 +66,18 @@ namespace xlevel
     inline void FinishEnterPlaying( level_context& Ed ) noexcept
     {
         Ed.State().m_PlayState = level_state::play_state::Playing;
+
+        // A system nobody placed does not run (a script module's new system waits as available until a person places it): say so, once a Play,
+        // instead of a silent system (E67 cost hours: its OnFrameStart ran, its body never did)
+        {
+            std::string Unplaced; int n = 0;
+            for (const auto& R : Ed.World().m_SystemMgr.GetUpdateSystemRows()) if (!R.m_bPlaced) { Unplaced += std::format("{}\"{}\"", n++ ? ", " : "", R.m_pName); }
+            if (n)
+            {
+                std::printf("[Play] %d system(s) not placed, so they do not run: %s. Place one with SetSystemParent -System \"<name>\" (top level) and Save.\n", n, Unplaced.c_str()); std::fflush(stdout);
+                xeditor::NotifyToast(std::format("{} system(s) not placed - they do not run: {} (Systems panel, or SetSystemParent)", n, Unplaced));
+            }
+        }
 
         for (auto& SceneGuid : Ed.State().m_OpenScenes)
             if (auto* pScene = Ed.World().m_SceneMgr.Find(SceneGuid))
