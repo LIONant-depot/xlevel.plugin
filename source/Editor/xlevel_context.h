@@ -171,6 +171,7 @@ namespace xlevel
         std::function<std::string(const xmath::fvec3&, const xmath::fvec3&)> m_PickRay;   // which entity (scene and id) a ray hits, as the render module of this Level picks (what a click in the viewport does)
         std::function<std::string(const xmath::fvec3&, const xmath::fvec3&)> m_FireBox;   // the Play tools' cannon: a box from Origin along Dir (Play only)
         std::function<std::string(const std::string&)>                        m_SetPlayTool; // the Play tool: Game, Cannon or Hand (the T key; the HUD says it)
+        std::function<std::string(const std::string&, const xmath::fvec3&, const xmath::fvec3&)> m_Hand;  // the Play tools' hand as a command: Grab (a ray), Pull (a target), Release
         std::function<std::string()> m_DescribeTextDraw;            // what the last draw of the Texts of this Level did (the render module says it)
         std::function<std::string()> m_DescribeScene;               // what the last forward render of the Level's Meshes and lights had (the render module says it)
         std::function<std::string(const std::string&)> m_EditPost; // an edit of the Level view's post chain (the render module: xRenderEditor::EditPost; render graph P6)

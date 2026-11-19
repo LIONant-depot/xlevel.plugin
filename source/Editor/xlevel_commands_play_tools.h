@@ -33,6 +33,31 @@ namespace xlevel::commands
         xcmdline::parser::handle m_hFrom, m_hDir;
     };
 
+    struct hand_cmd : xundo::query_command_base
+    {
+        level_context* m_pEd;
+        hand_cmd(xundo::system& System, level_context* pEd) noexcept : query_command_base(System, "Hand", nullptr), m_pEd(pEd) { RegisterArguments(); }
+        const char* getCommandHelp() const noexcept override { return "In Play: the hand (the H key held over the viewport) as a command - grab the body a ray hits, pull it toward a point (a spring, stays until Release), let go. Usage: Hand -Grab 0,1.5,-3 -Dir 0,0,1 / Hand -Pull 0,1.2,-1 / Hand -Release 1"; }
+        void RegisterArguments() noexcept override
+        {
+            m_hGrab    = m_Parser.addOption("Grab",    "x,y,z: the ray's start (metres, world); with -Dir", false, 1);
+            m_hDir     = m_Parser.addOption("Dir",     "x,y,z: the ray's direction (any length)", false, 1);
+            m_hPull    = m_Parser.addOption("Pull",    "x,y,z: where the held point is pulled", false, 1);
+            m_hRelease = m_Parser.addOption("Release", "1 = let go of what is held (a flag needs a value to be seen)", false, 1);
+        }
+        std::string Query() noexcept override
+        {
+            if (!m_pEd || !m_pEd->m_Hand) return "Hand: this Level has no viewport";
+            auto V = [&](xcmdline::parser::handle H, xmath::fvec3& Out) { std::string S; return xeditor::cmd_util::GetArg(m_Parser, H, S) && std::sscanf(S.c_str(), "%f,%f,%f", &Out.m_X, &Out.m_Y, &Out.m_Z) == 3; };
+            xmath::fvec3 A(0, 0, 0), B(0, 0, 0);
+            if (m_Parser.hasOption(m_hRelease)) return m_pEd->m_Hand("Release", A, B);
+            if (V(m_hPull, A)) return m_pEd->m_Hand("Pull", A, B);
+            if (V(m_hGrab, A) && V(m_hDir, B)) return m_pEd->m_Hand("Grab", A, B);
+            return "Hand: -Grab x,y,z -Dir x,y,z, -Pull x,y,z or -Release 1";
+        }
+        xcmdline::parser::handle m_hGrab, m_hDir, m_hPull, m_hRelease;
+    };
+
     struct play_tool_cmd : xundo::query_command_base
     {
         level_context* m_pEd;

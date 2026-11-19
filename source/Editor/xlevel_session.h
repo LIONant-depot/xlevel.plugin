@@ -663,6 +663,19 @@ namespace xlevel
                 if (m_State.m_PlayState != xlevel::level_state::play_state::Playing) return "FireBox: only in Play";
                 return ShootBox(Origin, Dir);
             };
+            m_CmdContext.m_Hand = [this](const std::string& Op, const xmath::fvec3& A, const xmath::fvec3& B) -> std::string
+            {
+                if (m_State.m_PlayState != xlevel::level_state::play_state::Playing) return "Hand: only in Play";
+                if (!m_pGameMgr) return "Hand: no world";
+                auto& Ecs = xlioncore::Ecs(*m_pGameMgr);
+                if (Op == "Release") { if (m_bCmdHand) Ecs.HandRelease(); const bool b = m_bCmdHand; m_bCmdHand = false; return b ? "Hand: released" : "Hand: nothing held"; }
+                if (Op == "Pull") { if (!m_bCmdHand) return "Hand: nothing held (Grab first)"; Ecs.HandPull(A, 8.0f); return std::format("Hand: pulling toward {:.2f} {:.2f} {:.2f}", A.m_X, A.m_Y, A.m_Z); }
+                float f = 0; const auto D = B.NormalizeSafeCopy();
+                m_bCmdHand = Ecs.HandGrab(A, D * 200.0f, f);
+                if (!m_bCmdHand) return "Hand: the ray hits no body to hold";
+                const auto P = A + D * (f * 200.0f);
+                return std::format("Hand: holding at {:.2f} {:.2f} {:.2f}", P.m_X, P.m_Y, P.m_Z);
+            };
             m_CmdContext.m_SetPlayTool = [this](const std::string& Mode) -> std::string
             {
                 const int i = Mode == "Game" ? 0 : Mode == "Cannon" ? 1 : Mode == "Hand" ? 2 : -1;
@@ -1512,6 +1525,7 @@ namespace xlevel
         // left drag pulls the dynamic body under the mouse). T cycles them in Play.
         int     m_PlayTool  = 0;
         bool    m_bHandHeld = false;
+        bool    m_bCmdHand  = false;        // (the Hand command's hold: the H key's per-frame release leaves it alone)
         float   m_HandDist  = 0;
         static constexpr const char* play_tool_names_v[] = { "B: fire a box at the mouse    hold H: pull the body under the mouse (hand)", "B: fire a box at the mouse    hold H: pull the body under the mouse (hand)", "B: fire a box at the mouse    hold H: pull the body under the mouse (hand)" };
         void HandRelease() noexcept { if (m_bHandHeld && m_pGameMgr) xlioncore::Ecs(*m_pGameMgr).HandRelease(); m_bHandHeld = false; }
