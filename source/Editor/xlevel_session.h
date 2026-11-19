@@ -376,6 +376,7 @@ namespace xlevel
         }                                           m_CameraGlide;
         xeditor_tools::grid                          m_Grid;
         bool                                         m_bShowGrid = true;        // the toolbar's Grid menu (m_Grid.m_FillAlpha: how solid its grey is)
+        float                                        m_GridViewW = 1, m_GridViewH = 1;   // the view RenderScene drew (pixels): the grid's jitter match
         static constexpr float                       kEditorToolbarWidth      = 570.0f;
         static constexpr float                       kSceneToolbarWidth       = 720.0f;      // with the Boxes and Budget, the Cull, Occl and Freeze of xeditor_mesh_budget.h
         static constexpr float                       kEditorToolbarHeight     = 20.0f;
@@ -757,8 +758,10 @@ namespace xlevel
                 else if (Name == "GIDebug")    m_ViewOptions.m_GIDebug     = static_cast<std::int8_t>(std::atoi(Value.c_str()));
                 else if (Name == "Grid")       m_bShowGrid = bOn;                                                   // the toolbar's Grid menu
                 else if (Name == "GridFill")   m_Grid.m_FillAlpha = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
-                else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = 1.0f; }
-                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Grid, GridFill, Reset)", Name);
+                else if (Name == "GridTolerance") m_Grid.m_Rise = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);       // metres
+
+                else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = 1.0f; m_Grid.m_Rise = xeditor_tools::grid{}.m_Rise; }
+                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Grid, GridFill, GridTolerance, Reset)", Name);
                 return std::format("SetViewOption: {} = {}", Name, Value);
             };
             m_CmdContext.m_DescribeText = [this](std::uint64_t Entity) -> std::string
@@ -1349,6 +1352,10 @@ namespace xlevel
                         ImGui::SetNextItemWidth(160.0f);
                         ImGui::SliderFloat("Fill", &m_Grid.m_FillAlpha, 0.0f, 1.0f, "%.2f");
                         if (ImGui::IsItemHovered()) { xeditor::hint::Text("1: solid grey; 0: only the lines, so you see what is below the ground"); }
+                        float Cm = m_Grid.m_Rise * 100.0f;
+                        ImGui::SetNextItemWidth(160.0f);
+                        if (ImGui::SliderFloat("On the grid (cm)", &Cm, 0.0f, 10.0f, "%.1f")) m_Grid.m_Rise = Cm / 100.0f;
+                        if (ImGui::IsItemHovered()) { xeditor::hint::Text("A surface this close to the ground plane counts as on it: the lines show on it, the grey hides under it"); }
                         ImGui::EndPopup();
                     }
                 }
@@ -1628,11 +1635,15 @@ namespace xlevel
                     Options.m_bNoGPUOcclusion    = !m_MeshBudget.m_bOcclusion;
                     Options.m_bFreezeCull        = m_MeshBudget.m_bFreeze;
                     m_pRender->SetViewOptions(m_pGameMgr.get(), Options);
+                    m_GridViewW = Avail.x; m_GridViewH = Avail.y;
                     m_pRender->RenderScene(m_pGameMgr.get(), *pWindow, m_Camera.m_View, static_cast<int>(Avail.x), static_cast<int>(Avail.y), xlionrender::view::SCENE
                                           , [](xgpu::cmd_buffer& CmdBuffer, void* pUser) noexcept
                                             {
                                                 auto& S = *static_cast<session*>(pUser);
-                                                if (S.m_bShowGrid) S.m_Grid.Draw(CmdBuffer, S.m_Camera.m_View.getW2C(), S.m_Camera.m_View.getPosition(), xmath::fmat4::fromZero());
+                                                if (!S.m_bShowGrid) return;
+                                                const auto J = S.m_pRender->OverlayJitter(S.m_pGameMgr.get());     // (the scene depth's TAA jitter, in pixels: the grid matches it)
+                                                S.m_Grid.Draw(CmdBuffer, S.m_Camera.m_View.getW2C(), S.m_Camera.m_View.getPosition(), xmath::fmat4::fromZero(), 0.0f
+                                                             , { J.m_X * 0.5f * S.m_GridViewW, J.m_Y * 0.5f * S.m_GridViewH });
                                             }
                                           , this, Sets.m_Context.empty() ? nullptr : &Roles);
                     pHost->m_GIAllowance.Used(m_pRender->GITraceMs(m_pGameMgr.get()), true);
