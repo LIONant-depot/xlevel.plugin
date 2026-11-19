@@ -658,6 +658,18 @@ namespace xlevel
                                 return std::format("PickPixel: hit\nScene={}\nId={}", xscene::commands::FormatSceneGuid(SceneGuid), xscene::commands::FormatEntityId(It->second));
                 return Hit != xecs::component::entity::invalid_entity_v ? std::format("PickPixel: entity {:x}, in no open scene", Hit) : "PickPixel: nothing";
             };
+            m_CmdContext.m_FireBox = [this](const xmath::fvec3& Origin, const xmath::fvec3& Dir) -> std::string
+            {
+                if (m_State.m_PlayState != xlevel::level_state::play_state::Playing) return "FireBox: only in Play";
+                return ShootBox(Origin, Dir);
+            };
+            m_CmdContext.m_SetPlayTool = [this](const std::string& Mode) -> std::string
+            {
+                const int i = Mode == "Game" ? 0 : Mode == "Cannon" ? 1 : Mode == "Hand" ? 2 : -1;
+                if (i < 0) return "PlayTool: -Mode is Game, Cannon or Hand";
+                m_PlayTool = i; HandRelease();
+                return std::string("PlayTool: ") + play_tool_names_v[i];
+            };
             m_CmdContext.m_PickRay = [this](const xmath::fvec3& Origin, const xmath::fvec3& Dir) -> std::string
             {
                 if (!m_pRender) return "PickRay: this Level has no render module";
@@ -1503,15 +1515,15 @@ namespace xlevel
         // The box cannon: a 0.3 m, 2 kg box from Origin along Dir at 12 m/s. Made as the game
         // makes an entity (CreateEntityWith: through the build plan, so its collider and body are built - C69), with its first values set
         // before it is made; a runtime entity of no scene (it goes away with Play). The primitive cube of the engine as its mesh.
-        void ShootBox(const xmath::fvec3& Origin, const xmath::fvec3& Dir) noexcept
+        std::string ShootBox(const xmath::fvec3& Origin, const xmath::fvec3& Dir) noexcept
         {
-            if (!m_pGameMgr) return;
+            if (!m_pGameMgr) return "FireBox: no world";
             auto& Ecs = xlioncore::Ecs(*m_pGameMgr);
             static constexpr const char* Names[] = { "Transform", "Mesh", "Physics", "PhysicsBodyProperties", "PhysicsColliderBox", "PhysicsDynamics" };
             std::vector<const xecs::component::type::info*> All; Ecs.ListComponentTypes(All);
             std::vector<xecs::component::type::guid> Guids;
             for (const char* N : Names) for (const auto* p : All) if (p && p->m_pName && std::strcmp(p->m_pName, N) == 0) { Guids.push_back(p->m_Guid); break; }
-            if (Guids.size() != std::size(Names)) { std::printf("[Cannon] a component type is missing: not fired%c", 10); return; }
+            if (Guids.size() != std::size(Names)) return "FireBox: a component type is missing (Mesh: no render module?): not fired";
             struct shot { xmath::fvec3 P, V; } Shot{ Origin + Dir.NormalizeSafeCopy() * 0.8f, Dir.NormalizeSafeCopy() * 12.0f };
             const auto E = Ecs.CreateEntityWith(Guids, [](void* pUser, const xecs::component::type::info& Info, void* pData) noexcept
             {
@@ -1531,6 +1543,7 @@ namespace xlevel
                 else if (N == "Mesh") Set("Mesh/Geom", "5E1CE0A110000009, E5359948C52D26D1");
             }, &Shot);
             std::printf("[Cannon] box fired from %.2f %.2f %.2f at %.1f m/s: entity 0x%llX%c", Shot.P.m_X, Shot.P.m_Y, Shot.P.m_Z, Shot.V.Length(), (unsigned long long)E.m_Value, 10); std::fflush(stdout);
+            return std::format("FireBox: a box from {:.2f} {:.2f} {:.2f} at {:.1f} m/s (entity 0x{:X})", Shot.P.m_X, Shot.P.m_Y, Shot.P.m_Z, Shot.V.Length(), E.m_Value);
         }
 
         void PollPlayerInput() noexcept

@@ -169,6 +169,8 @@ namespace xlevel
         game_plugin_state* m_pGamePlugin = nullptr;   // the game module of this editor's Level (its own: every Level loads the one of its Game), set by its session
         std::function<std::string(int, int)>                                 m_PickPixel;  // which entity the G-buffer prepass drew at a pixel of the viewport's view (the click's first pick)
         std::function<std::string(const xmath::fvec3&, const xmath::fvec3&)> m_PickRay;   // which entity (scene and id) a ray hits, as the render module of this Level picks (what a click in the viewport does)
+        std::function<std::string(const xmath::fvec3&, const xmath::fvec3&)> m_FireBox;   // the Play tools' cannon: a box from Origin along Dir (Play only)
+        std::function<std::string(const std::string&)>                        m_SetPlayTool; // the Play tool: Game, Cannon or Hand (the T key; the HUD says it)
         std::function<std::string()> m_DescribeTextDraw;            // what the last draw of the Texts of this Level did (the render module says it)
         std::function<std::string()> m_DescribeScene;               // what the last forward render of the Level's Meshes and lights had (the render module says it)
         std::function<std::string(const std::string&)> m_EditPost; // an edit of the Level view's post chain (the render module: xRenderEditor::EditPost; render graph P6)
