@@ -786,7 +786,7 @@ namespace xlevel
                 else if (Name == "GridTolerance") m_Grid.m_Rise = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);       // metres
                 else if (Name == "GridOutline") m_Grid.m_LineHalo = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
 
-                else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = 1.0f; m_Grid.m_Rise = xeditor_tools::grid{}.m_Rise; m_Grid.m_LineHalo = xeditor_tools::grid{}.m_LineHalo; }
+                else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = xeditor_tools::grid{}.m_FillAlpha; m_Grid.m_Rise = xeditor_tools::grid{}.m_Rise; m_Grid.m_LineHalo = xeditor_tools::grid{}.m_LineHalo; }
                 else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Grid, GridFill, GridTolerance, GridOutline, Reset)", Name);
                 return std::format("SetViewOption: {} = {}", Name, Value);
             };
