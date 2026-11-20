@@ -2281,6 +2281,8 @@ namespace xlevel
             if (!bSkipLevelPeer)
             {
                 bool bTabOpen = m_State.m_bLevelEditorOpen;
+                // Focus() (OpenLevel of an open Level or a newly opened one): its tab to the front - what CaptureWindow then shows
+                if (m_bRequestFocus) { ImGui::SetNextWindowFocus(); m_bRequestFocus = false; }
                 bParentEditorVisible = xlevel::editor_tabs::RenderLevelEditorDockspace(
                     [this]() { RenderParentEditorToolbar(); }, m_Names,
                     LevelTabName.c_str(), m_pDevice, isScene() ? xecs::scene::type_guid_v : isPrefab() ? xecs::prefab::type_guid_v : xecs::level::type_guid_v, LevelDockGuid, &bTabOpen);
