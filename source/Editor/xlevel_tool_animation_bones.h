@@ -15,7 +15,7 @@ namespace xlevel::viewport_tools
     {
         using component = xlionrender::animation;
 
-        animation_bones_tool() noexcept : tool(xecs::component::type::info_v<component>.m_Guid.m_Value, "Animation/Bones", "Animation bones") {}     // (info_v: Animation names no guid, its typedef_v.m_Guid is empty)
+        animation_bones_tool() noexcept : tool(xecs::component::type::details::guid_v<component>.m_Value, "Animation/Bones", "Animation bones") {}     // (guid_v: Animation names no guid, its typedef_v.m_Guid is empty; guid_v is the compile-time guid info_v holds, without reaching the registry - C104)
 
         int  getElementCount(const target&) const noexcept override { return 0; }
         bool SupportsMode(mode) const noexcept override { return false; }
