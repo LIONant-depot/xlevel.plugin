@@ -322,7 +322,9 @@ namespace xlevel
         Plugin.m_hModule       = Candidate.m_hModule;
         Plugin.m_LoadedDllPath = Candidate.m_LoadedPath;
         Plugin.m_bHasRegistrations = ProbeRegistrations(Plugin.m_hModule, Plugin.m_Registrations);
-        Plugin.m_Token         = { .m_Slot = 1, .m_Generation = Generation };
+        for (const auto& D : DuplicateComponentModules(Plugin.m_Registrations))      // (C94: which module a scene needs is then unknown; saves keep what the scene's file said)
+            LogGamePlugin(std::format("Game.dll: ERROR: the component {} - two script modules define it (same name): rename one, or keep it in one module both Games list", D));
+        Plugin.m_Token        = { .m_Slot = 1, .m_Generation = Generation };
         Plugin.m_bCrashed      = false;
 
         struct call { xecs_plugin_pfn_register_components* m_pFn; xecs::game_mgr::instance* m_pGameMgr; xecs::plugin::token m_Token; } Call{ pRegisterComponents, &GameMgr, Plugin.m_Token };

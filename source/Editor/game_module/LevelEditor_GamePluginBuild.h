@@ -136,14 +136,39 @@ namespace xlevel
     };
 
     // The script module that defines a component: the guid of its ScriptModule resource, 0 for a component that no module defines (the engine's or the editor's: it is not in the Game.dll's
-    // registrations, or the file it is defined in is outside every module), xecs::scene::unknown_module_v when nobody can say (the loaded Game.dll was built before modules were tracked).
+    // registrations, or the file it is defined in is outside every module), xecs::scene::unknown_module_v when nobody can say (the loaded Game.dll was built before modules were tracked,
+    // or two modules define the component - same name, same guid (C94): never a silent pick; the load says so - DuplicateComponentModules - and a save keeps what the scene's file said)
     inline std::uint64_t ModuleOfComponent( const game_plugin_state& Plugin, std::uint64_t ComponentGuid ) noexcept
     {
         if (!Plugin.isLoaded())          return 0;                                   // no game module: every component that exists is the host's
         if (!Plugin.m_bHasRegistrations) return xecs::scene::unknown_module_v;
+        std::uint64_t Module = 0; bool bFound = false;
         for (const auto& R : Plugin.m_Registrations)
-            if (R.m_Kind == 0 && R.m_Guid == ComponentGuid) return R.m_Module;
-        return 0;
+            if (R.m_Kind == 0 && R.m_Guid == ComponentGuid)
+            {
+                if (bFound && R.m_Module != Module) return xecs::scene::unknown_module_v;
+                Module = R.m_Module; bFound = true;
+            }
+        return Module;
+    }
+    // "<name>: modules A, B" for every component that more than one module defines (C94: what the load reports as an error)
+    inline std::vector<std::string> DuplicateComponentModules( const std::vector<game_registration>& Regs ) noexcept
+    {
+        std::vector<std::string> Out;
+        for (std::size_t i = 0; i < Regs.size(); ++i)
+        {
+            if (Regs[i].m_Kind != 0) continue;
+            std::string Others;
+            bool bFirst = true;
+            for (std::size_t j = 0; j < Regs.size(); ++j)
+                if (j != i && Regs[j].m_Kind == 0 && (Regs[j].m_Guid == Regs[i].m_Guid || Regs[j].m_Name == Regs[i].m_Name) && Regs[j].m_Module != Regs[i].m_Module)
+                {
+                    if (j < i) { bFirst = false; break; }
+                    Others += std::format(", {:016X}", Regs[j].m_Module);
+                }
+            if (bFirst && !Others.empty()) Out.push_back(std::format("{}: modules {:016X}{}", Regs[i].m_Name, Regs[i].m_Module, Others));
+        }
+        return Out;
     }
     // The form xecs::scene::mgr::m_pModuleOfComponent takes: the game module of the world that asks (pPlugin is the game_plugin_state the scene manager was given).
     inline std::uint64_t ResolveComponentModule( void* pPlugin, xecs::component::type::guid Guid ) noexcept

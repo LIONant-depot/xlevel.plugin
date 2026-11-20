@@ -293,6 +293,17 @@ namespace xlevel
         {
             const auto Games = commands::BuildAssetNameMap(xgame::type_guid_v);
             if( Games.size() == 1 ) { Game = Games.begin()->first; From = "the project's only Game"; }
+            else
+            {
+                // (C99: a project with several Games - SmokeTests - still has one answer when only one Game lists every module the document needs)
+                scene_module_needs Needs;
+                AddSceneModuleNeeds(Needs, ProjectRoot().wstring(), Doc, /*bTransitive*/ true);
+                std::uint64_t Only = 0; int n = 0;
+                if( !Needs.m_Modules.empty() )
+                    for( const auto& [G, Name] : Games )
+                        if( MissingModules(Needs, ReadGame(G).m_Modules).empty() ) { Only = G; ++n; }
+                if( n == 1 ) { Game = Only; From = "the only Game with the modules it needs"; }
+            }
         }
         if( Game == 0 ) return;
         g_PrefabGameOverride[Doc] = Game;
