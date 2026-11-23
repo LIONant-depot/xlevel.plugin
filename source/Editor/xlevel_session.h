@@ -785,7 +785,7 @@ namespace xlevel
                 else if (Name == "GridFill")   m_Grid.m_FillAlpha = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
                 else if (Name == "GridTolerance") m_Grid.m_Rise = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);       // metres
                 else if (Name == "GridOutline") m_Grid.m_LineHalo = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
-                else if (Name == "GridAdaptive") m_Grid.m_bAdaptiveLines = bOn;
+                else if (Name == "GridAdaptive") { const int M = std::atoi(Value.c_str()); m_Grid.m_bAdaptiveLines = M > 0 || bOn; if (M > 0) m_Grid.m_AdaptiveMode = M; }     // 1 continuous, 2 wrapped
 
                 else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = xeditor_tools::grid{}.m_FillAlpha; m_Grid.m_Rise = xeditor_tools::grid{}.m_Rise; m_Grid.m_LineHalo = xeditor_tools::grid{}.m_LineHalo; m_Grid.m_bAdaptiveLines = xeditor_tools::grid{}.m_bAdaptiveLines; }
                 else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Grid, GridFill, GridTolerance, GridOutline, GridAdaptive, Reset)", Name);
