@@ -1729,7 +1729,8 @@ namespace xlevel
                                                 const auto J = S.m_pRender->OverlayJitter(S.m_pGameMgr.get());     // (the scene depth's TAA jitter, in pixels: the grid matches it)
                                                 S.m_Grid.Draw(CmdBuffer, S.m_Camera.m_View.getW2C(), S.m_Camera.m_View.getPosition(), xmath::fmat4::fromZero(), 0.0f
                                                              , { J.m_X * 0.5f * S.m_GridViewW, J.m_Y * 0.5f * S.m_GridViewH }
-                                                             , S.m_pRender->OverlaySource(S.m_pGameMgr.get()));     // (what the lines draw over: they pick dark or light from it)
+                                                             , S.m_pRender->OverlaySource(S.m_pGameMgr.get())       // (what the lines draw over, the fill included)
+                                                             , S.m_pRender->OverlayPhase(S.m_pGameMgr.get()) == 0 ? 1 : 2);     // (the fill in the first overlay pass, the lines in the second)
                                             }
                                           , this, Sets.m_Context.empty() ? nullptr : &Roles);
                     pHost->m_GIAllowance.Used(m_pRender->GITraceMs(m_pGameMgr.get()), true);
