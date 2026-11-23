@@ -136,7 +136,7 @@ namespace xlevel::commands
         const char* getCommandHelp() const noexcept override
         {
             return "Sets a view option of the Level's viewport (drawn, never saved): PathTraced 0|1 (the GI from the brute path tracer), NoGI 0|1, GIDebug n (-1: the Environment's), "
-                   "Grid 0|1 (the ground grid shown), GridFill 0..1 (its grey's opacity: 0 only the lines), GridTolerance m (a surface this close to the plane counts as on it), GridOutline 0..1 (a light outline around the fixed lines), GridAdaptive 0|1 (the lines follow what is under them so they are seen on any colour; 1 by default), GridContrast 0.01..0.5 (how far from it; 0.2 by default), Reset. Usage: SetViewOption -Name PathTraced -Value 1";
+                   "Grid 0|1 (the ground grid shown), GridFill 0..1 (its grey's opacity: 0 only the lines), GridTolerance m (a surface this close to the plane counts as on it), GridOutline 0..1 (a light outline around the fixed lines), GridAdaptive 0|1 (the lines follow what is under them so they are seen on any colour; 1 by default), GridContrast -0.5..0.5 (how far from it: below 0 darker lines, above 0 lighter; -0.2 by default), Reset. Usage: SetViewOption -Name PathTraced -Value 1";
         }
         void RegisterArguments() noexcept override
         {
