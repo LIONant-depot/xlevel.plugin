@@ -785,10 +785,11 @@ namespace xlevel
                 else if (Name == "GridFill")   m_Grid.m_FillAlpha = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
                 else if (Name == "GridTolerance") m_Grid.m_Rise = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);       // metres
                 else if (Name == "GridOutline") m_Grid.m_LineHalo = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.0f, 1.0f);
-                else if (Name == "GridAdaptive") { const int M = std::atoi(Value.c_str()); m_Grid.m_bAdaptiveLines = M > 0 || bOn; if (M > 0) m_Grid.m_AdaptiveMode = M; }     // 1 continuous, 2 wrapped
+                else if (Name == "GridAdaptive") m_Grid.m_bAdaptiveLines = bOn;
+                else if (Name == "GridContrast") m_Grid.m_LineContrast = std::clamp(static_cast<float>(std::atof(Value.c_str())), 0.01f, 0.5f);
 
-                else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = xeditor_tools::grid{}.m_FillAlpha; m_Grid.m_Rise = xeditor_tools::grid{}.m_Rise; m_Grid.m_LineHalo = xeditor_tools::grid{}.m_LineHalo; m_Grid.m_bAdaptiveLines = xeditor_tools::grid{}.m_bAdaptiveLines; }
-                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Grid, GridFill, GridTolerance, GridOutline, GridAdaptive, Reset)", Name);
+                else if (Name == "Reset")      { m_ViewOptions = {}; m_bShowGrid = true; m_Grid.m_FillAlpha = xeditor_tools::grid{}.m_FillAlpha; m_Grid.m_Rise = xeditor_tools::grid{}.m_Rise; m_Grid.m_LineHalo = xeditor_tools::grid{}.m_LineHalo; m_Grid.m_bAdaptiveLines = xeditor_tools::grid{}.m_bAdaptiveLines; m_Grid.m_LineContrast = xeditor_tools::grid{}.m_LineContrast; }
+                else return std::format("SetViewOption: no option '{}' (PathTraced, NoGI, GIDebug, Grid, GridFill, GridTolerance, GridOutline, GridAdaptive, GridContrast, Reset)", Name);
                 return std::format("SetViewOption: {} = {}", Name, Value);
             };
             m_CmdContext.m_DescribeText = [this](std::uint64_t Entity) -> std::string
@@ -1384,7 +1385,12 @@ namespace xlevel
                         if (ImGui::SliderFloat("On the grid (cm)", &Cm, 0.0f, 10.0f, "%.1f")) m_Grid.m_Rise = Cm / 100.0f;
                         if (ImGui::IsItemHovered()) { xeditor::hint::Text("A surface this close to the ground plane counts as on it: the lines show on it, the grey hides under it"); }
                         ImGui::Checkbox("Lines always visible", &m_Grid.m_bAdaptiveLines);
-                        if (ImGui::IsItemHovered()) { xeditor::hint::Text("The lines go dark over light colours and light over dark ones, so they show on any surface (off: fixed grey lines)"); }
+                        if (ImGui::IsItemHovered()) { xeditor::hint::Text("The lines follow what is under them, a fixed step away from its colour, so they show on any surface (off: fixed grey lines)"); }
+                        ImGui::BeginDisabled(!m_Grid.m_bAdaptiveLines);
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat("Line contrast", &m_Grid.m_LineContrast, 0.05f, 0.5f, "%.2f");
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) { xeditor::hint::Text("How far the lines' colour is from what is under them (0.5: the most; small: subtle)"); }
+                        ImGui::EndDisabled();
                         ImGui::BeginDisabled(m_Grid.m_bAdaptiveLines);
                         ImGui::SetNextItemWidth(160.0f);
                         ImGui::SliderFloat("Line outline", &m_Grid.m_LineHalo, 0.0f, 1.0f, "%.2f");
